@@ -33,6 +33,7 @@ import time
 from typing import Any, Callable, Iterable, Optional
 
 from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
+from jarvis.knowledge import paths as item_paths
 
 SEARCH_LIMIT_MAX = 50
 SEARCH_DEADLINE_SEC = 0.5
@@ -269,7 +270,7 @@ def _passage(data: dict, text: str) -> Optional[str]:
 
 def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_only: bool = False,
                limit: int = 10, deadline: float = SEARCH_DEADLINE_SEC,
-               types: Optional[list[str]] = None) -> list[dict]:
+               types: Optional[list[str]] = None, under: str = "/") -> list[dict]:
     """Items by meaning and words, or holding an exact phrase, one hit an
     item, read as Tim (the brain's rights are his): a file or note with
     the text of the section where it matched, a record (a turn, a message,
@@ -279,7 +280,8 @@ def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_onl
     uds = ctx.uds(deadline)
     caller = Caller(TIM, agent="brain")
     query = Query(meaning=text or None, words=text or None, phrase=phrase or None,
-                  types=tuple(types) if types else None, limit=min(SEARCH_LIMIT_MAX * 4, limit * 4))
+                  types=tuple(types) if types else None, under=under,
+                  limit=min(SEARCH_LIMIT_MAX * 4, limit * 4))
     found = uds.search_page(caller, query, budget_ms=max(1, int(deadline * 1000)))
     out = []
     for h in found["hits"]:
@@ -307,25 +309,30 @@ def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_onl
 
 
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
-           kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None) -> dict:
+           kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None,
+           under: Optional[str] = None) -> dict:
     """Search over what JARVIS holds, as items (UDS round 3): the files and
     notes indexed in place (meaning, words, an exact `phrase`, one hit an
     item, with the section where it matched) and the records, each found by
     its own words (turns, messages, runs, workflows...). `kinds` keeps the
     item types named (`md`, `turn`, `run`...). `query_en` searches again in
     English (the brain fills it when he speaks Spanish) and the answers are
-    merged."""
+    merged. `under` keeps the items below one path (a package's evidence
+    folder, a Work item's folder; workflow.yaml gather scoped_search)."""
     text = (text or "").strip()
     phrase = (phrase or "").strip() or None
     if not text and not phrase:
         raise Refused("search needs words")
+    under = (under or "").strip().rstrip("/") or "/"
+    if under != "/" and not item_paths.is_path(under):
+        raise Refused("under is a path, such as /work/<id>")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
     merged: dict[str, dict] = {}
     partial = False
     for words in dict.fromkeys(w for w in (text, (query_en or "").strip()) if w or phrase):
         try:
             found = _item_hits(ctx, words, phrase=phrase, own_only=not include_untrusted, limit=limit,
-                               types=kinds or None)
+                               types=kinds or None, under=under)
         except knowledge_client.EngineUnavailable as e:
             raise Unavailable(f"the knowledge engine did not answer: {e}") from e
         except ValueError as e:
@@ -342,7 +349,7 @@ def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_u
     building = build(ctx)
     if not (building or {}).get("items_waiting"):
         building = None
-    return {"query": text, "query_en": query_en, "phrase": phrase, "hits": hits,
+    return {"query": text, "query_en": query_en, "phrase": phrase, "under": under, "hits": hits,
             "partial": partial or building is not None, "building": building, "notes": []}
 
 

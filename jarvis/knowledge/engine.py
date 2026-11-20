@@ -205,7 +205,10 @@ class Engine:
         if self.store is not None:
             self.store.set_paused(mode == "hold")
         if self.vectors is not None:
-            self.vectors.set_paused(mode == "hold" or not self.indexing_enabled())
+            # Held, the background build waits; a package's evidence, urgent,
+            # goes on (vectors.VectorIndex.set_held).
+            self.vectors.set_held(mode == "hold")
+            self.vectors.set_paused(not self.indexing_enabled())
 
     def transaction(self, body: dict) -> int:
         """One atomic write: documents put and deleted together; readers see

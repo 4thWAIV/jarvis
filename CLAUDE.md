@@ -1575,6 +1575,66 @@ Error the same way (`package_jobs.start`). The Work item's Error stays until no 
 in Error that no later run followed (`package_jobs.errored_work`,
 `_clear_work_errors`).
 
+## A package's evidence
+The gather step (`package_gather.gather`, `PRODUCERS["gather"]`; design:
+workflow.yaml gather) resolves the handoff's evidence, gathered once per
+package at the package level and reused by every run of it
+(`package_evidence.gathered`): `/work/<id>/packages/<package id>/evidence/`
+in the engine, its bytes at `data/work/<id>/packages/<package id>/evidence/`
+(or `/packages/<package id>/evidence/` and `data/package/<package
+id>/evidence/` with no Work item; `package_evidence.Place`, the content root
+mapping each), holding `handoff.json` (as submitted, hashed), `files/` (each
+file entry copied, its name kept), `given/<n>.md` (each content entry as
+given), `retrieved/<type>-<id>.md` (each reference fetched), `jarvis/` and
+`sender-answers/<n>.md`, and `manifest.json`, one row per stored file
+(`package_evidence.Row`: type, source, stored file, hash, size, resolved ok,
+not_found or failed with the reason, and Tim's knowledge state). Every type
+but `label` is read by its program (`evidence_readers.py`: a url by one
+standard fetch, plain then the page reader, a GitHub address as its own
+type; JARVIS's own readers for a Work item, package, message, workflow and
+run; `gh` for a PR with its diff, a CI run with its failed logs, an issue
+and a branch's commits not on main; `git show` in a checkout of the
+repository on this Mac for a commit), and a reference named twice is one
+file. The labels go to RetrievalSession in one call, with no deadline; each
+typed entry it gives is handled as one of its type, a label it names
+nothing for is not_found with what it searched. JARVIS's own material
+(`gather_jarvis_material`): the Work item (`--work`, and the Work items the
+handoff is about) as `jarvis/work-item.md` (its pieces, notes, evidence,
+decisions and every event), the PRs and CI runs recorded against it (its
+pieces' evidence), the sending session's commands with their results and
+each turn's final message from its own transcript
+(`session_transcript.py`, the one reader the author proof shares) as
+`jarvis/sender-session.md`, and Tim's record on it (his messages, his
+answers, his note, his answers on its earlier packages) as `jarvis/tim.md`.
+Each row's knowledge state is set by program from where it came
+(`package_evidence.knowledge_state`: knows, had access, probably does not
+know). The evidence is then read into the engine at once by the content
+child's own reader (`package_evidence.index_now`, `knowledge_content.
+Indexer`), its vectors ahead of the background build and going on while the
+pace holds it (`vectors.build_rank`'s `URGENT`, `knowledge.paths.
+is_package_evidence`; `VectorIndex.set_held`), and waited for, every item's
+text and every vector (the item's vectors stream `complete`), at most
+`INDEX_WAIT_SEC` (10 minutes) before the run is in Error; with no embedding
+model it is in Error at once. Indexed, the package's own record
+(`<package id>.evidence` in its folder) names every stored file and every
+record gathered (`gathered`, `records`), which the engine makes its
+reference links (`package_evidence.link`). The sender's answers to a round
+join the evidence as they arrive (`package_evidence.add_sender_answers`,
+from `package_jobs.answer`). `knowledge_search` takes `under`, so a search
+keeps to one path (a package's evidence, a Work item's folder): the
+brain's, a role's, the route's (`POST /api/knowledge/search`) and
+`knowledge_api.search` alike.
+A Work item's own research (`work_research.py`; design: research
+work_item_research) is made again on every change of the item
+(`work_store.on_changed`, `REFRESHER`, started with the session watcher):
+its title searched under its own folder, under its source's registered
+folder and in the conversation's turns, the PRs and CI runs recorded
+against it looked up as they are now, his messages on it and his memory;
+written to `data/work/<id>/research/` (`queries.json`, `queries.md`) and
+read into the engine at once (`package_evidence.index_folder`). Its
+summaries are a SummarizationSession's (`SUMMARIZE`), which has no approved
+prompt yet, so none are written.
+
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
 jarvis.make_package` checks, builds and proves it (a deck laid out and
@@ -3158,7 +3218,8 @@ override); the brain's `engine_settings` and acting `set_engine_setting`
 ## The sessions a package is made with
 The new package system's sessions (`sessions.py`, the design's
 sessions.yaml, approved 2026-11-18 and 2026-11-19), built for its later
-steps (gather, mark, research, the swarm) to use; nothing calls them yet.
+steps (gather, mark, research, the swarm) to use; the gather step calls
+RetrievalSession (see "A package's evidence"), the rest wait for theirs.
 Composition, each type with its own interface (Tim, 2026-11-18): every
 session type is a `Protocol` its callers depend on (`ChatSession`,
 `SwarmSession`, `DecisionSession`, `ClassificationSession`,
@@ -3303,6 +3364,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   package request: the sender's typed handoff and its signed calls; each
   run's job, run by JARVIS, and its Error; the routes (see "Package
   requests")
+- `package_gather.py` / `package_evidence.py` / `evidence_readers.py` /
+  `session_transcript.py` / `work_research.py` — The gather step, a
+  package's evidence (its place, manifest, Tim's knowledge states, urgent
+  index and links), each typed entry's reader, a session's own transcript
+  read by id, and a Work item's own research (see "A package's evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

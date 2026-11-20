@@ -97,7 +97,7 @@ from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
-from jarvis import package_jobs, package_jobs_api, package_request
+from jarvis import package_jobs, package_jobs_api, package_request, work_research
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, author_proof, package_signature
@@ -2756,6 +2756,7 @@ async def start_session_watcher() -> None:
     _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
     _spawn(_watch_package_jobs())
+    work_research.REFRESHER.start(_research_search, _research_folder_for)
     _subsystems_task = _spawn(_watch_subsystems())
     _follow_usage_poll()
 
@@ -2763,6 +2764,7 @@ async def start_session_watcher() -> None:
 async def stop_session_watcher() -> None:
     global session_watcher, _agents_task, _usage_task
     global _workflow_task, _subsystems_task, _work_task
+    work_research.REFRESHER.stop()
     for task in (_agents_task, _usage_task, _workflow_task, _subsystems_task, _work_task):
         if task is not None:
             task.cancel()
@@ -13333,7 +13335,8 @@ async def tool_knowledge_search(args: dict) -> str:
     said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
-        kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase")),
+        kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase"),
+        under=args.get("under")),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
     return said
 
@@ -14379,6 +14382,20 @@ def _publish_work_frame(frame: dict) -> None:
 # again only when it changes, and sent as one frame; /api/work returns it.
 work_held = work_view.WorkView(_publish_work_frame)
 work_store.on_changed(work_held.refresh)
+# Each Work item's own research, made again on every change of it
+# (work_research.py), once the session watcher starts it.
+work_store.on_changed(work_research.REFRESHER.changed)
+
+
+def _research_search(text: str, under: Optional[str], kinds: Optional[list]) -> dict:
+    """A Work item's research query: the brain's own knowledge_search."""
+    return knowledge_api.search(knowledge_calls, text, under=under, kinds=kinds,
+                                limit=work_research.HITS)
+
+
+def _research_folder_for(path: str) -> Optional[str]:
+    found = folder_catalog.folder_for_cwd(path) if folder_catalog is not None else None
+    return found.id if found is not None else None
 WORK_TICK_SEC = 1.0
 
 

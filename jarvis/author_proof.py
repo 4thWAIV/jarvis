@@ -33,9 +33,10 @@ import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Optional
+from typing import Callable, Optional
 
-from jarvis import bundle_archive, codex_sessions, session_message_sender, session_watch
+from jarvis import (bundle_archive, codex_sessions, session_message_sender, session_transcript,
+                    session_watch)
 
 # What `--check-only` prints, followed by the source's digest.
 MARK = "jarvis-author-source sha256:"
@@ -166,40 +167,9 @@ def digest_in_zip(zip_path: Path) -> Optional[str]:
 
 # -- the author's own transcript ---------------------------------------------------------
 
-def _plain(path: Path) -> bool:
-    try:
-        return path.is_file() and not path.is_symlink() and not path.parent.is_symlink()
-    except OSError:
-        return False
-
-
-def _first_line(path: Path) -> dict:
-    return session_message_sender._first_object(path)
-
-
 def transcript(claim: Claim) -> Optional[Path]:
     """The author session's own transcript file, found by its id, or None."""
-    if claim.engine == "claude":
-        for root in session_watch.config_roots():
-            projects = Path(root) / "projects"
-            if not projects.is_dir():
-                continue
-            for path in sorted(projects.glob(f"*/{claim.session}.jsonl")):
-                if _plain(path):
-                    return path
-        return None
-    home = codex_sessions.codex_home()
-    try:
-        thread = codex_sessions.threads(home).get(claim.session) or {}
-    except Exception:
-        thread = {}
-    if thread.get("rollout_path") and _plain(Path(thread["rollout_path"])):
-        return Path(thread["rollout_path"])
-    for path in sorted((home / "sessions").glob(f"*/*/*/rollout-*-{claim.session}.jsonl")):
-        payload = _first_line(path).get("payload") or {}
-        if _plain(path) and isinstance(payload, dict) and payload.get("id") == claim.session:
-            return path
-    return None
+    return session_transcript.find(claim.engine, claim.session)
 
 
 def _head_objects(path: Path) -> list[dict]:
@@ -237,93 +207,8 @@ def fresh(path: Path) -> bool:
     return _first_prompt(_head_objects(path)).lstrip().startswith(PROMPT_HEAD)
 
 
-def _when(obj: dict) -> Optional[float]:
-    stamp = obj.get("timestamp")
-    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
-        return float(stamp)
-    return session_watch.iso_seconds(stamp)
-
-
-def _text(value) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "\n".join(_text(v.get("text") if isinstance(v, dict) else v) for v in value)
-    if isinstance(value, dict):
-        return _text(value.get("output") or value.get("content") or value.get("text") or "")
-    return ""
-
-
-def _calls(obj: dict) -> Iterator[tuple[str, str]]:
-    """(call id, its input as text) of each tool call the assistant makes
-    on this line: Claude Code's tool_use, Codex's function or shell call."""
-    if obj.get("type") == "assistant" and not obj.get("isSidechain"):
-        content = (obj.get("message") or {}).get("content")
-        for block in content if isinstance(content, list) else ():
-            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id"):
-                yield str(block["id"]), json.dumps(block.get("input"), ensure_ascii=False)
-    elif obj.get("type") == "response_item":
-        p = obj.get("payload") or {}
-        if isinstance(p, dict) and p.get("type") in ("function_call", "custom_tool_call",
-                                                     "local_shell_call") and p.get("call_id"):
-            raw = p.get("arguments", p.get("input", p.get("action")))
-            yield str(p["call_id"]), raw if isinstance(raw, str) else json.dumps(raw)
-
-
-def _results(obj: dict) -> Iterator[tuple[str, str]]:
-    """(call id, its output as text) of each tool result on this line."""
-    if obj.get("type") == "user" and not obj.get("isSidechain"):
-        content = (obj.get("message") or {}).get("content")
-        for block in content if isinstance(content, list) else ():
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                yield str(block.get("tool_use_id") or ""), _text(block.get("content"))
-    elif obj.get("type") == "response_item":
-        p = obj.get("payload") or {}
-        if isinstance(p, dict) and p.get("type") in ("function_call_output",
-                                                     "custom_tool_call_output"):
-            yield str(p.get("call_id") or ""), _text(p.get("output"))
-
-
 def _is_check(call: str) -> bool:
     return "make_package" in call and "--check-only" in call
-
-
-def _command_run(obj: dict) -> Optional[tuple[str, str]]:
-    """(its command, all it printed) of a command Codex records as finished
-    on this line (`item_completed` with a CommandExecution item), else None.
-    A command that outlives its first wait hands its output back to a later
-    poll of its session (`write_stdin`), so the tool call that started it
-    never carries its output; this record holds the command and its whole
-    output together."""
-    if obj.get("type") != "event_msg":
-        return None
-    p = obj.get("payload") or {}
-    item = p.get("item") if isinstance(p, dict) and p.get("type") == "item_completed" else None
-    if not isinstance(item, dict) or item.get("type") != "CommandExecution":
-        return None
-    command = item.get("command")
-    command = " ".join(map(str, command)) if isinstance(command, list) else _text(command)
-    return command, _text(item.get("aggregated_output") or item.get("stdout") or "")
-
-
-def _lines_with(path: Path, needles: tuple[bytes, ...]) -> Iterator[dict]:
-    """Each JSON object of the transcript, from its first line to its last,
-    whose line holds one of `needles`; the rest are passed over unparsed.
-    Read one line at a time, so a long transcript (screenshots make one
-    tens of megabytes) is never held whole."""
-    try:
-        with open(path, "rb") as fh:
-            for raw in fh:
-                if not any(n in raw for n in needles):
-                    continue
-                try:
-                    obj = json.loads(raw)
-                except ValueError:
-                    continue
-                if isinstance(obj, dict):
-                    yield obj
-    except OSError:
-        return
 
 
 def checked(path: Path, digest: str, at: float) -> bool:
@@ -334,19 +219,19 @@ def checked(path: Path, digest: str, at: float) -> bool:
     checks: set[str] = set()
     want = MARK + digest
     def in_window(obj: dict) -> bool:
-        when = _when(obj)
+        when = session_transcript.when(obj)
         return when is not None and at - WINDOW_SEC <= when <= at + SLACK_SEC
 
-    for obj in _lines_with(path, (b"--check-only", want.encode())):
-        for cid, call in _calls(obj):
+    for obj in session_transcript.lines(path, (b"--check-only", want.encode())):
+        for cid, _tool, call in session_transcript.calls(obj):
             if _is_check(call):
                 checks.add(cid)
-        for cid, output in _results(obj):
+        for cid, output in session_transcript.results(obj):
             if cid in checks and want in output and in_window(obj):
                 return True
         # Codex: the check's command and its output, recorded together once
         # it finished (its output may have come back on a later poll).
-        run = _command_run(obj)
+        run = session_transcript.command_run(obj)
         if run is not None and _is_check(run[0]) and want in run[1] and in_window(obj):
             return True
     return False

@@ -2526,9 +2526,12 @@ TOOL_SPECS = [
             "Each hit has its text, source and trust; "
             "untrusted ones are other people's words. When he speaks Spanish, also give "
             "query_en, the question in English. include_received false keeps to his own words. "
+            "`under` keeps to the items below one path: a package's evidence "
+            "(/work/<id>/packages/<package id>/evidence) or a Work item's folder (/work/<id>). "
             "The JSON comes a page at a time."),
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string"}, "query_en": {"type": "string"}, "phrase": {"type": "string"},
+            "under": {"type": "string"},
             "include_received": {"type": "boolean"},
             "kinds": {"type": "array", "items": {"type": "string"}},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50},

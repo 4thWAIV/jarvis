@@ -813,13 +813,18 @@ class Items:
 
     def _vector_state(self, o: int, doc: dict, access: Access) -> Optional[dict]:
         """Whether the item's vectors exist for its current content: the
-        whole-item vector and one per section, or waiting."""
+        whole-item vector and one per section, or waiting; `complete` once
+        every section has its vector too; `off` with no embedding model."""
         summary = embedded_summary(doc)
         if summary is None or not (access.content if doc.get("_content") is not None else access.data):
             return None
-        embedded = self.vectors is not None and self.vectors.item_embedded(o)
+        if self.vectors is None or self.vectors.embedder is None:
+            return {"state": "off", "sections": 0, "complete": False}
+        sections = int(summary.get("sections") or 0)
+        embedded = self.vectors.item_embedded(o)
         return {"state": "embedded" if embedded else "waiting",
-                "sections": summary.get("sections", 0) if embedded else 0}
+                "sections": sections if embedded else 0,
+                "complete": embedded and self.vectors.item_complete(o, sections)}
 
     def history(self, path: str, *, limit: int = 100, before: Optional[int] = None,
                 person: str = OWNER, fields: Optional[list] = None) -> dict:

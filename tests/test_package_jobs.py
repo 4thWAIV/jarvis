@@ -443,14 +443,21 @@ def test_a_blocked_run_is_in_error_with_everyone_told(wired, tmp_path, spawned, 
     assert store.get("package_job", job).state != "pending"
 
 
-def test_a_step_not_built_yet_is_an_error_not_a_silent_stop(wired, tmp_path, spawned):
+def gather_done(doc):
+    """A gather step that has gathered (named in PRODUCERS by a test)."""
+
+
+def test_a_step_not_built_yet_is_an_error_not_a_silent_stop(wired, tmp_path, spawned,
+                                                            monkeypatch):
     server, *_, home = wired
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
+    monkeypatch.setitem(pj.PRODUCERS, "gather", f"{__name__}:gather_done")
     job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
     assert pj.run(job) == 1
     error = pj.get(job)["error"]
-    assert error["step"] == "gather" and "not built" in error["reason"]
+    assert pj.get(job)["done"] == ["gather"]
+    assert error["step"] == "mark" and "not built" in error["reason"]
 
 
 def test_with_no_work_item_the_error_is_a_message_to_tim(wired, tmp_path, spawned):

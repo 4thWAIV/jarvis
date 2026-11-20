@@ -70,7 +70,7 @@ STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
 # it returns WAITING when it asked the sender and waits on the answers,
 # raises Blocked when it cannot go on. A step with none is not built yet.
 # The deliver step signs with JARVIS's own key (`sign`).
-PRODUCERS: dict[str, str] = {}
+PRODUCERS: dict[str, str] = {"gather": "jarvis.package_gather:gather"}
 # At most five rounds of questions to the sender (Tim, 2026-11-19).
 MAX_ROUNDS = 5
 # A sender's answer is waited for 2 hours before Error (Tim, 2026-11-19).
@@ -257,7 +257,15 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
             raise JobError(f"Job {job_id} is {d['state']}, not waiting on your answers.")
         d["rounds"][-1].update(answers=given, answered_at=time.time())
         d["state"], d["queued_by"] = QUEUED, _this_server()
-    return _change(job_id, "answered", write)
+    doc = _change(job_id, "answered", write)
+    # Kept with the package's evidence too, a file a round, indexed as it is
+    # written (workflow.yaml gather layout sender-answers/).
+    from jarvis import package_evidence
+    place = package_evidence.place_of(doc)
+    if package_evidence.gathered(place) is not None:
+        package_evidence.add_sender_answers(place, len(doc["rounds"]),
+                                            doc["rounds"][-1]["questions"], given)
+    return doc
 
 
 # -- what a step calls -------------------------------------------------------------------

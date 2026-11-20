@@ -425,6 +425,44 @@ EXEMPT = {
         "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
         "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "
         "header; a refusal quotes at most 40 characters of an argument after 'Refused:'"),
+    "evidence_readers.ci_run": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.issue": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.message": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.package": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.pr": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.run": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.work_item": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.work_item_text": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.workflow": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "package_evidence._message_state": (
+        "it reads a message's direction and state to set Tim's knowledge state, one of three fixed words; it prints nothing"),
+    "package_evidence.knowledge_state": (
+        "it returns one of three fixed knowledge states from a row's type and stored path; it prints nothing"),
+    "package_evidence.add_sender_answers": (
+        "it writes the sender's answers into the package's evidence file sender-answers/<n>.md, read by the package's steps as the sender's words; never a brain header, never said"),
+    "package_gather.gather_jarvis_material": (
+        "it writes JARVIS's own material into the package's evidence files (jarvis/), read by the package's steps as material; never a brain header, never said"),
+    "package_gather.retrieve_labels": (
+        "it writes manifest rows for the labels retrieval resolved, in the package's evidence; never a brain header, never said"),
+    "package_gather.tim_text": (
+        "it writes Tim's record into the package's evidence file jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
+    "session_transcript.find": (
+        "it returns the path of a session's own transcript, found by its id; nothing it reads is printed, said or put in a header"),
+    "work_research._markdown": (
+        "it writes what was looked up for a Work item into its research file, data/work/<id>/research/queries.md, indexed as material; never a brain header, never said"),
+    "work_research._tims_words": (
+        "it collects his messages on a Work item into its research file as hits; never a brain header, never said"),
+    "work_research.refresh": (
+        "it writes a Work item's research files from what was looked up; never a brain header, never said"),
     "author_proof.transcript": (
         "it returns the path of the author session's own transcript, found by an id checked against "
         "a fixed pattern; nothing it reads is printed, said or put in a header"),

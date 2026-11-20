@@ -76,7 +76,8 @@ def test_check_1_counted_once(uds, opened):
     _embedded(opened)
     counts = uds.count(TIM)
     assert (counts.items, counts.embedded, counts.waiting) == (3, 2, 0)
-    assert uds.get(TIM, "/cv/long.md", {Stream.VECTORS}).vectors == {"state": "embedded", "sections": 30}
+    assert uds.get(TIM, "/cv/long.md", {Stream.VECTORS}).vectors == {"state": "embedded", "sections": 30,
+                                                                    "complete": True}
     opened[0].vectors.set_paused(True)
     uds.put(TIM, "/cv/a.md", data={"title": "A"}, content={"text": "# Gardening\nRoses and tulips."})
     counts = uds.count(TIM, under="/cv")
