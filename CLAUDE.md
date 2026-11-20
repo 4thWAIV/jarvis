@@ -947,10 +947,23 @@ evidence; items needing him first. The session then sends it with
 note, and pieces past planned or ready with no evidence (exit 1 when any).
 The Workflows view stays below the list, under its
 own heading. The record is `work_store.py`: one document per item,
-`/work/<id>.work` (records), its pieces and decisions inline and its events
-the document's versions (`records.history(path, fields=["events"])`;
-`latest` reads only the newest versions); every change and its event one
-write, by `create` and `record`, the only writers. An item wraps a
+`/work/<id>/<id>.work` (records), the first thing in the item's own folder
+`/work/<id>/` (`work_store.folder_of`), its pieces and decisions inline and
+its events the document's versions (`records.history(path,
+fields=["events"])`; `latest` reads only the newest versions); every
+change and its event one write, by `create` and `record`, the only
+writers. Items were at `/work/<id>.work` before; `work_folders.py` moves
+each into its folder at every start, before anything reads one
+(`server._start_on_records`; nothing to move once done): the engine has no
+move, so `records.move` copies every version in order (who wrote it, its
+change and summary, a delete as a delete) to the new path, checks the
+count of versions and the newest data, then deletes the old path (its
+versions kept) with any derived links carried; a move stopped part way is
+taken up where it stopped, an engine snapshot is taken first
+(`records_cutover.take_snapshot`), and `python -m jarvis.work_folders
+check|forward|back` says where every item is or moves them (back, with
+JARVIS stopped and the code from before). Project works at `/work/works/`
+are not Work items and never move. An item wraps a
 ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
@@ -2340,8 +2353,15 @@ person, model and time) until the owner accepts one
 (`knowledge_content.py`): every file under a registered folder (FILES
 reader, local, available, under its projects' widest index scope; off on
 every link keeps it out; in no project, docs) at
-`/folders/<folder id>/<rel>`, and JARVIS's answers, packages and received
-files at `/jarvis/<area>/<rel>`; data holds the path entry (`file`,
+`/folders/<folder id>/<rel>`, JARVIS's answers, packages and received
+files at `/jarvis/<area>/<rel>`, and a Work item's files on disk
+(`data_paths.work_dir()`, `data/work/<id>/`) at `/work/<id>/<rel>` and a
+package's made for no Work item (`data_paths.package_dir()`,
+`data/package/<package id>/`, apart from `data/packages`) at
+`/packages/<package id>/<rel>`, both text scope, untrusted, under prefixes
+that also hold records (`Root.shares`: the content child writes and removes
+only its own file items, those with `file`, never a record at a file's
+path; `forget_root` likewise leaves records); data holds the path entry (`file`,
 `size`, `mtime`, `inode`, `sha256`), `state` (pending, indexed,
 unreadable with `reason`), `trust` and what the reader found; content the
 text and sections from `content_sections.py` (bundle_readers for PDF,
@@ -3440,6 +3460,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   the server answering while it runs: its status, the 503 gate and the
   `/api/records/move` route; `frontend/src/RecordsMove.tsx` is the page's
   side
+- `work_folders.py` — Every Work item moved into its own folder,
+  `/work/<id>/<id>.work`, with its whole history (`records.move`), at start
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live

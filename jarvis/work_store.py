@@ -213,8 +213,9 @@ LIST_MAX = 100
 
 # ── the document ────────────────────────────────────────────────────────
 #
-# One Work item is one document, `/work/<id>.work` (its id through
-# _records.segment): the item's own fields under the names its columns had,
+# One Work item is one document, `/work/<id>/<id>.work` in the item's own
+# folder (its id through _records.segment; `/work/<id>.work` before
+# work_folders.py moved it): the item's own fields under the names its columns had,
 # its pieces (`pieces`, in their order) and decisions (`decisions`) inline,
 # and the events this version records (`events`, record_cells). The item's
 # log is the document's versions, read back with _records.history(path,
@@ -243,7 +244,21 @@ TABLES = ("work_items", "work_pieces", "work_decisions", "work_events")
 _JSON_PIECE = ("after_keys", "evidence")
 
 
+def folder_of(item_id: str) -> str:
+    """The Work item's own folder, `/work/<id>`: the item and everything
+    kept for it (its research, its packages and their runs)."""
+    return f"{ROOT}/{_records.segment(item_id)}"
+
+
 def path_of(item_id: str) -> str:
+    """The Work item itself, `/work/<id>/<id>.work`, the first thing in its
+    folder (work_folders.py moved every item here from `old_path_of`)."""
+    return f"{folder_of(item_id)}/{_records.segment(item_id)}.{TYPE}"
+
+
+def old_path_of(item_id: str) -> str:
+    """Where a Work item was before it had a folder, `/work/<id>.work`:
+    read only by the move into folders (work_folders.py)."""
     return f"{ROOT}/{_records.segment(item_id)}.{TYPE}"
 
 

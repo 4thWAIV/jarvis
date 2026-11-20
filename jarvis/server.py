@@ -61,6 +61,7 @@ from jarvis import knowledge_client
 from jarvis import records
 from jarvis import records_cutover
 from jarvis import records_move
+from jarvis import work_folders
 from jarvis import knowledge_routes
 from jarvis import projects_api
 from jarvis import messages_api
@@ -3377,6 +3378,11 @@ async def _start_on_records() -> None:
     except Exception:
         log.warning("voice settings: not read at startup; the defaults until they are",
                     exc_info=True)
+
+    # Every Work item into its own folder, /work/<id>/<id>.work, with its
+    # whole history, before anything reads one (work_folders.py; nothing
+    # to move once done).
+    await asyncio.to_thread(work_folders.move)
 
     run_store.init_db()
     # The old `dispatches` -> `runs` migration is retired with SQLite: every

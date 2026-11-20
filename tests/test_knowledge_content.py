@@ -413,3 +413,32 @@ def test_the_watcher_indexes_a_voice_file_only_once_it_is_closed(engine):
         assert (service.counters.indexed, service.counters.unchanged) == (2, 0)   # each read once
     finally:
         service.stop()
+
+
+def test_a_work_items_and_a_packages_files_are_under_their_folders_of_records(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
+    roots = {r.prefix: r for r in kc.jarvis_roots()}
+    assert roots["/work"].path == os.path.realpath(tmp_path / "data" / "work")
+    assert roots["/packages"].path == os.path.realpath(tmp_path / "data" / "package")
+    assert roots["/work"].shares and roots["/packages"].shares and roots["/work"].scope == "text"
+
+
+def test_a_shared_root_never_writes_over_or_removes_a_record(engine, tmp_path):
+    _, uds = engine
+    disk = tmp_path / "work"
+    (disk / "work-1" / "packages" / "p-1").mkdir(parents=True)
+    (disk / "work-1" / "work-1.work").write_text("a file named as the record is")
+    (disk / "work-1" / "packages" / "p-1" / "handoff.json").write_text('{"question": "Which?"}')
+    uds.put(TIM, "/work/work-1/work-1.work", data={"title": "The Work item", "state": "ready"})
+    root = kc.Root("/work", os.path.realpath(disk), "text", "untrusted", shares=True)
+    indexer = kc.Indexer(uds)
+    assert _index_all(indexer, root) == ["work-1/packages/p-1/handoff.json"]
+    assert uds.get(TIM, "/work/work-1/work-1.work").data == {"title": "The Work item", "state": "ready"}
+    assert indexer.changed(root, "work-1/work-1.work") is None
+    (disk / "work-1" / "work-1.work").unlink()
+    assert indexer.changed(root, "work-1/work-1.work") is None
+    assert indexer.scan(root) == []
+    assert uds.get(TIM, "/work/work-1/work-1.work").data["title"] == "The Work item"
+    assert indexer.forget_root("/work") == 1
+    assert uds.get(TIM, "/work/work-1/packages/p-1/handoff.json") is None
+    assert uds.get(TIM, "/work/work-1/work-1.work") is not None

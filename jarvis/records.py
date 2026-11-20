@@ -452,3 +452,98 @@ def write_many(writes: list[tuple[str, dict]], *, by: Caller = JARVIS, change: O
         uds().transaction(by, tx, change=change, summary=summary)
         n += len(writes[i:i + batch])
     return n
+
+
+# -- moving a record ------------------------------------------------------------
+
+HISTORY_MAX = 10000
+"""The most versions a record moved with its history may have (the
+engine's own limit on one history read), so a move never cuts one short."""
+
+
+class MoveFailed(RuntimeError):
+    """A record could not be moved with its whole history."""
+
+
+@dataclass(frozen=True)
+class _Step:
+    """One version of a record as moved: what was written and by whom."""
+    op: str
+    caller: Caller
+    change: Optional[str]
+    summary: Optional[str]
+    data: Optional[dict]
+
+
+def _steps(path: str) -> list[_Step]:
+    """Every version of `path`, oldest first, as it was written."""
+    found = history(path, limit=HISTORY_MAX)
+    if len(found) >= HISTORY_MAX:
+        raise MoveFailed(f"{path} has {HISTORY_MAX} versions or more, more than one read gives whole")
+    out = []
+    for v in found:
+        caller = Caller(person=v.by or JARVIS.person, agent=v.agent, model=v.model)
+        data = None
+        if v.op != "delete":
+            rec = get(path, version=v.version)
+            if rec is None:
+                raise MoveFailed(f"{path}: version {v.version} cannot be read")
+            data = rec.data
+        out.append(_Step("delete" if v.op == "delete" else "put", caller, v.change, v.summary, data))
+    return out
+
+
+def _derived(path: str) -> list:
+    """The links made by a model (not from the path or a field) at `path`,
+    either way: they are carried to where it moves."""
+    return [link for link in uds().links(JARVIS, path, origins=["derived"], limit=1000)]
+
+
+def move(src: str, dst: str) -> int:
+    """Move one record to `dst` with its whole history (the engine has no
+    move): every version of `src` written to `dst` in order, each by whom
+    it was written and with its change and summary (a delete as a delete),
+    then `src` deleted (its versions stay until forgotten) with its
+    derived links carried, in one write that lands only while `src` is
+    still as it was copied. Checked: `dst` has as many versions as `src`
+    and the same newest data. A copy stopped part way is taken up where it
+    stopped (`dst` holding the first versions of `src`, exactly); a `dst`
+    that was deleted (a move back) is forgotten first; any other `dst` is
+    refused. Returns how many versions were moved: 0 when `src` is no
+    record now and `dst` is (moved before)."""
+    now = get(src, streams=DATA | {Stream.CONTENT})
+    if now is None:
+        if get(dst) is not None:
+            return 0
+        raise MoveFailed(f"{src} is no record to move")
+    steps = _steps(src)
+    there = _steps(dst) if history(dst, limit=1) else []
+    if there != steps[:len(there)]:
+        if get(dst) is not None:
+            raise MoveFailed(f"{dst} holds another record; {src} was not moved")
+        uds().forget(JARVIS, [dst], deadline=60.0)
+        there = []
+    for n, step in enumerate(steps[len(there):], start=len(there)):
+        tx = Transaction()
+        last = n == len(steps) - 1
+        content = now.content if last and now.content is not None else KEEP
+        if step.op == "delete":
+            tx.delete(dst, expect_version=n)
+        elif n == 0 or steps[n - 1].op == "delete":
+            tx.put(dst, step.data, content=content, absent=True)
+        else:
+            tx.put(dst, step.data, content=content, expect_version=n)
+        uds().transaction(step.caller, tx, change=step.change, summary=step.summary)
+    moved = get(dst)
+    if moved is None or len(history(dst, limit=HISTORY_MAX)) != len(steps) or moved.data != now.data:
+        raise MoveFailed(f"{dst} is not {src} as it was: the move was checked and stopped")
+    tx = Transaction().check(dst, expect_version=moved.version).delete(src, expect_version=now.version)
+    links = _derived(src)
+    for link in links:
+        source = dst if link.source == src else link.source
+        target = dst if link.target == src else link.target
+        tx.link(source, link.kind, target, model=link.model or "moved", weight=link.weight)
+    # A derived link written by an AI is only a proposal: carried links
+    # were accepted already, so they are carried as the owner's.
+    uds().transaction(TIM if links else JARVIS, tx, change="moved", summary=f"to {dst}")
+    return len(steps)

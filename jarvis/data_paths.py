@@ -627,6 +627,26 @@ def run_context_dir() -> Path:
     return path
 
 
+def work_dir() -> Path:
+    """Work items' files on disk, one folder a Work item,
+    `work/<id>/` (its packages' runs under `packages/<package id>/runs/`),
+    mapped by the knowledge engine's content root to `/work/<id>/`, the
+    Work item's own folder of records (knowledge_content.jarvis_roots)."""
+    path = data_dir() / "work"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def package_dir() -> Path:
+    """The files of packages made for no Work item, one folder a package,
+    `package/<package id>/`, mapped by the content root to
+    `/packages/<package id>/` (knowledge_content.jarvis_roots). Not
+    `packages_dir()`, the packages received, which moves later."""
+    path = data_dir() / "package"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def packages_dir() -> Path:
     """Work packages received from teammates and unpacked to be run here
     (work_packages.py), one folder each."""
