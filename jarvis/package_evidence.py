@@ -244,7 +244,7 @@ def index_now(place: Place, uds=None) -> list[str]:
 class Waiting:
     """What is still not indexed, and why it cannot be."""
     paths: list[str] = field(default_factory=list)
-    off: bool = False               # no embedding model: vectors never come
+    off: bool = False               # no embedding model: said when the wait ends
 
 
 def not_indexed(items: list[str], uds=None) -> Waiting:
@@ -286,17 +286,16 @@ def wait_indexed(place: Place, step: str, uds=None) -> list[str]:
         waiting = not_indexed(items, uds)
         if not waiting.paths:
             return items
-        if waiting.off:
-            raise Blocked(step, "The package's evidence cannot be indexed by meaning: no "
-                          "embedding model is installed.",
-                          f"JARVIS read {len(items)} evidence file(s) into the knowledge engine.",
-                          "Install the embedding model (Settings, Knowledge), then a new run.")
         if CLOCK() - started >= INDEX_WAIT_SEC:
+            why = (" No embedding model is installed, so their meaning is never indexed."
+                   if waiting.off else "")
             raise Blocked(step, f"{len(waiting.paths)} of the package's {len(items)} evidence "
-                          f"file(s) were not indexed within 10 minutes.",
+                          f"file(s) were not indexed within 10 minutes.{why}",
                           f"JARVIS read the evidence into the knowledge engine at once and "
                           f"waited 10 minutes for its words and meaning to be indexed "
                           f"(still waiting: {', '.join(waiting.paths[:5])}).",
+                          "Install the embedding model (Settings, Knowledge), then a new run."
+                          if waiting.off else
                           "Check Settings, Knowledge (indexing on, the engine running); once "
                           "it indexes, a new run.")
         SLEEP(INDEX_LOOK_SEC)

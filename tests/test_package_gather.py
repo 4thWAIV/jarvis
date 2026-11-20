@@ -255,12 +255,22 @@ def test_evidence_not_indexed_in_ten_minutes_puts_the_run_in_error(tmp_path, tra
     assert pe.INDEX_WAIT_SEC == 600
 
 
-def test_with_no_embedding_model_the_run_is_in_error_at_once(tmp_path, transcript, monkeypatch):
+def test_with_no_embedding_model_the_run_still_waits_ten_minutes(tmp_path, transcript,
+                                                                 monkeypatch):
     monkeypatch.setattr(emb, "RUNNER", lambda: None)
     doc = _job(tmp_path, "", [{"type": "content", "text": "Words."}])
+    now, slept = [0.0], []
+    monkeypatch.setattr(pe, "CLOCK", lambda: now[0])
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+    monkeypatch.setattr(pe, "SLEEP", sleep)
     with pytest.raises(pj.Blocked) as blocked:
         package_gather.gather(pj.get(doc["id"]))
-    assert "no embedding model" in blocked.value.reason
+    assert now[0] >= pe.INDEX_WAIT_SEC and slept                # waited the whole 10 minutes
+    assert "within 10 minutes" in blocked.value.reason
+    assert "No embedding model is installed" in blocked.value.reason
 
 
 def test_a_label_retrieval_cannot_answer_is_an_error_saying_why(tmp_path, transcript,
