@@ -20,8 +20,8 @@ Unix WebSocket and spoken to with the same JSON-RPC as the Codex brain
 
 It runs in the user's own Codex home (his login, his rules, his tools), as a
 Claude run runs on his Claude login. On connecting it reads the app server's
-version and refuses to start a run on one this was not checked against
-(`TESTED_VERSIONS`), saying so. If the connection drops it connects again
+version and refuses to start a run only on one older than
+`codex_provider.MIN_VERSION`, saying so; a newer one is used as it comes. If the connection drops it connects again
 and resumes each running thread (`thread/resume`); a turn that ended while
 it was away is read back (`thread/turns/list`), and one it cannot get back
 within the bound ends the run failed, never stuck.
@@ -48,15 +48,6 @@ log = logging.getLogger("jarvis.codex_engine")
 NAME = "codex"
 PROVIDER = codex_provider.SERVICE
 
-# The app server releases whose generated protocol schema (`codex app-server
-# generate-json-schema`) this client was checked against: every request it
-# sends and every field it reads is in each. Any other is refused until it is
-# checked. The daemon updates itself (0.167.1 to 0.167.2 overnight, 11
-# November 2026), so a release it moves to is added here once its schema for
-# those messages is compared; 0.167.2's is the same as 0.167.1's, and a real
-# run on it is what the engine was first proven against.
-TESTED_VERSIONS = frozenset({"0.154.0", "0.167.1", "0.167.2"})
-
 # Same as a Claude run (run_executor's --dangerously-skip-permissions): a run
 # is unattended, so it never asks, and it has no sandbox (his answer,
 # "codex-freedom: same-as-claude").
@@ -81,7 +72,7 @@ _ENDS = ("turn/completed", "thread/closed")
 
 
 class Untested(Exception):
-    """The app server is a version this was not checked against."""
+    """The app server is older than JARVIS runs on (or says no version)."""
 
 
 def version_of(initialized: dict) -> Optional[str]:
@@ -92,12 +83,16 @@ def version_of(initialized: dict) -> Optional[str]:
 
 
 def check_version(initialized: dict) -> str:
+    """The app server's release, refused only when it is older than
+    `codex_provider.MIN_VERSION`: the daemon updates itself, and a newer
+    release is used as it comes, as a newer Claude Code is."""
     version = version_of(initialized)
-    if version not in TESTED_VERSIONS:
+    if version is None:
+        raise Untested("the Codex app server gave no version; no Codex run is started on it")
+    if tuple(int(p) for p in version.split(".")) < codex_provider.MIN_VERSION:
         raise Untested(
-            f"the Codex app server is {version or 'of an unknown version'}, which JARVIS "
-            f"has not been checked against (it has been with "
-            f"{', '.join(sorted(TESTED_VERSIONS))}); no Codex run is started on it")
+            f"the Codex app server is {version}, older than the {codex_provider.MIN_VERSION_STR} "
+            f"JARVIS runs on; no Codex run is started on it")
     return version
 
 
