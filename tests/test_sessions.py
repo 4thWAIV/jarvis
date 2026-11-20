@@ -647,7 +647,7 @@ def test_the_program_applies_edits_only_where_their_old_text_is():
 @pytest.mark.asyncio
 async def test_the_editor_s_edits_are_applied_by_the_program(tmp_path):
     class Chat:
-        async def ask(self, text, timeout, answer_format=None):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
             self.sent, self.form = text, answer_format
             answer = {"edits": [{"start": 0, "end": 2, "old": "It", "new": "The store",
                                  "reason": "vague-referent", "source": "notes.md:1"}],
@@ -669,7 +669,7 @@ class _Participant:
         self.name, self.votes, self.sent = name, list(votes or []), []
         self.calls, self.log = list(calls or []), log if log is not None else []
 
-    async def ask(self, text, timeout, answer_format=None):
+    async def ask(self, text, timeout, answer_format=None, strict=True):
         self.sent.append(text)
         if answer_format is sessions.VOTE_FORM:
             vote = self.votes.pop(0)
@@ -736,9 +736,9 @@ async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes
     script.write_text("It broke.")
 
     class Editor(_Participant):
-        async def ask(self, text, timeout, answer_format=None):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
             if answer_format is sessions.VOTE_FORM:
-                return await super().ask(text, timeout, answer_format)
+                return await super().ask(text, timeout, answer_format, strict)
             self.sent.append(text)
             log.append("editor")
             assert "call_vote" in answer_format["properties"]
@@ -847,3 +847,16 @@ def test_the_brain_summarization_is_one_call_with_no_tools_and_checks_its_cites(
     assert kept == [sessions.Summary("q", "Ready.", ["/a.md"])]
     assert len(once.seen) == 1 and once.seen[0]["role"] == "summarization"
     assert '<hit path="/a.md">It is ready.</hit>' in once.seen[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_answered_in_words_alone_is_its_message_and_calls_no_vote():
+    class Words:
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            assert answer_format is sessions.TURN_FORM and strict is False
+            return sessions.Reply("Cut s22: it repeats s14.", None)
+    swarm = sessions.BrainSwarmSession({"cares_judge": Words()},
+                                       [sessions.Question("cares", "Does Tim care?")])
+    assert await swarm.turn("cares_judge", 5) == "Cut s22: it repeats s14."
+    assert swarm.conversation == [{"from": "cares_judge", "text": "Cut s22: it repeats s14."}]
+    assert swarm.state["cares"] == sessions.OPEN

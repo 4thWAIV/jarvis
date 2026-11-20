@@ -145,7 +145,7 @@ class ChatSession(Protocol):
     async def open(self) -> None: ...
 
     async def ask(self, text: str, timeout: float,
-                  answer_format: Optional[dict] = None) -> "Reply": ...
+                  answer_format: Optional[dict] = None, strict: bool = True) -> "Reply": ...
 
     async def close(self) -> None: ...
 
@@ -308,9 +308,10 @@ class BrainChatSession:
             raise SessionFailed(str(e)) from e
 
     async def ask(self, text: str, timeout: float,
-                  answer_format: Optional[dict] = None) -> Reply:
+                  answer_format: Optional[dict] = None, strict: bool = True) -> Reply:
         """One turn: its reply, and its JSON answer where it has a form (the
-        one-shot's own, or this turn's)."""
+        one-shot's own, or this turn's). `strict`: a reply not in its form
+        fails the session; else its answer is None and its words stand."""
         if self._child is None:
             raise SessionFailed(f"the {self.role.name} session is not open")
         form = answer_format if answer_format is not None else self.answer_format
@@ -333,6 +334,8 @@ class BrainChatSession:
         self._answered = True
         answer = json_answer(said) if form is not None else None
         if form is not None and not isinstance(answer, dict):
+            if not strict:
+                return Reply(text=said, answer=None)
             raise SessionFailed(f"the {self.role.name} session's answer was not in its form")
         return Reply(text=said, answer=answer)
 
@@ -643,9 +646,14 @@ class BrainSwarmSession:
         its last, and `add` (the program's own message to it); its message
         goes into the conversation, and the votes it calls are held."""
         sent = "\n\n".join(t for t in (self._new_for(name), add) if t)
-        reply = await self.participants[name].ask(sent, timeout, answer_format=TURN_FORM)
-        answer = reply.answer or {}
-        if not isinstance(answer.get("message"), str):
+        reply = await self.participants[name].ask(sent, timeout, answer_format=TURN_FORM,
+                                                  strict=False)
+        # A turn answered in words alone (a long-lived Claude session holds
+        # the form only as it is asked in the message): its words are its
+        # message, word for word, and it calls no vote.
+        answer = reply.answer if reply.answer is not None else {"message": reply.text,
+                                                                "call_vote": []}
+        if not isinstance(answer.get("message"), str) or not answer["message"].strip():
             raise SessionFailed(f"{name}'s turn had no message")
         self.say(name, answer["message"])
         self._seen[name] = len(self.conversation)

@@ -3308,7 +3308,7 @@ class _Role:
         self.given.append(text)
         return sessions.Reply("", self.answer)
 
-    async def ask(self, text, timeout, answer_format=None):
+    async def ask(self, text, timeout, answer_format=None, strict=True):
         return await self.once(text, timeout)
 
 

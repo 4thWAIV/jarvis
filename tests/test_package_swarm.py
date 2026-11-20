@@ -138,7 +138,7 @@ def _chat_factory(plan: Plan):
         async def close(self):
             pass
 
-        async def ask(self, text, timeout, answer_format=None):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
             answer = plan.answer(self.name, text, answer_format)
             return sessions.Reply(json.dumps(answer), answer)
     return Chat
