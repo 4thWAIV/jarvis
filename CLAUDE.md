@@ -1755,8 +1755,9 @@ of answers leaves the same questions unproven, asking stops (`asking`'s
 `swarm`. After three rounds without passing: the findings
 (`findings_questions`) to the sender (`package_jobs.failed_swarm`). What
 the swarm holds is kept in `swarm.json` (`BrainSwarmSession.saved`,
-`restore`, each participant's session, engine and model) between the run's
-processes.
+`restore`, the session, engine and model of each participant that has
+answered a turn; what was sent is taken as given only once it answers,
+`_heard`) between the run's processes.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
