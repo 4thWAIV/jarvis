@@ -32,6 +32,7 @@ test is over all of them, found in the source rather than listed here.
 """
 
 import ast
+import asyncio
 import importlib
 import re
 import sys
@@ -459,13 +460,21 @@ EXEMPT = {
         "it returns the path of a session's own transcript, found by its id; nothing it reads is printed, said or put in a header"),
     "work_research._markdown": (
         "it writes what was looked up for a Work item into its research file, data/work/<id>/research/queries.md, indexed as material; never a brain header, never said"),
-    "work_research._tims_words": (
-        "it collects his messages on a Work item into its research file as hits; never a brain header, never said"),
+    "work_research._summaries_md": (
+        "it writes the summaries of what was looked up for a Work item into its research file, "
+        "data/work/<id>/research/summaries.md, indexed as material, as _markdown writes queries.md; "
+        "never a brain header, never said"),
+    "claude_provider.role_command": (
+        "it builds a package role's `claude -p` argument list; the only field it reads is the "
+        "session id JARVIS made for that role's own session (`--session-id`), and the role's "
+        "prompt is one argument, never a header the brain reads or words said"),
+    "sessions.vote": (
+        "the field it reads is the question's state in the swarm, one of JARVIS's own words "
+        "(open, proven, failed); the call and each vote it writes are turns of the package "
+        "swarm's own conversation between role sessions, kept word for word as the design says, "
+        "never a brain header, never said"),
     "work_research.refresh": (
         "it writes a Work item's research files from what was looked up; never a brain header, never said"),
-    "author_proof.transcript": (
-        "it returns the path of the author session's own transcript, found by an id checked against "
-        "a fixed pattern; nothing it reads is printed, said or put in a header"),
     "package_author.claim_of": (
         "it builds the author claim from the receipt's engine and session id, both checked by "
         "author_proof.Claim.of against fixed values and a fixed pattern; its refusal names only "
@@ -1370,10 +1379,6 @@ EXEMPT = {
         "server and name). They reach a log line, usage_store and the brain "
         "provider's events; the only text it composes for the model is the "
         "assistant delta, which is the model's own output"),
-    "codex_provider.open": (
-        "it logs the id Codex gave JARVIS's own thread, the Codex home path "
-        "JARVIS chose, and a count; the server and tool names it reads are "
-        "the brain's own MCP inventory, reported as SessionInfo"),
     "codex_provider.call": (
         "a JSON-RPC call inside CodexUsage.read: the only value it prints is "
         "the method name, one of this module's own literals"),
@@ -2875,7 +2880,7 @@ def test_every_function_that_prints_a_session_field_is_driven_or_exempt():
     """The check that cannot miss a site. Not a list of names — the list IS
     the source file."""
     undecided = sorted(set(PRINTERS) - set(DRIVERS) - set(RUN_DRIVERS)
-                       - set(EXEMPT))
+                       - set(ROLE_PROMPT_DRIVERS) - set(EXEMPT))
     assert not undecided, (
         f"these print somebody else's words and nobody has decided whether "
         f"that is safe: {undecided}")
@@ -3239,3 +3244,119 @@ def test_an_ordinary_document_title_still_reaches_the_user(server,
     out = server.tool_review_document({"project": "chitauri"})
     assert "The Chitauri Plan" in out, out
     assert "1 sections" in out or "1 section" in out, out
+
+
+# --- a package role's prompt ---------------------------------------------------
+#
+# The package roles (sessions.py) are given other people's words: Tim's
+# material, the sender's labels, the script and its marked parts. Each is
+# given as a tagged document, its words as they are (never escaped: a value
+# copied from them, and its offsets, must be the text's own), every
+# attribute quoted. So a hostile value stands only inside its own element:
+# nothing of it is left once every element is taken out, and the program's
+# own lines around it are its own. A knowledge state that is not one of the
+# three is refused before anything is shared.
+
+_ELEMENT = re.compile(r"<([a-z_]+)(?:\s[^<>]*)?>.*?</\1>", re.S)
+
+
+def _outside_elements(text: str) -> str:
+    return _ELEMENT.sub("", text)
+
+
+def _assert_only_inside_elements(out: str) -> None:
+    assert MARKER not in _outside_elements(out), out
+
+
+class _Role:
+    """A package role session standing in for the brain: what it is given."""
+
+    def __init__(self, answer):
+        self.given, self.answer = [], answer
+
+    def for_role(self, role, prompt, folder, **kwargs):
+        self.given.append(prompt)
+        return self
+
+    async def once(self, text, timeout):
+        from jarvis import sessions
+        self.given.append(text)
+        return sessions.Reply("", self.answer)
+
+    async def ask(self, text, timeout, answer_format=None):
+        return await self.once(text, timeout)
+
+
+def _drive_share(monkeypatch, tmp_path):
+    from jarvis import sessions
+    with pytest.raises(ValueError) as refused:
+        sessions.share("author", [sessions.Known("words", HOSTILE)])
+    assert "\n" not in str(refused.value) and MARKER in str(refused.value)
+    kept = sessions.share("cares_judge", [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)])
+    return [sessions._material(kept, marked=False)]
+
+
+def _drive_material(monkeypatch, tmp_path):
+    from jarvis import sessions
+    items = [sessions.Known(HOSTILE, state, HOSTILE) for state in sessions.STATES]
+    return [sessions._material(items, marked=True), sessions._material(items, marked=False)]
+
+
+def _hostile_parts() -> list[dict]:
+    return [{"id": HOSTILE, "segment": HOSTILE, "kind": HOSTILE,
+             "position": {"start": 0, "end": len(HOSTILE)}, "within": None,
+             "scores": {HOSTILE: 1.0}}]
+
+
+def _drive_marked_parts(monkeypatch, tmp_path):
+    from jarvis import sessions
+    return [sessions.marked_parts(_hostile_parts())]
+
+
+def _drive_mark(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"scores": []})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
+    with pytest.raises(sessions.SessionFailed):
+        asyncio.run(sessions.BrainMarkingSession(tmp_path).mark(
+            HOSTILE, [sessions.Label("plain", HOSTILE, HOSTILE)],
+            [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)], 1.0))
+    return role.given
+
+
+def _drive_resolve(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"references": []})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
+    out = asyncio.run(sessions.BrainRetrievalSession(tmp_path).resolve(
+        [sessions.Reference("label-1", HOSTILE)], 1.0))
+    assert out[0]["resolved"] == sessions.NOT_FOUND
+    return role.given
+
+
+def _drive_edit(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"edits": []})
+    asyncio.run(sessions.BrainEditingSession(role).edit(
+        HOSTILE, _hostile_parts(), [sessions.Known(HOSTILE, sessions.PROBABLY_NOT, HOSTILE)],
+        1.0, source=HOSTILE))
+    return role.given
+
+
+ROLE_PROMPT_DRIVERS = {
+    "sessions.share": _drive_share,
+    "sessions._material": _drive_material,
+    "sessions.marked_parts": _drive_marked_parts,
+    "sessions.mark": _drive_mark,
+    "sessions.resolve": _drive_resolve,
+    "sessions.edit": _drive_edit,
+}
+
+
+@pytest.mark.parametrize("name", sorted(ROLE_PROMPT_DRIVERS))
+def test_a_package_role_is_given_other_people_s_words_only_inside_their_elements(
+        name, monkeypatch, tmp_path):
+    outputs = ROLE_PROMPT_DRIVERS[name](monkeypatch, tmp_path)
+    assert any(MARKER in out for out in outputs), (name, "the role was given nothing hostile")
+    for out in outputs:
+        _assert_only_inside_elements(out)
