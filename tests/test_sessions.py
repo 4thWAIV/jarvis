@@ -156,12 +156,17 @@ def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
     assert words[-2:] == ["--", "--web; rm -rf /"], "search words are data after --"
     assert role_lookups.argv("github_branches", {"repo": "o/r"}) == [
         "api", "--method=GET", "repos/o/r/branches", "--paginate"]
+    assert role_lookups.argv("github_commit_view", {"repo": "4thWAIV/jarvis",
+                                                    "sha": "4ffd18b6"}) == [
+        "api", "--method=GET", "repos/4thWAIV/jarvis/commits/4ffd18b6"]
     for name, bad in (("github_pr_view", {"repo": "o/r; ls", "number": 1}),
                       ("github_pr_view", {"repo": "o/r", "number": "1 --web"}),
                       ("github_run_view", {"repo": "o/r", "run_id": True}),
                       ("github_run_list", {"repo": "o/r", "branch": "a b"}),
                       ("github_pr_list", {"repo": "o/r", "state": "draft"}),
-                      ("github_search_commits", {"query": "  "})):
+                      ("github_search_commits", {"query": "  "}),
+                      ("github_commit_view", {"repo": "o/r"}),
+                      ("github_commit_view", {"repo": "o/r", "sha": "main/../x"})):
         with pytest.raises(role_lookups.Refused):
             role_lookups.argv(name, bad)
 
@@ -170,6 +175,7 @@ def test_a_github_lookup_runs_in_the_role_s_server_never_forwarded(monkeypatch):
     calls, forwarded = [], []
 
     async def fake_gh(args, timeout):
+        assert timeout is None, "the design gives a lookup no deadline"
         calls.append(args)
         return 0, '{"number": 176}', ""
     monkeypatch.setattr(role_lookups.gh_lookup, "gh_path", lambda: "/usr/bin/gh")

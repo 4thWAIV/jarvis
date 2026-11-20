@@ -8,7 +8,8 @@ exactly one fixed, read-only `gh` lookup: the program builds its argument
 list, and what the role gives (a repository, a number, search words) goes
 in only as data, checked by shape, never a shell string. The call is the
 same seam the brain's repository lookups use (`gh_lookup._run_gh`: an
-argument list, a deadline).
+argument list), with no deadline: the design gives these lookups none, so
+one answers when GitHub does (a long branch list included).
 
 These run in the role's tool server itself, never as the brain's tools:
 they are retrieval's alone (`roles.RETRIEVAL_LOOKUPS`).
@@ -150,6 +151,16 @@ def _search_commits(a: dict) -> list[str]:
             + ["--", _words(a)])
 
 
+def _commit_view(a: dict) -> list[str]:
+    # One commit by its hash: its message and its diff (each file's patch),
+    # read through GitHub's API with a fixed path, GET only. `gh search
+    # commits` does not find a repository's commits by hash.
+    sha = _optional(a, "sha", _SHA)
+    if sha is None:
+        raise Refused("sha must name a commit")
+    return ["api", "--method=GET", f"repos/{_repo(a)}/commits/{sha}"]
+
+
 def _branches(a: dict) -> list[str]:
     # What `git ls-remote` gave: the repository's branches and the commit
     # each is at, read through GitHub's API with a fixed path, GET only.
@@ -196,8 +207,13 @@ LOOKUPS: dict[str, Lookup] = {l.name: l for l in (
     Lookup("github_search_issues", "Search issues by words (gh search issues), optionally in "
            "one repository.",
            {"query": _WORDS, "repo": _REPO, "limit": _LIMIT}, ("query",), _search_issues),
-    Lookup("github_search_commits", "Search commits by words or hash (gh search commits), "
-           "optionally in one repository.",
+    Lookup("github_commit_view", "One commit by its hash, full or short: its message, "
+           "author and diff (GitHub's commits API).",
+           {"repo": _REPO, "sha": {"type": "string", "description": "The commit's hash."}},
+           ("repo", "sha"), _commit_view),
+    Lookup("github_search_commits", "Search commit messages by words (gh search commits), "
+           "optionally in one repository. A commit named by its hash is "
+           "github_commit_view's.",
            {"query": _WORDS, "repo": _REPO, "limit": _LIMIT}, ("query",), _search_commits),
     Lookup("github_branches", "A repository's branches and the commit each is at.",
            {"repo": _REPO}, ("repo",), _branches),
@@ -223,9 +239,7 @@ def call(name: str, arguments: dict) -> tuple[bool, str]:
     if gh_lookup.gh_path() is None:
         return False, "gh is not installed on this Mac."
     try:
-        code, out, err = asyncio.run(gh_lookup._run_gh(args, gh_lookup.GH_CALL_TIMEOUT))
-    except (asyncio.TimeoutError, TimeoutError):
-        return False, "GitHub did not answer in time."
+        code, out, err = asyncio.run(gh_lookup._run_gh(args, None))
     except OSError as e:
         return False, f"gh could not run: {e}."
     if code != 0:
