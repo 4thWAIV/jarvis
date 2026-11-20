@@ -191,7 +191,8 @@ def test_every_github_entry_type_has_its_lookups():
     assert {"github_pr_view", "github_pr_diff", "github_run_view", "github_run_failed_logs",
             "github_commit_view", "github_issue_view",
             "github_branch_commits"} <= set(role_lookups.NAMES)
-    assert "jobs" in role_lookups._RUN_FIELDS.split(",")
+    assert "jobs" in role_lookups._RUN_VIEW_FIELDS.split(",")
+    assert "jobs" not in role_lookups._RUN_FIELDS.split(","), "gh run list has no jobs field"
 
 
 def test_a_github_lookup_runs_in_the_role_s_server_never_forwarded(monkeypatch):

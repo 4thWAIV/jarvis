@@ -29,7 +29,8 @@ _PR_FIELDS = "number,title,state,url,headRefName,baseRefName,author,createdAt,me
 _PR_VIEW_FIELDS = _PR_FIELDS + ",mergeCommit,headRefOid"
 _ISSUE_FIELDS = "number,title,state,url,author,createdAt,closedAt"
 _RUN_FIELDS = ("databaseId,name,workflowName,displayTitle,status,conclusion,event,"
-               "headBranch,headSha,url,createdAt,jobs")
+               "headBranch,headSha,url,createdAt")
+_RUN_VIEW_FIELDS = _RUN_FIELDS + ",jobs"      # `gh run list` has no jobs
 _SEARCH_PR_FIELDS = "number,title,state,url,repository,createdAt"
 _SEARCH_COMMIT_FIELDS = "sha,url,repository,commit"
 
@@ -133,7 +134,8 @@ def _run_list(a: dict) -> list[str]:
 
 
 def _run_view(a: dict) -> list[str]:
-    return ["run", "view", _number(a, "run_id"), f"--repo={_repo(a)}", f"--json={_RUN_FIELDS}"]
+    return ["run", "view", _number(a, "run_id"), f"--repo={_repo(a)}",
+            f"--json={_RUN_VIEW_FIELDS}"]
 
 
 def _run_failed_logs(a: dict) -> list[str]:
