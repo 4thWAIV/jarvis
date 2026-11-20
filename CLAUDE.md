@@ -3013,8 +3013,11 @@ run writes (`codex_engine.neutral`: assistant text and tool_use blocks named
 as Claude names the act, then `result`), so `stream_parser.assess_outcome`
 and the dashboard read both alike; its tokens go to the run's columns and its
 plan's limits to `usage_store` under "openai". On connecting it reads the app
-server's version from `initialize` and refuses to start a run on one not in
-`TESTED_VERSIONS`, saying so in the run's error. A run is its engine's worker
+server's version from `initialize` and refuses to start a run only on one
+older than `codex_provider.MIN_VERSION` (or naming none), saying so in the
+run's error; a newer release, which the daemon updates itself to, is used as
+it comes, as a newer Claude Code is (the brain's preflight check the same
+minimum). A run is its engine's worker
 (`run_store.worker_of`: a Codex run is OpenAI's thread), which is how the
 inventory, activity and the roster's run filter (`all_run_ids`) know it.
 Tests drive it against a stand-in app server on a socket

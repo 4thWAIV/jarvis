@@ -22,7 +22,8 @@ that, the three tool names the model still sees (`exec`, `wait`,
 `request_user_input`) run nothing: asked to read a file of random text, it
 answered that it could not.
 
-Measured against Codex 0.154.0 (`TESTED_VERSION`) on this Mac. See
+Measured against Codex 0.154.0 on this Mac; any release from `MIN_VERSION`
+on is used, as Claude Code is from its minimum (preflight). See
 .agents/in-progress/openai-brain.html for the findings this rests on.
 """
 from __future__ import annotations
@@ -57,7 +58,12 @@ if TYPE_CHECKING:
 log = logging.getLogger("jarvis.brain")
 
 SERVICE = "openai"
-TESTED_VERSION = "0.154.0"
+# The oldest Codex JARVIS runs on, the brain and agent runs alike: a newer
+# release is used as it comes (Codex updates itself), never refused, as
+# Claude Code is used from preflight.MIN_CLAUDE_VERSION on. Compared as a
+# tuple of ints, never as a string.
+MIN_VERSION = (0, 154, 0)
+MIN_VERSION_STR = "0.154.0"
 DEFAULT_MODEL = "gpt-5.6-terra"
 
 # The features left on. Everything else Codex has switched on is switched off
@@ -387,6 +393,11 @@ class CodexSession:
                 "approvalPolicy": "never",
                 "sandbox": "workspace-write" if self.config.authoring else "read-only",
                 "developerInstructions": instructions,
+                # Codex 0.171.0 offers spawn_agent and its companions to
+                # every thread whatever the `multi_agent` feature says, and a
+                # long-lived thread's subagent runs: switched off, as every
+                # feature JARVIS does not keep is.
+                "config": {"agents": {"enabled": False}},
             }
             if self.config.resume:
                 # The same thread goes on (a package author answered by its
@@ -746,7 +757,7 @@ class CodexTranscripts:
 
 
 async def check_codex_cli(timeout: float = preflight.DEFAULT_CHECK_TIMEOUT) -> preflight.Check:
-    """`codex` is on PATH, ideally at the version this was measured against."""
+    """`codex` is on PATH, at `MIN_VERSION` or newer."""
     codex = shutil.which("codex")
     if not codex:
         return preflight.Check(
@@ -760,12 +771,11 @@ async def check_codex_cli(timeout: float = preflight.DEFAULT_CHECK_TIMEOUT) -> p
             message=f"`codex --version` gave no version: {(err or out).strip()[:120]!r}",
             remedy="Run `codex --version` yourself to see what's wrong.")
     shown = ".".join(str(p) for p in version)
-    if shown != TESTED_VERSION:
+    if version < MIN_VERSION:
         return preflight.Check(
             name="codex_cli", status=preflight.STATUS_WARN,
-            message=f"codex {shown} is not the {TESTED_VERSION} JARVIS was measured against.",
-            remedy=(f"It may work; if the brain misbehaves, install {TESTED_VERSION}: "
-                    f"npm install -g @openai/codex@{TESTED_VERSION}"))
+            message=f"codex {shown} is older than the {MIN_VERSION_STR} JARVIS needs.",
+            remedy="Update Codex: npm install -g @openai/codex")
     return preflight.Check(name="codex_cli", status=preflight.STATUS_OK,
                            message=f"codex {shown} on PATH.")
 
