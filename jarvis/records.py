@@ -461,6 +461,11 @@ HISTORY_MAX = 10000
 engine's own limit on one history read), so a move never cuts one short."""
 
 
+FORGET_DEADLINE_SEC = 1800.0
+"""How long forgetting a path a record moves to may take: it compacts what
+held it, on a large engine minutes."""
+
+
 class MoveFailed(RuntimeError):
     """A record could not be moved with its whole history."""
 
@@ -521,7 +526,7 @@ def move(src: str, dst: str) -> int:
     if there != steps[:len(there)]:
         if get(dst) is not None:
             raise MoveFailed(f"{dst} holds another record; {src} was not moved")
-        uds().forget(JARVIS, [dst], deadline=60.0)
+        uds().forget(JARVIS, [dst], deadline=FORGET_DEADLINE_SEC)
         there = []
     for n, step in enumerate(steps[len(there):], start=len(there)):
         tx = Transaction()

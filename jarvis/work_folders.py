@@ -72,10 +72,16 @@ def move(*, back: bool = False, snapshot: bool = True) -> Moved:
     if snapshot:
         from jarvis import records_cutover
         out.snapshot = records_cutover.take_snapshot(records.uds())
-    for item_id in todo:
-        src, dst = work_store.path_of(item_id), work_store.old_path_of(item_id)
-        if not back:
-            src, dst = dst, src
+    pairs = [(work_store.old_path_of(i), work_store.path_of(i)) for i in todo]
+    if back:
+        pairs = [(dst, src) for src, dst in pairs]
+    # Paths gone to before (a move back's, or forward again after one) are
+    # forgotten together: one forget compacts what held them all, where
+    # one a path would compact the engine once for each.
+    gone = [dst for _, dst in pairs if records.get(dst) is None and records.history(dst, limit=1)]
+    if gone:
+        records.uds().forget(records.JARVIS, gone, deadline=records.FORGET_DEADLINE_SEC)
+    for item_id, (src, dst) in zip(todo, pairs):
         out.versions += records.move(src, dst)
         out.items += 1
         out.ids.append(item_id)
