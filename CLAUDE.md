@@ -3137,8 +3137,9 @@ Read, Grep and Glob; the Theory of Mind reader and the cares and order
 judges nothing (their material, only what Tim knows and had access to, is
 in their prompt); retrieval its read tools for Work items, packages,
 messages, workflows and runs and its GitHub lookups (`role_lookups.py`:
-pull requests, CI runs, issues, a commit by its hash, searches and
-branches, each one fixed read-only `gh` argument list with what the role
+pull requests and a pull request's diff, CI runs with their jobs and a
+run's failed logs, issues, a commit by its hash, searches, branches and a
+branch's commits not on main, each one fixed read-only `gh` argument list with what the role
 gives passed only as data, checked by shape, never a shell string, and no
 deadline of its own); marking, classification and
 extraction nothing. A role's tools are its own tool server (`role_mcp.py`,

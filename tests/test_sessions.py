@@ -159,7 +159,20 @@ def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
     assert role_lookups.argv("github_commit_view", {"repo": "4thWAIV/jarvis",
                                                     "sha": "4ffd18b6"}) == [
         "api", "--method=GET", "repos/4thWAIV/jarvis/commits/4ffd18b6"]
+    assert role_lookups.argv("github_pr_diff", {"repo": "4thWAIV/jarvis", "number": 176}) == [
+        "pr", "diff", "176", "--repo=4thWAIV/jarvis", "--color=never"]
+    assert role_lookups.argv("github_run_failed_logs", {"repo": "o/r", "run_id": 42}) == [
+        "run", "view", "42", "--repo=o/r", "--log-failed"]
+    assert role_lookups.argv("github_branch_commits", {"repo": "o/r",
+                                                       "name": "package/v2-sessions"}) == [
+        "api", "--method=GET", "repos/o/r/compare/main...package/v2-sessions", "--paginate",
+        "--jq=" + role_lookups._BRANCH_COMMITS_JQ]
     for name, bad in (("github_pr_view", {"repo": "o/r; ls", "number": 1}),
+                      ("github_pr_diff", {"repo": "o/r", "number": "1 --web"}),
+                      ("github_run_failed_logs", {"repo": "o/r", "run_id": "x"}),
+                      ("github_branch_commits", {"repo": "o/r"}),
+                      ("github_branch_commits", {"repo": "o/r", "name": "a..b"}),
+                      ("github_branch_commits", {"repo": "o/r", "name": "--x"}),
                       ("github_pr_view", {"repo": "o/r", "number": "1 --web"}),
                       ("github_run_view", {"repo": "o/r", "run_id": True}),
                       ("github_run_list", {"repo": "o/r", "branch": "a b"}),
@@ -169,6 +182,16 @@ def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
                       ("github_commit_view", {"repo": "o/r", "sha": "main/../x"})):
         with pytest.raises(role_lookups.Refused):
             role_lookups.argv(name, bad)
+
+
+def test_every_github_entry_type_has_its_lookups():
+    # workflow.yaml entry_types: pr "gh pr view and gh pr diff", ci_run "gh
+    # run view and its failed logs", commit "git show", issue "gh issue
+    # view", branch "its commits not on main".
+    assert {"github_pr_view", "github_pr_diff", "github_run_view", "github_run_failed_logs",
+            "github_commit_view", "github_issue_view",
+            "github_branch_commits"} <= set(role_lookups.NAMES)
+    assert "jobs" in role_lookups._RUN_FIELDS.split(",")
 
 
 def test_a_github_lookup_runs_in_the_role_s_server_never_forwarded(monkeypatch):

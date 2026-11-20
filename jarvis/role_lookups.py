@@ -29,7 +29,7 @@ _PR_FIELDS = "number,title,state,url,headRefName,baseRefName,author,createdAt,me
 _PR_VIEW_FIELDS = _PR_FIELDS + ",mergeCommit,headRefOid"
 _ISSUE_FIELDS = "number,title,state,url,author,createdAt,closedAt"
 _RUN_FIELDS = ("databaseId,name,workflowName,displayTitle,status,conclusion,event,"
-               "headBranch,headSha,url,createdAt")
+               "headBranch,headSha,url,createdAt,jobs")
 _SEARCH_PR_FIELDS = "number,title,state,url,repository,createdAt"
 _SEARCH_COMMIT_FIELDS = "sha,url,repository,commit"
 
@@ -136,6 +136,16 @@ def _run_view(a: dict) -> list[str]:
     return ["run", "view", _number(a, "run_id"), f"--repo={_repo(a)}", f"--json={_RUN_FIELDS}"]
 
 
+def _run_failed_logs(a: dict) -> list[str]:
+    # A ci_run's failed logs (entry_types: "gh run view and its failed logs").
+    return ["run", "view", _number(a, "run_id"), f"--repo={_repo(a)}", "--log-failed"]
+
+
+def _pr_diff(a: dict) -> list[str]:
+    # A pr's diff (entry_types: "gh pr view and gh pr diff").
+    return ["pr", "diff", _number(a, "number"), f"--repo={_repo(a)}", "--color=never"]
+
+
 def _search_prs(a: dict) -> list[str]:
     return (["search", "prs", f"--json={_SEARCH_PR_FIELDS}"] + _in_repo(a) + _limit(a)
             + ["--", _words(a)])
@@ -167,6 +177,21 @@ def _branches(a: dict) -> list[str]:
     return ["api", "--method=GET", f"repos/{_repo(a)}/branches", "--paginate"]
 
 
+def _branch_commits(a: dict) -> list[str]:
+    # A branch's commits not on main (entry_types: "branch: {repo, name}:
+    # its commits not on main"), through GitHub's compare API with a fixed
+    # path, GET only: each commit's hash, author, date and message.
+    name = _optional(a, "name", _BRANCH)
+    if name is None or ".." in name or name.startswith(("/", "-")) or name.endswith("/"):
+        raise Refused("name must name a branch")
+    return ["api", "--method=GET", f"repos/{_repo(a)}/compare/main...{name}", "--paginate",
+            "--jq=" + _BRANCH_COMMITS_JQ]
+
+
+_BRANCH_COMMITS_JQ = (".commits[] | {sha, author: .commit.author.name, "
+                      "date: .commit.author.date, message: .commit.message}")
+
+
 @dataclass(frozen=True)
 class Lookup:
     name: str
@@ -189,12 +214,17 @@ LOOKUPS: dict[str, Lookup] = {l.name: l for l in (
            ("repo",), _pr_list),
     Lookup("github_pr_view", "One pull request by its number (gh pr view).",
            {"repo": _REPO, "number": _NUMBER}, ("repo", "number"), _pr_view),
+    Lookup("github_pr_diff", "One pull request's diff by its number (gh pr diff).",
+           {"repo": _REPO, "number": _NUMBER}, ("repo", "number"), _pr_diff),
     Lookup("github_run_list", "List a repository's CI runs (gh run list), optionally on a "
            "branch or for a commit.",
            {"repo": _REPO, "branch": {"type": "string"}, "commit": {"type": "string"},
             "limit": _LIMIT}, ("repo",), _run_list),
-    Lookup("github_run_view", "One CI run by its id (gh run view).",
+    Lookup("github_run_view", "One CI run by its id, with its jobs (gh run view).",
            {"repo": _REPO, "run_id": _NUMBER}, ("repo", "run_id"), _run_view),
+    Lookup("github_run_failed_logs", "One CI run's failed logs by its id "
+           "(gh run view --log-failed).",
+           {"repo": _REPO, "run_id": _NUMBER}, ("repo", "run_id"), _run_failed_logs),
     Lookup("github_issue_list", "List a repository's issues (gh issue list), optionally by "
            "state and search words.",
            {"repo": _REPO, "state": _STATE, "search": {"type": "string"}, "limit": _LIMIT},
@@ -217,6 +247,10 @@ LOOKUPS: dict[str, Lookup] = {l.name: l for l in (
            {"query": _WORDS, "repo": _REPO, "limit": _LIMIT}, ("query",), _search_commits),
     Lookup("github_branches", "A repository's branches and the commit each is at.",
            {"repo": _REPO}, ("repo",), _branches),
+    Lookup("github_branch_commits", "One branch's commits that are not on main "
+           "(GitHub's compare API, main...branch).",
+           {"repo": _REPO, "name": {"type": "string", "description": "The branch's name."}},
+           ("repo", "name"), _branch_commits),
 )}
 
 NAMES: tuple[str, ...] = tuple(LOOKUPS)
