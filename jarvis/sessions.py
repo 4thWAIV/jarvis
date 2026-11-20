@@ -33,7 +33,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Awaitable, Callable, Optional, Protocol
 from xml.sax.saxutils import quoteattr
 
 from jarvis import (brain_provider, evidence_types, model_tiers, private_files, role_mcp,
@@ -104,8 +104,11 @@ class Reply:
     answer: object = None           # the JSON answer, where the turn had a form
 
 
-# A model the provider refuses by name when the session starts is not
-# available: the sweep goes on to the next.
+# A model the provider refuses by name is not available: the sweep goes on
+# to the next. Claude Code says so on the first turn ("There's an issue with
+# the selected model ... It may not exist or you may not have access to
+# it"); Codex when the thread or the turn starts ("The 'gpt-6-luna' model
+# is not supported when using Codex with a ChatGPT account").
 def model_refused(error: str) -> bool:
     words = (error or "").lower()
     return "model" in words and any(w in words for w in (
@@ -121,6 +124,11 @@ class ChatSession:
     it may read, an answer format where the answer has a fixed form, and
     the turns, in order. Out: each turn's reply, and the session's id, so a
     long-lived session is resumed after a restart, never started fresh.
+
+    The model is the first of the pick's sweep the brain takes: one it
+    refuses, when the session starts or on its first turn (where Claude
+    Code says so), is logged and the next one tried, the first turn sent
+    again on it; the job's log says which model it took.
     """
 
     def __init__(self, role: str, prompt: str, folder: Path, *,
@@ -134,6 +142,7 @@ class ChatSession:
         self.pick = pick
         self.reads = tuple(Path(r) for r in reads)
         self.answer_format = answer_format
+        self._resume = resume               # a session to resume, else a new one
         self.session: Optional[str] = resume
         self.model: Optional[str] = None
         self.info: Optional[brain_provider.SessionInfo] = None
@@ -141,6 +150,9 @@ class ChatSession:
         self._child: Optional[brain_provider.ProviderSession] = None
         self._parts: list[str] = []
         self._done: Optional[asyncio.Future] = None
+        self._sweep = list(pick.tried or [pick.model])
+        self._at = -1                       # the sweep's model now open
+        self._answered = False              # a turn has been answered on it
 
     @classmethod
     def for_role(cls, role: str, prompt: str, folder: Path, *, requester: Optional[str] = None,
@@ -167,18 +179,21 @@ class ChatSession:
         return path
 
     def _config(self, model: str) -> BrainConfig:
+        """One try's launch. A new session is new on every try (a session
+        id of its own for a long-lived Claude one, never `--resume` of a
+        try the brain refused); a resumed one is resumed on each."""
         settings_service.load()     # his saved program paths, in any process
+        self.session = self._resume
         new_id = None
-        if not self.one_shot and not self.session and self.pick.engine == "claude":
+        if not self.one_shot and self._resume is None and self.pick.engine == "claude":
             new_id = str(uuid.uuid4())
+            self.session = new_id
         launch = roles.Launch(role=self.role, mcp_config=self._mcp_config(), reads=self.reads,
                               answer_format=self.answer_format if self.one_shot else None,
                               session_id=new_id)
-        if new_id:
-            self.session = new_id
         return BrainConfig(home=self.folder, provider=brain_provider.ENGINES[self.pick.engine],
-                           model=model, effort=self.role.effort, resume=self.session if
-                           not new_id else None, role=launch,
+                           model=model, effort=self.role.effort, resume=self._resume,
+                           role=launch,
                            claude_path=settings_service.value("claude_path") or None,
                            codex_path=settings_service.value("codex_path") or None)
 
@@ -213,23 +228,45 @@ class ChatSession:
             raise SessionFailed(str(e)) from e
         self.model = model
 
-    async def open(self) -> None:
-        """Started on the first model of the sweep the provider accepts."""
-        last = ""
-        for model in self.pick.tried or [self.pick.model]:
+    def _refused(self, model: str, error: str) -> None:
+        self._on_log(f"{self.role.name}: {self.pick.engine} refused {model}: {error}")
+
+    async def _open_next(self, last: str = "") -> None:
+        """Opened on the next model of the sweep the brain takes. Raises
+        model_tiers.NoModel when none is left."""
+        while self._at + 1 < len(self._sweep):
+            self._at += 1
+            model = self._sweep[self._at]
             try:
                 await self._open_one(model)
             except SessionFailed as e:
                 last = str(e)
                 if model_refused(last):
-                    self._on_log(f"{self.role.name}: {self.pick.engine} refused {model}: {last}")
+                    self._refused(model, last)
                     continue
                 raise
             self._on_log(f"{self.role.name}: {self.pick.engine} {model} "
                          f"(tier {self.pick.tier}, {self.pick.why}, effort {self.role.effort})")
             return
         raise model_tiers.NoModel(f"{self.role.name}: no {self.pick.engine} model in tier "
-                                  f"{self.pick.tier} or above was accepted ({last})")
+                                  f"{self.pick.tier} or the next one up was accepted ({last})")
+
+    async def open(self) -> None:
+        """Started on the first model of the sweep the brain accepts."""
+        await self._open_next()
+
+    async def _turn(self, text: str, timeout: float, answer_format: Optional[dict]) -> str:
+        self._parts = []
+        self._done = asyncio.get_running_loop().create_future()
+        try:
+            async with asyncio.timeout(timeout):
+                await self._child.send(text, answer_format=answer_format)
+                return await self._done
+        except TimeoutError as e:
+            raise SessionFailed(f"the {self.role.name} session did not answer within "
+                                f"{timeout:.0f} s") from e
+        except OSError as e:
+            raise SessionFailed(str(e)) from e
 
     async def ask(self, text: str, timeout: float,
                   answer_format: Optional[dict] = None) -> Reply:
@@ -242,27 +279,33 @@ class ChatSession:
             # Claude takes a form per process, not per turn: this turn's is
             # given in the message, and checked here (participants.md 5).
             text = f"{text}\n\n{SCHEMA_GIVEN}\n{json.dumps(answer_format)}"
-        self._parts = []
-        self._done = asyncio.get_running_loop().create_future()
-        try:
-            async with asyncio.timeout(timeout):
-                await self._child.send(text, answer_format=answer_format)
-                said = await self._done
-        except TimeoutError as e:
-            raise SessionFailed(f"the {self.role.name} session did not answer within "
-                                f"{timeout:.0f} s") from e
-        except OSError as e:
-            raise SessionFailed(str(e)) from e
+        while True:
+            try:
+                said = await self._turn(text, timeout, answer_format)
+                break
+            except SessionFailed as e:
+                if self._answered or not model_refused(str(e)):
+                    raise
+                # Refused on its first turn: the sweep's next model, the
+                # turn sent again on it.
+                self._refused(self.model or "", str(e))
+                await self._close_child()
+                await self._open_next(str(e))
+        self._answered = True
         answer = json_answer(said) if form is not None else None
         if form is not None and not isinstance(answer, dict):
             raise SessionFailed(f"the {self.role.name} session's answer was not in its form")
         return Reply(text=said, answer=answer)
 
-    async def close(self) -> None:
+    async def _close_child(self) -> None:
         if self._done is not None and not self._done.done():
             self._done.cancel()
         if self._child is not None:
-            await self._child.close(5)
+            child, self._child = self._child, None
+            await child.close(5)
+
+    async def close(self) -> None:
+        await self._close_child()
 
     async def once(self, text: str, timeout: float) -> Reply:
         """A one-shot role: open, one item in, one answer out, closed."""
@@ -284,6 +327,74 @@ def role_prompt(role: str, values: dict[str, str]) -> tuple[str, str]:
             role_prompts.fill(prompt.material, material_values))
 
 
+# ── what Tim knows, and who is given what ─────────────────────────────────
+
+# The three knowledge states (workflow.yaml tim_knowledge knowledge_state),
+# set by a program from where an item came from, never by a model.
+KNOWS, HAD_ACCESS, PROBABLY_NOT = "knows", "had_access", "probably_does_not_know"
+STATES = (KNOWS, HAD_ACCESS, PROBABLY_NOT)
+
+
+@dataclass(frozen=True)
+class Known:
+    """One item of Tim's material with its knowledge state."""
+    text: str
+    state: str                      # KNOWS, HAD_ACCESS or PROBABLY_NOT
+    source: str = ""
+
+
+# Each swarm participant's share of what Tim knows (workflow.yaml
+# tim_knowledge who_gets_what, approved 2026-11-19): the Theory of Mind
+# reader, the cares and the order judges know and had access only, kept
+# apart; the author, the editor, the decision ready and the background
+# judges everything, each item marked with its state.
+SHARES: dict[str, tuple[str, ...]] = {
+    "author": STATES,
+    "editor": STATES,
+    "decision_ready_judge": STATES,
+    "background_judge": STATES,
+    "cares_judge": (KNOWS, HAD_ACCESS),
+    "order_judge": (KNOWS, HAD_ACCESS),
+    "theory_of_mind_reader": (KNOWS, HAD_ACCESS),
+}
+
+
+def share(role: str, material: list[Known]) -> list[Known]:
+    """Exactly this participant's share of the material. Raises KeyError
+    for a role with no share."""
+    given = SHARES[role]
+    for item in material:
+        if item.state not in STATES:
+            raise ValueError(f"{item.state!r} is not a knowledge state")
+    return [item for item in material if item.state in given]
+
+
+def _material(items: list[Known], *, marked: bool) -> str:
+    return "\n".join(_tag("material", k.text, state=k.state if marked else None,
+                          source=k.source or None) for k in items)
+
+
+def share_values(role: str, material: list[Known]) -> dict[str, str]:
+    """This participant's share as its approved prompt's placeholders: the
+    two kept apart ({knows}, {had_access}) for one given those only, else
+    every item with its state."""
+    items = share(role, material)
+    if PROBABLY_NOT not in SHARES[role]:
+        return {"{knows}": _material([k for k in items if k.state == KNOWS], marked=False),
+                "{had_access}": _material([k for k in items if k.state == HAD_ACCESS],
+                                          marked=False)}
+    marked = _material(items, marked=True)
+    return {"{the evidence, each item with its knowledge state}": marked,
+            "{the gathered and marked material, with its knowledge state}": marked}
+
+
+def marked_parts(marked: list[dict]) -> str:
+    """The marked script (MarkingSession's output) as tagged parts."""
+    return "\n".join(_tag("part", m["segment"], id=m["id"], kind=m["kind"],
+                          start=m["position"]["start"], end=m["position"]["end"],
+                          scores=json.dumps(m["scores"], sort_keys=True)) for m in marked)
+
+
 # ── SwarmSession ──────────────────────────────────────────────────────────
 
 OPEN, PROVEN, FAILED = "open", "proven", "failed"
@@ -291,6 +402,14 @@ YES, NO = "yes", "no"
 ROUNDS_MAX = 3          # after three rounds without passing, nothing is built
 VOTE_FORM = _object({"question": _TEXT, "vote": {"type": "string", "enum": [YES, NO]},
                      "reason": _TEXT})
+# What a participant may add to any turn: the vote called on questions whose
+# discussion has settled (workflow.yaml swarm plan.decision).
+CALL_VOTE = {"type": "array", "items": _TEXT,
+             "description": "The ids of open questions whose discussion has settled, to call "
+                            "the vote on now. Empty when none."}
+TURN_FORM = _object({"message": {"type": "string",
+                                 "description": "What you say in the conversation."},
+                     "call_vote": CALL_VOTE})
 
 
 @dataclass
@@ -306,6 +425,7 @@ class Vote:
     participant: str
     vote: str
     reason: str
+    called_by: str = "program"      # the participant who called it, or the program
 
 
 class SwarmSession:
@@ -313,16 +433,23 @@ class SwarmSession:
     SwarmSession; workflow.yaml swarm). The program runs the turns and
     keeps the log word for word, never summarising or rewriting: each
     participant is sent every new message of the others, verbatim, with
-    who said it. A vote is a turn in each voter's own session, yes or no
-    with a reason; a majority of yes proves a question, anything else
-    (a majority of no, a tie) fails it; a question reopens when the script
-    changes what it was about. The Theory of Mind reader never votes, and
-    the author not on whether its own script passes.
+    who said it, and is given exactly its share of what Tim knows
+    (`SHARES`). Any participant may call the vote on a question when its
+    discussion settles (`call_vote` on its turn); otherwise the program
+    calls one on every open question at the end of each round. A vote is a
+    turn in each voter's own session, yes or no with a reason; a majority
+    of yes proves a question, anything else (a majority of no, a tie) fails
+    it; a question reopens when the script changes what it was about. The
+    Theory of Mind reader never votes, and the author not on whether its
+    own script passes.
     """
 
     def __init__(self, participants: dict[str, ChatSession], questions: list[Question],
                  background: Optional[dict] = None, *, author: str = "author",
-                 non_voters: tuple[str, ...] = ("theory_of_mind_reader",)):
+                 editor: str = "editor",
+                 non_voters: tuple[str, ...] = ("theory_of_mind_reader",),
+                 material: Optional[list[Known]] = None,
+                 first: Optional[dict[str, str]] = None):
         self.participants = participants
         self.background = background or {}
         self.questions = {q.id: q for q in questions}
@@ -332,37 +459,98 @@ class SwarmSession:
         self.conversation: list[dict] = []
         self.rounds = 0
         self.author = author
+        self.editor = editor
         self.non_voters = non_voters
+        self.material = list(material or [])
+        self.shares = {name: share(name, self.material) for name in participants
+                       if name in SHARES}
+        self._first = dict(first or {})     # each one's first message, sent on its first turn
+        self._introduced: set[str] = set()
         self._seen = {name: 0 for name in participants}
+
+    @classmethod
+    def for_roles(cls, names: list[str], questions: list[Question], folder: Path, *,
+                  material: list[Known], values: dict[str, dict[str, str]],
+                  background: Optional[dict] = None, reads: tuple[Path, ...] = (),
+                  on_log: Optional[Callable[[str], None]] = None,
+                  **pick_args) -> "SwarmSession":
+        """Each participant on its role, its approved prompt filled with its
+        share of the material (`share_values`) and the rest of its values
+        (`values`, by role: the script, the prep, the labels ...). The
+        author is picked first: the judges go on the other brain from it
+        when Settings says so (model_tiers.pick). Raises NoModel."""
+        participants: dict[str, ChatSession] = {}
+        first: dict[str, str] = {}
+        author_engine = None
+        for name in sorted(names, key=lambda n: n != "author"):
+            system, first[name] = role_prompt(name, {**share_values(name, material),
+                                                     **values.get(name, {})})
+            participants[name] = ChatSession.for_role(
+                name, system, folder, reads=reads, on_log=on_log,
+                author_engine=author_engine, **pick_args)
+            if name == "author":
+                author_engine = participants[name].pick.engine
+        ordered = {name: participants[name] for name in names}
+        return cls(ordered, questions, background, material=material, first=first)
+
+    async def open(self) -> None:
+        for chat in self.participants.values():
+            await chat.open()
+
+    async def close(self) -> None:
+        for chat in self.participants.values():
+            await chat.close()
+
+    def share_of(self, name: str) -> list[Known]:
+        return self.shares.get(name, [])
 
     def _new_for(self, name: str) -> str:
         """Every message of the others since this participant last spoke,
-        word for word, each with who said it."""
+        word for word, each with who said it; on its first turn its own
+        first message and the questions to prove come first."""
         new = [m for m in self.conversation[self._seen[name]:] if m["from"] != name]
         self._seen[name] = len(self.conversation)
-        return "\n\n".join(f"{m['from']}:\n{m['text']}" for m in new)
+        lead = []
+        if name not in self._introduced:
+            self._introduced.add(name)
+            lead.append(self._first.get(name, ""))
+            lead.append("The questions to prove, by id:\n" + "\n".join(
+                _tag("question", q.asks, id=q.id) for q in self.questions.values()))
+        return "\n\n".join([t for t in lead if t] +
+                            [f"{m['from']}:\n{m['text']}" for m in new])
 
     def say(self, name: str, text: str) -> None:
         """A message into the conversation, as it was written (the
         program's own, or a participant's)."""
         self.conversation.append({"from": name, "text": text})
 
+    async def _called(self, name: str, ids, timeout: float) -> None:
+        """The votes a participant called on its turn, each on a question
+        still open."""
+        for qid in ids if isinstance(ids, list) else []:
+            if self.state.get(str(qid)) == OPEN:
+                await self.vote(str(qid), timeout, called_by=name)
+
     async def turn(self, name: str, timeout: float, add: str = "") -> str:
         """One participant's turn: it is sent what the others said since
-        its last, and `add` (the program's own message to it); its reply
-        goes into the conversation."""
+        its last, and `add` (the program's own message to it); its message
+        goes into the conversation, and the votes it calls are held."""
         sent = "\n\n".join(t for t in (self._new_for(name), add) if t)
-        reply = await self.participants[name].ask(sent, timeout)
-        self.say(name, reply.text)
+        reply = await self.participants[name].ask(sent, timeout, answer_format=TURN_FORM)
+        answer = reply.answer or {}
+        if not isinstance(answer.get("message"), str):
+            raise SessionFailed(f"{name}'s turn had no message")
+        self.say(name, answer["message"])
         self._seen[name] = len(self.conversation)
-        return reply.text
+        await self._called(name, answer.get("call_vote"), timeout)
+        return answer["message"]
 
     def voters(self, question: str) -> list[str]:
         q = self.questions[question]
         return [n for n in self.participants
                 if n not in self.non_voters and (n != self.author or q.author_votes)]
 
-    async def vote(self, question: str, timeout: float) -> str:
+    async def vote(self, question: str, timeout: float, called_by: str = "program") -> str:
         """Every voter votes on one question, each in its own session; the
         question's state after the count."""
         q = self.questions[question]
@@ -375,7 +563,7 @@ class SwarmSession:
             said = str(answer.get("vote") or "").lower()
             if said not in (YES, NO) or not str(answer.get("reason") or "").strip():
                 raise SessionFailed(f"{name}'s vote on {q.id} was not yes or no with a reason")
-            vote = Vote(q.id, name, said, str(answer["reason"]).strip())
+            vote = Vote(q.id, name, said, str(answer["reason"]).strip(), called_by)
             cast.append(vote)
             self.say(name, f"Vote on {q.id}: {vote.vote}. {vote.reason}")
             self._seen[name] = len(self.conversation)
@@ -396,6 +584,41 @@ class SwarmSession:
         for qid, state in list(self.state.items()):
             if state == OPEN:
                 await self.vote(qid, timeout)
+
+    async def round(self, timeout: float, script: Path,
+                    mark: Callable[[str], Awaitable[list[dict]]]) -> Optional[dict]:
+        """One round (workflow.yaml swarm plan.round): the author revises
+        the script (its file, `script`); the script is marked (`mark`, the
+        MarkingSession over its text, after each revision); the editor
+        edits, through its own session (EditingSession; the program applies
+        the edits and writes the file); the judges and the Theory of Mind
+        reader respond, the judges from the marked script, the reader from
+        the script as Tim would read it. Votes a participant calls are held
+        on its turn; then the program calls one on every open question.
+        The result once the swarm has passed or had its rounds, else None.
+        """
+        await self.turn(self.author, timeout)
+        text = script.read_text(encoding="utf-8")
+        marked = await mark(text)
+        editing = EditingSession(self.participants[self.editor])
+        out = await editing.edit(text, marked, self.share_of(self.editor), timeout,
+                                 source=script.name,
+                                 conversation=self._new_for(self.editor), call_vote=True)
+        self.say(self.editor, out["reply"])
+        self._seen[self.editor] = len(self.conversation)
+        if out["applied"]:
+            text = out["text"]
+            private_files.replace(script, text.encode("utf-8"))
+            marked = await mark(text)
+        await self._called(self.editor, out["call_vote"], timeout)
+        for name in self.participants:
+            if name in (self.author, self.editor):
+                continue
+            add = (_tag("script", text, file=script.name) if name in self.non_voters
+                   else _tag("marked", marked_parts(marked), file=script.name))
+            await self.turn(name, timeout, add=add)
+        await self.vote_open(timeout)
+        return self.end_round()
 
     @property
     def passed(self) -> bool:
@@ -654,14 +877,6 @@ class Label:
     example: str = ""
 
 
-@dataclass(frozen=True)
-class Known:
-    """One item of Tim's material with its knowledge state."""
-    text: str
-    state: str                      # knows, had_access, probably_does_not_know
-    source: str = ""
-
-
 class MarkingSession:
     """A text's sentences and phrases (split by text_parts), each scored
     against every label, each label on its own; one call a file. Tim's
@@ -826,18 +1041,23 @@ class EditingSession:
         self.chat = chat
 
     async def edit(self, text: str, marked: list[dict], information: list[Known],
-                   timeout: float, source: str = "") -> dict:
-        material = "\n\n".join((
+                   timeout: float, source: str = "", conversation: str = "",
+                   call_vote: bool = False) -> dict:
+        """`conversation`: what the others said since the editor's last turn,
+        in a swarm; `call_vote`: its answer may call votes, as any
+        participant's may."""
+        material = "\n\n".join(t for t in (
+            conversation,
             _tag("script", text, file=source or None),
-            "\n".join(_tag("part", m["segment"], id=m["id"], kind=m["kind"],
-                           start=m["position"]["start"], end=m["position"]["end"],
-                           scores=json.dumps(m["scores"], sort_keys=True)) for m in marked),
+            marked_parts(marked),
             "\n".join(_tag("information", k.text, state=k.state, source=k.source or None)
-                      for k in information)))
-        reply = await self.chat.ask(material, timeout, answer_format=EDIT_FORM)
+                      for k in information)) if t)
+        form = EDIT_FORM if not call_vote else _object(
+            {**EDIT_FORM["properties"], "call_vote": CALL_VOTE})
+        reply = await self.chat.ask(material, timeout, answer_format=form)
         answer = reply.answer or {}
         edits = [e for e in answer.get("edits") or [] if isinstance(e, dict)]
         new_text, applied, refused = apply_edits(text, edits)
         return {"text": new_text, "applied": applied, "refused": refused,
                 "sent_back": [s for s in answer.get("sent_back") or [] if isinstance(s, dict)],
-                "reply": reply.text}
+                "call_vote": answer.get("call_vote") or [], "reply": reply.text}

@@ -72,8 +72,13 @@ ROLES: dict[str, Role] = {r.name: r for r in (
          builtins=_READS, tools=RESEARCH_TOOLS),
     Role("background_judge", 2, "medium", "judges", LONG_LIVED,
          builtins=_READS, tools=RESEARCH_TOOLS),
-    # Given only what Tim knows and had access to, in the prompt: no tools,
-    # so nothing he has never seen reaches them (tim_knowledge who_gets_what).
+    # sessions.yaml gives these two "only the package evidence, filtered to
+    # what Tim knows and had access to"; their approved prompt says "You are
+    # given only what Tim knows and what he had access to ... and you have
+    # no research tools". Which of the two is meant (that evidence given in
+    # the prompt, or a search of it filtered by knowledge state) is his to
+    # say: until he does they have no tool, and their material comes in the
+    # prompt as the approved words say (sessions.share).
     Role("cares_judge", 2, "medium", "judges", LONG_LIVED),
     Role("order_judge", 2, "medium", "judges", LONG_LIVED),
     Role("theory_of_mind_reader", 1, "high", "theory_of_mind_reader", LONG_LIVED),
@@ -115,6 +120,22 @@ SERVER_NAME = "jarvis_role"
 def tool_name(tool: str) -> str:
     """A role tool as Claude Code and the brain's checks spell it."""
     return f"mcp__{SERVER_NAME}__{tool}"
+
+
+def codex_refusal(found: Role) -> Optional[str]:
+    """Why this role is not started on Codex, or None. Codex roles run with
+    the code-mode host off (Tim's "Awesome", 2026-11-19: "exec is listed but
+    refuses to run, so a Codex session cannot read files"), and Codex calls
+    MCP tools only through that host (codex_provider.KEEP_FEATURES,
+    measured), so a role whose approved tools are its job (launch_v1
+    tools_per_swarm_role, RetrievalSession) would run without them. That
+    conflict between the two approved entries is his to settle; until then
+    such a role is refused on Codex, never run without its tools."""
+    if not (found.tools or found.commands):
+        return None
+    return (f"the {found.name} role cannot run on Codex: Codex roles run with the code-mode "
+            f"host off, which leaves no way to call its tools "
+            f"({', '.join(found.tools + found.commands)}); this waits on Tim's decision")
 
 
 def allows(name: Optional[str], tool: str) -> bool:

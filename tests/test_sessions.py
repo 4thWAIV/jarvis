@@ -36,14 +36,16 @@ def test_the_sweep_goes_down_the_family_then_up_a_model_oldest_first():
               "gpt-6.2-sol", "gpt-5.6-sol", "gpt-6-luna"]
     assert model_tiers.sweep("codex", 3, listed) == [
         "gpt-6.1-terra", "gpt-5.6-terra",            # down its versions, newest first
-        "gpt-5.6-sol", "gpt-6.2-sol",               # up one model, oldest first
-        "gpt-6-astra", "gpt-6.2-astra"]             # and on up
+        "gpt-5.6-sol", "gpt-6.2-sol"]               # up one model, oldest first, and no further
+    assert model_tiers.sweep("codex", 1, listed) == ["gpt-6.2-astra", "gpt-6-astra"]
 
 
 def test_a_family_not_listed_is_swept_past_and_none_at_all_is_no_model():
     assert model_tiers.first("codex", 4, ["gpt-5.6-terra"]) == "gpt-5.6-terra"
     with pytest.raises(model_tiers.NoModel):
         model_tiers.first("codex", 1, ["gpt-5.6-luna"])
+    with pytest.raises(model_tiers.NoModel):          # two tiers up is past the next model
+        model_tiers.first("codex", 4, ["gpt-6.2-sol"])
 
 
 def test_claude_is_its_alias_latest_only_and_lists_fable():
@@ -56,7 +58,8 @@ def test_claude_is_its_alias_latest_only_and_lists_fable():
 def test_codex_falls_back_to_the_sweep_never_a_fixed_name():
     assert codex_provider.fallback_model(["gpt-6.2-astra", "gpt-6.1-terra", "gpt-5.6-terra"]) \
         == "gpt-6.1-terra"
-    assert codex_provider.fallback_model(["gpt-6-astra"]) == "gpt-6-astra"
+    assert codex_provider.fallback_model(["gpt-6.2-sol"]) == "gpt-6.2-sol"
+    assert codex_provider.fallback_model(["gpt-6-astra"]) is None   # Codex's own default
     assert codex_provider.fallback_model([]) is None
     assert not hasattr(codex_provider, "DEFAULT_MODEL")
 
@@ -223,6 +226,100 @@ async def test_codex_runs_a_role_locked_down_in_jarvis_s_own_home(tmp_path, code
                                 "mcp_servers": {"jarvis": {"enabled": False}}}
     turn = next(e["turn"] for e in log if "turn" in e)
     assert turn["effort"] == "low" and turn["outputSchema"] == form
+
+
+@pytest.mark.asyncio
+async def test_codex_refuses_a_role_whose_tools_the_lockdown_would_take(tmp_path, codex_log):
+    from tests.settings_fixtures import hold_setting
+    hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
+    pick = model_tiers.Pick("codex", "gpt-6.2-astra", 1, "fixed", ["gpt-6.2-astra"])
+    for name in ("author", "editor", "decision_ready_judge", "background_judge", "retrieval"):
+        chat = sessions.ChatSession(name, "THE ROLE", tmp_path, pick=pick)
+        with pytest.raises(sessions.SessionFailed, match="waits on Tim's decision"):
+            await chat.open()
+    assert not (tmp_path / "codex.log").exists() or not any(
+        "app-server" in e.get("argv", []) for e in codex_log()), "nothing was started"
+    for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
+                 "classification", "extraction"):
+        assert roles.codex_refusal(roles.role(name)) is None
+
+
+class _Brain:
+    """A brain whose sessions refuse some models on their first turn, as
+    Claude Code does, and answer on the rest."""
+
+    def __init__(self, refused):
+        self.refused, self.configs = set(refused), []
+        brain_ = self
+
+        class Session:
+            def __init__(self, config, on_event, on_exit):
+                self.config, self.on_event = config, on_event
+
+            async def open(self, instructions):
+                brain_.configs.append(self.config)
+
+            async def send(self, text, answer_format=None):
+                from jarvis import brain_provider
+                if self.config.model in brain_.refused:
+                    error = (f"There's an issue with the selected model ({self.config.model}). "
+                             "It may not exist or you may not have access to it.")
+                    self.on_event(self, brain_provider.TurnEnded(0, 0, error=error))
+                else:
+                    self.on_event(self, brain_provider.TurnEnded(0, 0, reply=f"on {self.config.model}"))
+
+            async def close(self, timeout=5):
+                pass
+        self.Session = Session
+
+    def session(self, config, on_event, on_exit):
+        return self.Session(config, on_event, on_exit)
+
+
+@pytest.mark.asyncio
+async def test_a_model_refused_on_the_first_turn_is_swept_past(monkeypatch, tmp_path):
+    from jarvis import brain_provider
+    fake = _Brain(refused={"opus"})
+    monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
+    lines = []
+    pick = model_tiers.Pick("claude", "opus", 2, "fixed", ["opus", "fable"])
+    chat = sessions.ChatSession("cares_judge", "R", tmp_path, pick=pick, on_log=lines.append)
+    await chat.open()
+    reply = await chat.ask("hello", 5)
+    assert reply.text == "on fable" and chat.model == "fable"
+    assert any("refused opus" in line for line in lines)
+    first, second = fake.configs
+    assert first.role.session_id and second.role.session_id != first.role.session_id
+    assert first.resume is None and second.resume is None, "never --resume a refused try"
+    assert chat.session == second.role.session_id
+    fake.refused.add("fable")
+    with pytest.raises(sessions.SessionFailed):        # refused after an answer: no sweep
+        await chat.ask("again", 5)
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_with_no_model_left_is_no_model(monkeypatch, tmp_path):
+    from jarvis import brain_provider
+    fake = _Brain(refused={"opus", "fable"})
+    monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
+    pick = model_tiers.Pick("claude", "opus", 2, "fixed", ["opus", "fable"])
+    chat = sessions.ChatSession("marking", "R", tmp_path, pick=pick)
+    with pytest.raises(model_tiers.NoModel):
+        await chat.once("hello", 5)
+    resumed = sessions.ChatSession("editor", "R", tmp_path, resume="s-1",
+                                   pick=model_tiers.Pick("claude", "fable", 1, "fixed", ["fable"]))
+    monkeypatch.setattr(role_mcp, "entry", lambda role: {"command": "x"})
+    fake.refused = set()
+    await resumed.open()
+    assert fake.configs[-1].resume == "s-1" and fake.configs[-1].role.session_id is None
+
+
+def test_model_refused_reads_both_brains_wording():
+    assert sessions.model_refused("There's an issue with the selected model (fable). It may "
+                                  "not exist or you may not have access to it.")
+    assert sessions.model_refused("The 'gpt-6-luna' model is not supported when using Codex "
+                                  "with a ChatGPT account.")
+    assert not sessions.model_refused("the session ended before answering (exit 1)")
 
 
 # ── the server answers a role only for its tools ──────────────────────────
@@ -409,16 +506,23 @@ async def test_the_editor_s_edits_are_applied_by_the_program(tmp_path):
 # ── the swarm ─────────────────────────────────────────────────────────────
 
 class _Participant:
-    def __init__(self, name, votes=None):
+    def __init__(self, name, votes=None, calls=None, log=None):
         self.name, self.votes, self.sent = name, list(votes or []), []
+        self.calls, self.log = list(calls or []), log if log is not None else []
 
     async def ask(self, text, timeout, answer_format=None):
         self.sent.append(text)
         if answer_format is sessions.VOTE_FORM:
             vote = self.votes.pop(0)
+            self.log.append(f"{self.name} votes")
             answer = {"question": "q", "vote": vote, "reason": f"{self.name} says {vote}"}
-            return sessions.Reply(json.dumps(answer), answer)
-        return sessions.Reply(f"{self.name} speaks", None)
+        elif answer_format is sessions.TURN_FORM:
+            self.log.append(self.name)
+            answer = {"message": f"{self.name} speaks",
+                      "call_vote": self.calls.pop(0) if self.calls else []}
+        else:
+            raise AssertionError(f"unexpected form {answer_format}")
+        return sessions.Reply(json.dumps(answer), answer)
 
 
 @pytest.mark.asyncio
@@ -433,10 +537,12 @@ async def test_the_swarm_relays_word_for_word_and_counts_votes():
                                                              author_votes=True)])
     swarm.say("author", "The script, as written.")
     await swarm.turn("editor", 5)
-    assert people["editor"].sent[-1] == "author:\nThe script, as written."
+    assert people["editor"].sent[-1].endswith("author:\nThe script, as written.")
+    assert '<question id="cares">Does Tim care?</question>' in people["editor"].sent[-1], \
+        "the questions to prove, by id, on its first turn"
     await swarm.turn("theory_of_mind_reader", 5)
-    assert people["theory_of_mind_reader"].sent[-1] == \
-        "author:\nThe script, as written.\n\neditor:\neditor speaks"
+    assert people["theory_of_mind_reader"].sent[-1].endswith(
+        "author:\nThe script, as written.\n\neditor:\neditor speaks")
     assert swarm.voters("cares") == ["editor", "cares_judge", "order_judge"]
     assert "author" in swarm.voters("enough")
     assert await swarm.vote("cares", 5) == sessions.PROVEN          # 2 yes, 1 no
@@ -448,6 +554,85 @@ async def test_the_swarm_relays_word_for_word_and_counts_votes():
     result = swarm.end_round()
     assert result["result"] == "not passed" and result["rounds"] == 3
     assert [f["question"] for f in result["findings"]] == ["enough"]
+
+
+@pytest.mark.asyncio
+async def test_a_participant_calls_the_vote_when_its_discussion_settles():
+    people = {"author": _Participant("author"),
+              "cares_judge": _Participant("cares_judge", ["yes"], calls=[["cares", "nope"]]),
+              "order_judge": _Participant("order_judge", ["yes"])}
+    swarm = sessions.SwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
+                                           sessions.Question("order", "First?")])
+    await swarm.turn("cares_judge", 5)
+    assert swarm.state == {"cares": sessions.PROVEN, "order": sessions.OPEN}
+    assert {v.called_by for v in swarm.votes} == {"cares_judge"}
+    assert [m["text"] for m in swarm.conversation][0] == "cares_judge speaks", \
+        "nothing is written in a participant's name but its own words"
+
+
+@pytest.mark.asyncio
+async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes(tmp_path):
+    log = []
+    script = tmp_path / "script.md"
+    script.write_text("It broke.")
+
+    class Editor(_Participant):
+        async def ask(self, text, timeout, answer_format=None):
+            if answer_format is sessions.VOTE_FORM:
+                return await super().ask(text, timeout, answer_format)
+            self.sent.append(text)
+            log.append("editor")
+            assert "call_vote" in answer_format["properties"]
+            answer = {"edits": [{"start": 0, "end": 2, "old": "It", "new": "The store",
+                                 "reason": "vague-referent", "source": "notes.md"}],
+                      "sent_back": [], "call_vote": []}
+            return sessions.Reply(json.dumps(answer), answer)
+
+    people = {"author": _Participant("author", log=log),
+              "editor": Editor("editor", ["yes"], log=log),
+              "cares_judge": _Participant("cares_judge", ["yes"], log=log),
+              "theory_of_mind_reader": _Participant("theory_of_mind_reader", log=log)}
+    material = [sessions.Known("He asked for it.", sessions.KNOWS),
+                sessions.Known("CI failed twice.", sessions.PROBABLY_NOT)]
+    swarm = sessions.SwarmSession(people, [sessions.Question("cares", "Does Tim care?")],
+                                  material=material)
+
+    async def mark(text):
+        log.append(f"mark {text}")
+        return [{"id": "s1", "segment": text, "kind": "sentence",
+                 "position": {"start": 0, "end": len(text)}, "scores": {"x": 0.5}}]
+    result = await swarm.round(5, script, mark)
+    assert log == ["author", "mark It broke.", "editor", "mark The store broke.",
+                   "cares_judge", "theory_of_mind_reader", "editor votes", "cares_judge votes"]
+    assert script.read_text() == "The store broke."
+    assert "CI failed twice." in people["editor"].sent[0], "the editor is given everything"
+    assert '<marked file="script.md">' in people["cares_judge"].sent[0]
+    assert '<script file="script.md">The store broke.</script>' in \
+        people["theory_of_mind_reader"].sent[0]
+    assert result["result"] == "passed"
+
+
+def test_each_participant_is_given_exactly_its_share_of_what_tim_knows():
+    material = [sessions.Known("He said ship it.", sessions.KNOWS, "chat"),
+                sessions.Known("The Work tab shows it.", sessions.HAD_ACCESS),
+                sessions.Known("CI failed twice.", sessions.PROBABLY_NOT, "ci.log")]
+    for role in ("theory_of_mind_reader", "cares_judge", "order_judge"):
+        values = sessions.share_values(role, material)
+        assert set(values) == {"{knows}", "{had_access}"}
+        assert "He said ship it." in values["{knows}"] and \
+            "The Work tab" in values["{had_access}"]
+        assert "CI failed" not in "".join(values.values()), "never what he does not know"
+    for role in ("author", "editor", "decision_ready_judge", "background_judge"):
+        shown = sessions.share_values(role, material)[
+            "{the evidence, each item with its knowledge state}"]
+        assert 'state="probably_does_not_know"' in shown and 'state="knows"' in shown
+    swarm = sessions.SwarmSession({"cares_judge": _Participant("c"), "editor": _Participant("e")},
+                                  [], material=material)
+    assert [k.state for k in swarm.share_of("cares_judge")] == [sessions.KNOWS,
+                                                                sessions.HAD_ACCESS]
+    assert len(swarm.share_of("editor")) == 3
+    with pytest.raises(ValueError):
+        sessions.share("author", [sessions.Known("x", "maybe")])
 
 
 # ── the prompts ───────────────────────────────────────────────────────────

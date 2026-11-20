@@ -3067,14 +3067,35 @@ fresh), its prompt the system prompt, a turn's answer parsed where it has
 a form (`json_answer`; Claude takes a one-shot's form for the process,
 `--json-schema`, and a long-lived turn's in the message, `SCHEMA_GIVEN`;
 Codex per turn, `outputSchema`); `TurnEnded.reply` is a turn's final
-answer. `SwarmSession` is long-lived ChatSessions in one conversation:
-each participant sent every new message of the others word for word, with
-who said it (`turn`, `say`); a vote a turn in each voter's own session
-(`vote`, `VOTE_FORM`), a majority of yes proving a question and anything
-else failing it, the Theory of Mind reader never voting and the author
-only where `Question.author_votes`; `reopen`, `vote_open`, and `end_round`,
-whose result after `ROUNDS_MAX` (3) is passed or not passed with the
-findings. `BrainDecisionSession` asks each question `ASKS` (3) times in
+answer. A model the brain refuses by name (`model_refused`: Claude Code
+says so on the first turn, Codex at the thread or the turn) is logged and
+the session opened again on the sweep's next model, its first turn sent
+again there; a new long-lived Claude session takes a new id on each try,
+never `--resume` of a refused one; after an answer nothing is swept.
+`SwarmSession` is long-lived ChatSessions in one conversation (`for_roles`
+builds them, the author picked first so the judges' Settings option can
+put them on the other brain): each participant sent every new message of
+the others word for word, with who said it, and on its first turn its
+first message and the questions to prove by id (`turn`, `say`); each
+given exactly its share of what Tim knows (`SHARES`, `share`,
+`share_values`, workflow.yaml tim_knowledge who_gets_what: the Theory of
+Mind reader and the cares and order judges know and had access only, kept
+apart; the author, the editor and the decision ready and background
+judges every item with its state). Every turn's answer is `TURN_FORM`,
+its message and the votes it calls (`call_vote`): any participant calls
+the vote on a question whose discussion has settled, held at once; a vote
+a turn in each voter's own session (`vote`, `VOTE_FORM`, `Vote.called_by`),
+a majority of yes proving a question and anything else failing it, the
+Theory of Mind reader never voting and the author only where
+`Question.author_votes`. A `round` is the design's order: the author's
+turn (it revises the script file), the script marked, the editor's edits
+through its own session (`EditingSession`, applied and written by the
+program, the script marked again when they changed it), then the judges
+(from the marked script) and the Theory of Mind reader (from the script),
+then the program's vote on every open question (`vote_open`) and
+`end_round`, whose result after `ROUNDS_MAX` (3) is passed or not passed
+with the findings; `reopen` when the script changes what a question was
+about. `BrainDecisionSession` asks each question `ASKS` (3) times in
 one-shot sessions of its own with no tools, the answer most gave and the
 share that agreed (`agreement`); `BrainClassificationSession` scores each
 item against every question plus `background`; `BrainExtractionSession`
@@ -3097,8 +3118,12 @@ and exactly its tools: the author the research tools
 `read_history`) and Read, Write, Edit, Grep and Glob; the editor the
 evidence search (`knowledge_search`) and Read, Grep and Glob; the decision
 ready and background judges the research tools and Read, Grep and Glob;
-the cares and order judges and the Theory of Mind reader nothing (their
-material is in their prompt, so nothing Tim has never seen reaches them);
+the Theory of Mind reader nothing (its material is in its prompt); the
+cares and order judges nothing for now: sessions.yaml gives them "only the
+package evidence, filtered to what Tim knows and had access to" and their
+approved prompt says they are given it and have no research tools, which
+of the two is meant (that evidence in the prompt, or a filtered search) is
+Tim's to say, and until he does it comes in the prompt;
 retrieval its read tools for Work items, packages, messages, workflows
 and runs and Bash for read-only `gh` and `git ls-remote` only; marking,
 classification and extraction nothing. A role's JARVIS tools are its own
@@ -3115,8 +3140,15 @@ Codex in JARVIS's own Codex home (`CodexSession._open_role`: every
 feature off but `ROLE_KEEP_FEATURES`, which leaves out `code_mode_host`,
 the lockdown, so `exec` refuses to run and a Codex role cannot read files
 or call MCP tools; the role's prompt as `baseInstructions`, personality
-none, no project docs or web search, the brain's own server switched off,
-the role's server added at launch, ephemeral for one-shot). The approved
+none, no project docs, web search or file-editing tool, read-only, the
+brain's own server switched off, ephemeral for one-shot). Because Codex
+calls MCP tools only through that host, a role whose approved tools are
+its job (the author, the editor, the decision ready and background judges,
+retrieval) is refused on Codex before anything starts
+(`roles.codex_refusal`), never run without them: the lockdown and the
+tools per role conflict there, and that waits on Tim's decision. On Codex
+0.154.0 the tier names (GPT-6.2) are not listed, so its tiers do not
+resolve until Codex is updated. The approved
 prompts are `role_prompts.py`, word for word, each split into its system
 prompt and its closing material, every `{...}` filled by `fill`.
 Models come from the four tiers (`model_tiers.py`, a code file: Fable /
@@ -3126,9 +3158,8 @@ live `model/list` by the version in its name (`PINNED` names an older one
 in full). `pick` takes the role's brain from engines.json (the main
 brains' method, the override included) and its tier's model there, unless
 its entry names a model; the sweep (`sweep`) goes down the family newest
-to oldest, then up a tier at a time, each oldest to newest, and on to the
-next when a provider refuses one by name at start (`model_refused`); none
-is `NoModel`, the job's Error. Claude's models are the tiers' families
+to oldest, then up to the next model, its versions oldest to newest, and
+no further; none is `NoModel`, the job's Error. Claude's models are the tiers' families
 (Fable among them); Codex's fallback is the sweep's first for the
 default tier (`DEFAULT_TIER`, 3) over its live list
 (`codex_provider.fallback_model`), Codex's own default when it lists

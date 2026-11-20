@@ -76,7 +76,9 @@ KEEP_FEATURES = frozenset({
 # A role of a package's making keeps the same features less the code-mode
 # host (the Codex lockdown, Tim's "Awesome", 2026-11-19): with it off, `exec`
 # is listed but refuses to run, so a role session cannot read files. Its
-# MCP tools go through that host too, so a Codex role has none of them.
+# MCP tools go through that host too (measured, above), so a role whose
+# approved tools are its job is not started on Codex at all
+# (`roles.codex_refusal`) until he decides how the two fit.
 ROLE_KEEP_FEATURES = KEEP_FEATURES - {"code_mode_host"}
 
 # Never inherited by the Codex child: with one of these set, Codex would bill
@@ -464,24 +466,24 @@ class CodexSession:
         AGENTS.md would reach the role), every feature off but the kept
         plumbing and the code-mode host off too (the lockdown), the role's
         prompt as the base instructions, no project docs, no web search, no
-        file-editing tool but for a writer, JARVIS's brain server off and
-        the role's own added at launch."""
-        launch = self.config.role
-        role = launch.role
+        file-editing tool and JARVIS's brain server off. Under the lockdown
+        no tool can be called, so a role that has tools is refused before
+        anything starts (`roles.codex_refusal`)."""
+        role = self.config.role.role
+        refusal = roles.codex_refusal(role)
+        if refusal:
+            raise OSError(refusal)
         env = child_env()
         await self._features_off(env, ROLE_KEEP_FEATURES)
         argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
-        if launch.mcp_config is not None and role.tools:
-            argv += config_overrides(_servers_of(launch.mcp_config))
         await self._start(argv, env)
         config = {"project_doc_max_bytes": 0, "project_root_markers": [],
-                  "web_search": "disabled", "include_apply_patch_tool": role.writes}
+                  "web_search": "disabled", "include_apply_patch_tool": False}
         if _has_brain_server():
             config["mcp_servers"] = {OWN_SERVER: {"enabled": False}}
         settings = {
             "model": self.config.model, "cwd": str(self.config.home),
-            "approvalPolicy": "never",
-            "sandbox": "workspace-write" if role.writes else "read-only",
+            "approvalPolicy": "never", "sandbox": "read-only",
             "baseInstructions": instructions, "developerInstructions": None,
             "personality": "none", "config": config,
         }
@@ -515,10 +517,6 @@ class CodexSession:
             launch.answer_format if launch is not None else None)
         if schema is not None:
             turn["outputSchema"] = schema
-        if launch is not None and launch.role.writes:
-            turn["sandboxPolicy"] = {"type": "workspaceWrite",
-                                     "writableRoots": [str(self.config.home)],
-                                     "networkAccess": False}
         self._reply = None
         try:
             await self._call("turn/start", turn, timeout=self.config.turn_timeout)

@@ -18,9 +18,11 @@ How a family becomes a model (`resolve`):
 
 Finding a model that works (`sweep`, his word 2026-11-19): from the
 expected model down its versions, newest to oldest, then up to the next
-model, its versions oldest available to newest, and on up the tiers. The
-first one available is taken and the job's log says which; a sweep that
-finds none is `NoModel`, which puts the job in Error.
+model, its versions oldest available to newest. Nothing past the next
+model is tried. The first one available is taken and the job's log says
+which; a sweep that finds none is `NoModel`, which puts the job in Error.
+A model the brain lists but refuses when asked is swept past the same way
+(sessions.ChatSession).
 
 Which brain a role runs on, and its model (`pick`): the brain is the one
 engines.json gives that kind of agent (engine_choice, the main brains'
@@ -108,11 +110,11 @@ def resolve(engine: str, family: str, listed: list[str]) -> list[str]:
 
 def sweep(engine: str, tier: int, listed: list[str]) -> list[str]:
     """Every model to try for this tier, in order: the expected family's
-    versions newest to oldest, then each stronger family's oldest
-    available to newest."""
+    versions newest to oldest, then the next model up's versions oldest
+    available to newest (none above tier 1)."""
     order = list(resolve(engine, family_of(engine, tier), listed))
-    for up in range(tier - 1, 0, -1):
-        order += list(reversed(resolve(engine, family_of(engine, up), listed)))
+    if tier > 1:
+        order += list(reversed(resolve(engine, family_of(engine, tier - 1), listed)))
     return order
 
 
@@ -120,7 +122,7 @@ def first(engine: str, tier: int, listed: list[str]) -> str:
     """The first model the sweep finds. Raises NoModel."""
     found = sweep(engine, tier, listed)
     if not found:
-        raise NoModel(f"no {engine} model in tier {tier} or above is available "
+        raise NoModel(f"no {engine} model in tier {tier} or the next one up is available "
                       f"(listed: {', '.join(listed) or 'none'})")
     return found[0]
 
@@ -160,6 +162,6 @@ def pick(kind: str, tier: int, *, requester: Optional[str] = None,
         return Pick(chosen, named, tier_of(chosen, named) or tier, why, [named])
     tried = sweep(chosen, tier, available)
     if not tried:
-        raise NoModel(f"no {chosen} model in tier {tier} or above is available "
+        raise NoModel(f"no {chosen} model in tier {tier} or the next one up is available "
                       f"(listed: {', '.join(available) or 'none'})")
     return Pick(chosen, tried[0], tier, why, tried)
