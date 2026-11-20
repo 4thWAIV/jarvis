@@ -64,6 +64,7 @@ async def test_it_starts_in_jarvis_s_own_codex_home_with_no_api_key(tmp_path, co
         assert start["openai_key"] is False, "the plan pays, never an API key"
         assert thread["thread"]["approvalPolicy"] == "never"
         assert thread["thread"]["sandbox"] == "read-only"
+        assert thread["thread"]["config"] == {"agents": {"enabled": False}}, "no subagents"
         assert thread["thread"]["model"] == "gpt-5.6-terra"
         assert "brain generation 1" in thread["thread"]["developerInstructions"]
         assert b.connected_servers == ["jarvis"] and b.failed_servers == ["broken"]
