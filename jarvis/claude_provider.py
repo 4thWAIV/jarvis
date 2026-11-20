@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Optional
 
 from jarvis import anthropic_usage
 from jarvis import claude_env
+from jarvis import model_tiers
+from jarvis import roles
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, HistorySource, SessionInfo, SignIn,
                             TextDelta, ToolStarted, TurnEnded, UsageReading, UsageSeen, identity_text)
@@ -378,6 +380,65 @@ def context_tokens(usage: dict) -> int:
     return usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
 
 
+def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
+    """One role's `claude -p` (sessions.yaml launch_v1, participants.md
+    section 0.3): JARVIS's own settings, never the user's (`--restricted`
+    drops CLAUDE.md, memory and the user's settings; `--strict-mcp-config`
+    every server but its own), its prompt in place of Claude Code's, and
+    locked down: no built-in tool, no server, no command, nothing asked of
+    anyone (`--permission-prompts none`), then released to exactly its
+    `roles.Release` (Tim, 2026-11-20, the same definition Codex reads): its
+    built-in tools, its own tool server's tools, the folders it reads and,
+    for a writer, edits in its run folder; no shell. Never
+    `--safe-mode` (it drops the role's tool server) or `--bare` (it drops
+    the subscription login)."""
+    launch = c.role
+    role = launch.role
+    release = role.release
+    cmd = claude_env.command_prefix(claude) + [
+        "-p", "--restricted", "--strict-mcp-config",
+        "--system-prompt", instructions,
+        "--tools", ",".join(release.builtins),
+        "--permission-prompts", "none",
+        "--name", role.name,
+        "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+    ]
+    if release.writes:
+        cmd += ["--permission-mode", "acceptEdits"]
+    allowed: list[str] = []
+    if launch.mcp_config is not None and release.tools:
+        cmd += ["--mcp-config", str(launch.mcp_config)]
+        allowed = [roles.tool_name(tool) for tool in release.tools]
+    if allowed:
+        cmd += ["--allowedTools", *allowed]
+    for folder in launch.reads:
+        cmd += ["--add-dir", str(folder)]
+    if release.writes and launch.reads:
+        # A writer writes in its run folder only: the folders it reads are
+        # read only (measured: `acceptEdits` writes in every --add-dir).
+        # An Edit rule covers every file-editing tool; `//` is an absolute
+        # path.
+        cmd += ["--disallowedTools",
+                *(f"Edit(/{Path(folder).resolve()}/**)" for folder in launch.reads)]
+    if c.model:
+        cmd += ["--model", c.model]
+    if c.effort:
+        cmd += ["--effort", c.effort]
+    if role.lifetime == roles.ONE_SHOT:
+        cmd += ["--no-session-persistence"]
+        if launch.answer_format is not None:
+            cmd += ["--json-schema", json.dumps(launch.answer_format)]
+        if release == roles.LOCKDOWN:
+            # Its answer is the schema's, itself one turn: two in all
+            # (participants.md section 0.1, measured).
+            cmd += ["--max-turns", "2"]
+    elif c.resume:
+        cmd += ["--resume", c.resume]
+    elif launch.session_id:
+        cmd += ["--session-id", launch.session_id]
+    return cmd
+
+
 class ClaudeSession:
     """One `claude -p` process: one conversation. Its stdout is read from the
     moment it opens, and every event goes to `on_event` in the brain's terms;
@@ -398,6 +459,8 @@ class ClaudeSession:
     # ── what it runs ─────────────────────────────────────────────────────
     def command(self, instructions: str) -> list[str]:
         c = self.config
+        if c.role is not None:
+            return role_command(self.claude, c, instructions)
         cmd = claude_env.command_prefix(self.claude) + [
             "-p", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages",
@@ -447,7 +510,9 @@ class ClaudeSession:
         self._reader = asyncio.create_task(self._read_stdout(self.proc))
         self._stderr_task = asyncio.create_task(self._drain_stderr(self.proc))
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, answer_format: Optional[dict] = None) -> None:
+        # Claude takes a role's answer format once, for the process
+        # (role_command's --json-schema), never per turn.
         proc = self.proc
         if proc is None or proc.stdin is None:
             raise BrokenPipeError("the claude process is not running")
@@ -603,8 +668,10 @@ class ClaudeSession:
                 error = (ev.get("result") if isinstance(ev.get("result"), str) and ev.get("result")
                          else " ".join(self._assistant_text) or f"claude reported {ev.get('subtype')}")
                 log.error(f"brain: turn failed: {error[:300]}")
+            reply = ev.get("result") if isinstance(ev.get("result"), str) else None
             self._emit(TurnEnded(context_tokens=context_tokens(usage),
-                                 output_tokens=usage.get("output_tokens", 0), error=error))
+                                 output_tokens=usage.get("output_tokens", 0), error=error,
+                                 reply=None if error else reply))
 
     async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stderr is not None
@@ -680,10 +747,13 @@ async def _signed_in_identity() -> tuple[Optional[str], Optional[str]]:
 class ClaudeProvider:
     name = "anthropic"
     title = "Claude"
-    default_model = "sonnet"
+    # Each family is Claude Code's alias, always its latest model
+    # (model_tiers.py): the default is the default tier's, the list every
+    # tier's, strongest first.
+    default_model = model_tiers.family_of("claude", model_tiers.DEFAULT_TIER)
 
     def models(self) -> list[str]:
-        return ["sonnet", "opus", "haiku"]
+        return model_tiers.families("claude")
 
     async def account(self) -> Account:
         from jarvis import preflight

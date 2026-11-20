@@ -2239,10 +2239,12 @@ TOOL_SPECS = [
         "name": "engine_settings",
         "description": (
             "Settings, Brains: which engine and model each kind of agent JARVIS starts goes on "
-            "(the package author, agent runs, builds, agent packages): a brain and model, the "
-            "same as the agent asking, or the least in token stress; whether a brain in token "
-            "stress is overridden; and each brain's plus or minus against its pace this week "
-            "(token stress is below zero)."),
+            "(the package author, agent runs, builds, agent packages, and a package's editor, "
+            "judges, Theory of Mind reader, retrieval, marking, classification and "
+            "extraction): a brain and model, the same as the agent asking, or the least in "
+            "token stress; whether a brain in token stress is overridden; whether the judges "
+            "run on the other brain from the author's; and each brain's plus or minus against "
+            "its pace this week (token stress is below zero)."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -2274,13 +2276,16 @@ TOOL_SPECS = [
     {
         "name": "set_engine_setting",
         "description": (
-            "Change one kind of agent's engine setting, or the override, only when he asks. "
-            "It starts nothing; it applies to the next agent of that kind."),
+            "Change one kind of agent's engine setting, the override, or whether the judges "
+            "run on the other brain, only when he asks. It starts nothing; it applies to the "
+            "next agent of that kind."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kind": {"type": "string",
-                         "enum": ["package_author", "run", "build", "agent_package"]},
+                         "enum": ["package_author", "run", "build", "agent_package", "editor",
+                                  "judges", "theory_of_mind_reader", "retrieval", "marking",
+                                  "classification", "extraction"]},
                 "pick": {"type": "string", "enum": ["fixed", "requester", "least_stress"],
                          "description": ("fixed: the engine and model given; requester: the "
                                          "same engine as the agent asking; least_stress: the "
@@ -2293,6 +2298,11 @@ TOOL_SPECS = [
                                       "description": ("Alone, instead of a kind: whether a "
                                                       "chosen brain in token stress gives way "
                                                       "to the least stressed.")},
+                "judges_other_brain": {"type": "boolean",
+                                       "description": ("Alone, instead of a kind: whether a "
+                                                       "package's judges run on the other "
+                                                       "brain from its author's (ignored "
+                                                       "with only one brain).")},
             },
         },
     },
@@ -3066,13 +3076,17 @@ def _image_block(raw) -> dict | None:
     return {"type": "image", "data": data, "mimeType": mime}
 
 
-def _forward(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
+def _forward(tool: str, arguments: dict, role: str = "") -> tuple[bool, str, dict | None]:
     """Call the server. Every failure becomes a spoken-able sentence, never a
     traceback: the brain has to say something useful either way.
 
     Third element is an MCP image content block when the server sent one.
+    `role` names the role a role's tool server calls for (role_mcp.py).
     """
-    body = json.dumps({"tool": tool, "arguments": arguments}).encode()
+    request = {"tool": tool, "arguments": arguments}
+    if role:
+        request["role"] = role
+    body = json.dumps(request).encode()
     endpoint = _endpoint()
     req = urllib.request.Request(
         endpoint, data=body, method="POST",

@@ -395,7 +395,7 @@ class RunExecutor:
         coro = None
         try:
             runner = self._engine_of({"engine": engine})
-            resolved_model = runner.resolve_model(model)
+            resolved_model = await asyncio.to_thread(runner.resolve_model, model)
             # A caller that names no bound (every production caller does not)
             # gets the default one. See _resolve_default_timeout.
             bound = timeout_sec if timeout_sec and timeout_sec > 0 \

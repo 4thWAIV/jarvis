@@ -71,6 +71,8 @@ from jarvis import preflight
 from jarvis import session_skill
 from jarvis import private_files
 from jarvis import project_maker
+from jarvis import model_tiers
+from jarvis import roles
 from jarvis import projects_view
 from jarvis import history_read
 from jarvis import repo_read
@@ -1520,7 +1522,7 @@ async def start_brain_and_speech() -> None:
     data_paths.sync_skills()
     data_paths.ensure_tool_token()
     mcp_path = _write_mcp_config(home)
-    config = BrainConfig.from_env(home)
+    config = await asyncio.to_thread(BrainConfig.from_env, home)   # Codex reads its model list
     config.mcp_config = mcp_path
     # Exactly the servers `_write_mcp_config` accepted — so what is merged into
     # the config and what the allowlist grants can never disagree.
@@ -3796,7 +3798,10 @@ async def _brain_card(name: str, cfg: dict, brief: bool = False) -> dict:
     card = {"name": name, "title": provider.title, "added": added,
             "default": cfg["default"] == name,
             "active": brain_instance is not None and brain_instance.provider.name == name,
-            "model": cfg["brains"].get(name, {}).get("model") or provider.default_model}
+            # A provider's default may be read from its live model list
+            # (Codex's), so off the loop.
+            "model": cfg["brains"].get(name, {}).get("model")
+            or await asyncio.to_thread(lambda: provider.default_model)}
     if not added or brief:
         return card
     async_checks, sync_checks = provider.preflight()
@@ -3962,11 +3967,15 @@ async def api_brain_start():
 
 async def _change_engine_setting(change: dict) -> dict:
     """One change to the engine settings, from the page or the brain:
-    `{"kind", "pick", "engine"?, "model"?}` or `{"override_stressed"}`.
+    `{"kind", "pick", "engine"?, "model"?}`, `{"override_stressed"}` or
+    `{"judges_other_brain"}`.
     A model is checked against its brain's own list. Raises
     engine_choice.Refused."""
     if "override_stressed" in change:
         await asyncio.to_thread(engine_choice.set_override, _truthy(change["override_stressed"]))
+    elif "judges_other_brain" in change:
+        await asyncio.to_thread(engine_choice.set_judges_other_brain,
+                                _truthy(change["judges_other_brain"]))
     else:
         engine = change.get("engine") or None
         model = str(change.get("model") or "").strip() or None
@@ -5232,16 +5241,25 @@ async def internal_tool(request: Request):
     handler = TOOL_HANDLERS.get(tool)
     if handler is None:
         return _tool_reply(False, f"Unknown tool: {tool}")
+    # A role's tool server (role_mcp.py) names its role: JARVIS acting for
+    # itself, answered only for a tool that role has, and never in his turn
+    # (`_tool_caller`, as an agent's call is).
+    role = body.get("role")
+    if role is not None and not roles.allows(str(role), tool):
+        return _tool_reply(False, f"Refused: the {role} role has no tool {tool!r}.")
 
     # From here the call is an activity (tool_activity.py): started now,
     # ended exactly once by how `_dispatch_tool` answered. A request that
     # goes away mid-call (cancelled) ends `failed`. Never its words.
     call = tool_activity.activity.start(tool)
     stage = tool_activity.FAILED
+    caller = _tool_caller.set(f"role:{role}") if role is not None else None
     try:
         reply, stage = await _dispatch_tool(tool, handler, args)
         return reply
     finally:
+        if caller is not None:
+            _tool_caller.reset(caller)
         tool_activity.activity.end(call, stage)
 
 
@@ -11817,7 +11835,7 @@ def user_prompt_of(stored_prompt: str) -> str:
 # either fails or quietly falls back — which is how an explicit "make sure
 # it's running Opus 5" still went out on sonnet. A full model id (
 # `claude-opus-4-20250514`) is passed through untouched.
-_MODEL_FAMILIES = ("opus", "sonnet", "haiku", "fable")
+_MODEL_FAMILIES = tuple(model_tiers.families("claude"))   # the tier file's Claude families
 
 # Everything JARVIS hears has been through speech recognition, and model names
 # are exactly the kind of word it mangles: the user said "Sonnet" and the
@@ -12578,7 +12596,11 @@ async def tool_set_voice_input_settings(args: dict) -> str:
 
 
 _KIND_SAID = {"package_author": "The package author", "run": "Agent runs",
-              "build": "Builds", "agent_package": "Agent packages"}
+              "build": "Builds", "agent_package": "Agent packages",
+              "editor": "A package's editor", "judges": "A package's judges",
+              "theory_of_mind_reader": "A package's Theory of Mind reader",
+              "retrieval": "Retrieval", "marking": "Marking",
+              "classification": "Classification", "extraction": "Extraction"}
 
 
 def _engine_settings_said(view: dict) -> str:
@@ -12596,6 +12618,9 @@ def _engine_settings_said(view: dict) -> str:
         lines.append(f"{_KIND_SAID[kind]}: {how}.")
     lines.append("Override when the chosen brain is in token stress: "
                  + ("on." if view["override_stressed"] else "off."))
+    lines.append("Judges on the other brain from the author's: "
+                 + ("on" if view["judges_other_brain"] else "off")
+                 + ("" if len(view["engines"]) > 1 else ", ignored with only one brain") + ".")
     for e in view["engines"]:
         ahead = e["ahead"]
         lines.append(f"{ENGINE_SAID[e['engine']]} this week: "

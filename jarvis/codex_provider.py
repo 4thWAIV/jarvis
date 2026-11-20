@@ -46,7 +46,9 @@ from jarvis import env_names
 from jarvis import claude_env
 from jarvis import data_paths
 from jarvis import preflight
+from jarvis import model_tiers
 from jarvis import private_files
+from jarvis import roles
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, SessionInfo, SignIn, TextDelta,
                             ToolFailed, ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
@@ -64,7 +66,6 @@ SERVICE = "openai"
 # tuple of ints, never as a string.
 MIN_VERSION = (0, 154, 0)
 MIN_VERSION_STR = "0.154.0"
-DEFAULT_MODEL = "gpt-5.6-terra"
 
 # The features left on. Everything else Codex has switched on is switched off
 # at every start. `code_mode_host` is the host Codex calls MCP tools through:
@@ -78,6 +79,23 @@ KEEP_FEATURES = frozenset({
     "item_ids", "sqlite", "steer", "resize_all_images",
 })
 
+# A role of a package's making starts from the lockdown (Tim's "Awesome",
+# 2026-11-19): the same features less the code-mode host, so `exec` is listed
+# but refuses to run and a role session can neither read a file nor call a
+# tool. Each role is then released for its run to exactly its
+# `roles.Release` (Tim, 2026-11-20), the definition Claude reads too
+# (`role_release`).
+ROLE_KEEP_FEATURES = KEEP_FEATURES - {"code_mode_host"}
+
+# The permission profile a role that reads or writes files runs under,
+# measured on Codex 0.171.0: reads denied everywhere (`:root`, and the temp
+# folders, which `:minimal` would otherwise leave readable) but the
+# platform's own paths (`:minimal`, the programs its shell runs), the
+# folders it reads and its run folder; writes only in its run folder, for
+# a writer; no network. Measured: a file in a folder it reads came back,
+# one beside it "Operation not permitted", its home folder and ~/.zshrc
+# refused, a write outside its run folder refused, curl could not resolve.
+ROLE_PROFILE = "jarvis_role"
 # Never inherited by the Codex child: with one of these set, Codex would bill
 # an API key instead of the ChatGPT plan. The plan is the whole point.
 SCRUBBED_ENV_KEYS = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID",
@@ -253,12 +271,63 @@ def write_config(mcp_config: Optional[Path]) -> Path:
     return path
 
 
-def features_to_disable(listing: str) -> list[str]:
+def _has_brain_server() -> bool:
+    """JARVIS's Codex home's config.toml names the brain's own server, so a
+    role must switch it off."""
+    try:
+        text = (data_paths.codex_home() / "config.toml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return f"[mcp_servers.{OWN_SERVER}]" in text
+
+
+def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, list[str]]:
+    """A role on Codex: the lockdown, then exactly its `roles.Release`, as
+    (the features kept on, the thread's config, the app server's `-c`
+    overrides). Measured on Codex 0.171.0:
+
+    - the lockdown, every role: `ROLE_KEEP_FEATURES`, subagents off
+      (`agents.enabled`: Codex 0.171.0 offers spawn_agent and its
+      companions whatever `multi_agent` says, and a long-lived thread's
+      subagent runs), no project docs, web search or file-editing tool, the
+      sandbox read-only;
+    - its tools: the code-mode host on, its own tool server the only one
+      added. With it on and the shell off, `exec` runs JavaScript with no
+      require, Deno, fetch or import: it reaches the configured servers'
+      tools and nothing else of the Mac (Codex's own clock and MCP resource
+      listing aside), and apply_patch, which the read-only sandbox refuses;
+    - its file tools: the shell on, under `ROLE_PROFILE`, so a read or a
+      write is confined to its folders (measured above) and nothing reaches
+      the network; a writer gets the file-editing tool, its run folder
+      writable."""
+    release = launch.role.release
+    keep = ROLE_KEEP_FEATURES
+    config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
+                    "web_search": "disabled", "agents": {"enabled": False},
+                    "include_apply_patch_tool": release.writes}
+    overrides: list[str] = []
+    if release.tools and launch.mcp_config is not None:
+        keep = keep | {"code_mode_host"}
+        overrides = config_overrides(
+            {roles.SERVER_NAME: _servers_of(launch.mcp_config).get(roles.SERVER_NAME)})
+    if release.file_tools:
+        keep = keep | {"shell_tool"}
+        filesystem = {":root": "deny", ":minimal": "read",
+                      ":slash_tmp": "deny", ":tmpdir": "deny"}
+        filesystem.update({str(folder): "read" for folder in launch.reads})
+        filesystem[str(run)] = "write" if release.writes else "read"
+        config["default_permissions"] = ROLE_PROFILE
+        config["permissions"] = {ROLE_PROFILE: {"filesystem": filesystem,
+                                                "network": {"enabled": False}}}
+    return keep, config, overrides
+
+
+def features_to_disable(listing: str, keep: frozenset = KEEP_FEATURES) -> list[str]:
     """From `codex features list`: every feature that is on and not kept."""
     off = []
     for line in listing.splitlines():
         parts = line.split()
-        if len(parts) >= 2 and parts[-1] == "true" and parts[0] not in KEEP_FEATURES:
+        if len(parts) >= 2 and parts[-1] == "true" and parts[0] not in keep:
             off.append(parts[0])
     return off
 
@@ -351,6 +420,7 @@ class CodexSession:
         self._call_names: dict[str, str] = {}
         self._info: Optional[SessionInfo] = None
         self._last_usage: dict = {}
+        self._reply: Optional[str] = None
         self.disabled: list[str] = []
 
     @property
@@ -365,29 +435,26 @@ class CodexSession:
     def _cmd(self, *args: str) -> list[str]:
         return _codex_binary(self.codex) + list(args)
 
+    async def _features_off(self, env: dict, keep: frozenset) -> None:
+        listing = await asyncio.create_subprocess_exec(
+            *self._cmd("features", "list"), env=env, cwd=str(self.config.home),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await listing.communicate()
+        self.disabled = features_to_disable(out.decode(errors="replace"), keep)
+
     async def open(self, instructions: str) -> None:
+        if self.config.role is not None:
+            return await self._open_role(instructions)
         home = self.config.home if self.config.authoring else data_paths.codex_home()
         env = child_env(authoring=self.config.authoring)
         if not self.config.authoring:
             write_config(self.config.mcp_config)
-            listing = await asyncio.create_subprocess_exec(
-                *self._cmd("features", "list"), env=env, cwd=str(self.config.home),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await listing.communicate()
-            self.disabled = features_to_disable(out.decode(errors="replace"))
+            await self._features_off(env, KEEP_FEATURES)
         argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
         if self.config.authoring:
             argv += config_overrides(_servers_of(self.config.mcp_config))
-        self.proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(self.config.home), env=env,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
-        self._reader = asyncio.create_task(self._read_stdout(self.proc))
-        self._stderr_task = asyncio.create_task(self._drain_stderr(self.proc))
+        await self._start(argv, env)
         try:
-            await self._call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
-                             timeout=self.config.warmup_timeout)
-            self._notify("initialized")
             settings = {
                 "model": self.config.model, "cwd": str(self.config.home),
                 "approvalPolicy": "never",
@@ -408,14 +475,38 @@ class CodexSession:
             else:
                 started = await self._call("thread/start", settings,
                                            timeout=self.config.warmup_timeout)
-            thread = started.get("thread") or {}
-            self.thread_id = thread.get("id")
-            self._rollout = Path(thread["path"]) if thread.get("path") else None
-            status = await self._call("mcpServerStatus/list", {}, timeout=self.config.warmup_timeout)
+            status = await self._thread_started(started)
         except (asyncio.TimeoutError, RuntimeError, OSError) as e:
             self.kill()
             raise OSError(f"codex app-server did not start a thread: {e}") from e
-        servers, tools, by_server = [], [WEB_SEARCH_TOOL], {}
+        self._note_started(started, status, [WEB_SEARCH_TOOL])
+        log.info("codex: thread %s in %s, %d features switched off",
+                 self.thread_id, home, len(self.disabled))
+
+    async def _start(self, argv: list[str], env: dict) -> None:
+        """The app server running and initialised."""
+        self.proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=str(self.config.home), env=env,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
+        self._reader = asyncio.create_task(self._read_stdout(self.proc))
+        self._stderr_task = asyncio.create_task(self._drain_stderr(self.proc))
+        try:
+            await self._call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
+                             timeout=self.config.warmup_timeout)
+            self._notify("initialized")
+        except (asyncio.TimeoutError, RuntimeError, OSError) as e:
+            self.kill()
+            raise OSError(f"codex app-server did not start: {e}") from e
+
+    async def _thread_started(self, started: dict) -> dict:
+        thread = started.get("thread") or {}
+        self.thread_id = thread.get("id")
+        self._rollout = Path(thread["path"]) if thread.get("path") else None
+        return await self._call("mcpServerStatus/list", {}, timeout=self.config.warmup_timeout)
+
+    def _note_started(self, started: dict, status: dict, tools: list[str]) -> None:
+        servers, by_server = [], {}
         for s in (status or {}).get("data") or []:
             name = str(s.get("name") or "")
             if not name:
@@ -429,20 +520,65 @@ class CodexSession:
         self._info = SessionInfo(conversation_id=self.thread_id,
                                  model=started.get("model") or self.config.model,
                                  servers=servers, tools=tools, server_tools=by_server)
-        log.info("codex: thread %s in %s, %d features switched off",
-                 self.thread_id, home, len(self.disabled))
 
-    async def send(self, text: str) -> None:
+    async def _open_role(self, instructions: str) -> None:
+        """One role's thread (sessions.yaml launch_v1, participants.md
+        section 0.3): JARVIS's own Codex home, never the user's (its
+        AGENTS.md would reach the role), the role's prompt as the base
+        instructions, no project docs, no web search, JARVIS's brain server
+        off, locked down and released to exactly its role's `Release`
+        (`role_release`)."""
+        launch = self.config.role
+        role = launch.role
+        keep, config, overrides = role_release(launch, self.config.home)
+        env = child_env()
+        await self._features_off(env, keep)
+        argv = (self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
+                + overrides)
+        await self._start(argv, env)
+        if _has_brain_server():
+            config["mcp_servers"] = {OWN_SERVER: {"enabled": False}}
+        settings = {
+            "model": self.config.model, "cwd": str(self.config.home),
+            "approvalPolicy": "never",
+            "baseInstructions": instructions, "developerInstructions": None,
+            "personality": "none", "config": config,
+        }
+        if "default_permissions" not in config:
+            settings["sandbox"] = "read-only"
+        try:
+            if self.config.resume:
+                started = await self._call("thread/resume", {"threadId": self.config.resume,
+                                                             **settings},
+                                           timeout=self.config.warmup_timeout)
+            else:
+                started = await self._call(
+                    "thread/start", {**settings, "ephemeral": role.lifetime == roles.ONE_SHOT},
+                    timeout=self.config.warmup_timeout)
+            status = await self._thread_started(started)
+        except (asyncio.TimeoutError, RuntimeError, OSError) as e:
+            self.kill()
+            raise OSError(f"codex app-server did not start the {role.name} thread: {e}") from e
+        self._note_started(started, status, [])
+        log.info("codex: %s thread %s, %d features switched off",
+                 role.name, self.thread_id, len(self.disabled))
+
+    async def send(self, text: str, answer_format: Optional[dict] = None) -> None:
         if not self.alive or not self.thread_id:
             raise BrokenPipeError("the codex app-server is not running")
         if self._info is not None:
             info, self._info = self._info, None
             self._emit(info)
+        turn = {"threadId": self.thread_id, "effort": self.config.effort,
+                "input": [{"type": "text", "text": text}]}
+        launch = self.config.role
+        schema = answer_format if answer_format is not None else (
+            launch.answer_format if launch is not None else None)
+        if schema is not None:
+            turn["outputSchema"] = schema
+        self._reply = None
         try:
-            await self._call("turn/start", {
-                "threadId": self.thread_id, "effort": self.config.effort,
-                "input": [{"type": "text", "text": text}],
-            }, timeout=self.config.turn_timeout)
+            await self._call("turn/start", turn, timeout=self.config.turn_timeout)
         except RuntimeError as e:          # refused: the turn never started
             self._emit(TurnEnded(0, 0, error=str(e)))
 
@@ -547,6 +683,8 @@ class CodexSession:
                 self._emit(ToolStarted(str(kind)))
         elif method == "item/completed":
             item = params.get("item") or {}
+            if item.get("type") == "agentMessage" and isinstance(item.get("text"), str):
+                self._reply = item["text"]          # the last one is the turn's answer
             if item.get("type") == "mcpToolCall" and item.get("status") == "failed":
                 err = item.get("error") or {}
                 self._emit(ToolFailed(tool_name(str(item.get("server") or ""),
@@ -566,8 +704,10 @@ class CodexSession:
                 log.error(f"codex: {name} failed in the code-mode host: {failure}")
                 self._emit(ToolFailed(name, failure))
             u, self._last_usage = self._last_usage, {}
+            reply, self._reply = self._reply, None
             self._emit(TurnEnded(context_tokens=int(u.get("inputTokens") or 0),
-                                 output_tokens=int(u.get("outputTokens") or 0), error=error))
+                                 output_tokens=int(u.get("outputTokens") or 0), error=error,
+                                 reply=None if error else reply))
         elif method == "account/rateLimits/updated":
             report, plan = usage_report(params.get("rateLimits") or {})
             try:
@@ -802,23 +942,36 @@ async def check_codex_login(timeout: float = preflight.DEFAULT_CHECK_TIMEOUT) ->
                            message="JARVIS's Codex is not logged in.", remedy=remedy)
 
 
+def fallback_model(listed: list[str]) -> Optional[str]:
+    """The model Codex runs on when none is chosen: the sweep's first for
+    the default tier over the models listed now (model_tiers), never a
+    fixed name; None when nothing listed fits, and Codex's own default
+    is used."""
+    found = model_tiers.sweep("codex", model_tiers.DEFAULT_TIER, listed)
+    return found[0] if found else None
+
+
 class CodexProvider:
     name = SERVICE
     title = "OpenAI (Codex)"
-    default_model = DEFAULT_MODEL
 
     def __init__(self, codex_path: Optional[str] = None):
         self._codex = codex_path or settings_service.value("codex_path") or None
         self._signing_in: dict[str, AppServer] = {}
 
+    @property
+    def default_model(self) -> Optional[str]:
+        return fallback_model(self.models())
+
     def models(self) -> list[str]:
+        """The app server's live model/list; none when it cannot be asked."""
         try:
             with AppServer(self._codex) as server:
                 found = server.call("model/list", {}).get("data") or []
         except UsageUnavailable:
-            return [DEFAULT_MODEL]
+            return []
         names = [str(m.get("id") or m.get("model")) for m in found if isinstance(m, dict)]
-        return [n for n in names if n and n != "None"] or [DEFAULT_MODEL]
+        return [n for n in names if n and n != "None"]
 
     async def account(self) -> Account:
         def read() -> Account:

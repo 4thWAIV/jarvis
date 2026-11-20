@@ -13,6 +13,7 @@ import sys
 
 WARMUP = "(system) Warm-up. Reply with exactly: OK"
 RESUMED = False     # thread/resume was asked for, not thread/start
+TURN: dict = {}     # the turn/start being answered
 
 
 def log(**entry):
@@ -52,8 +53,13 @@ def turn(rid, text):
     if text == "hit the limit":
         out({"method": "account/rateLimits/updated", "params": {"rateLimits": limits(reached=True)}})
     reply = ["OK"] if text == WARMUP else ["Hello, ", "sir."]
+    if TURN.get("outputSchema") is not None:
+        # An answer in the turn's form: $FAKE_CODEX_ANSWER, as given.
+        reply = [os.environ.get("FAKE_CODEX_ANSWER", "{}")]
     for part in reply:
         out({"method": "item/agentMessage/delta", "params": {"delta": part}})
+    out({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "a1",
+                                                         "text": "".join(reply)}}})
     used = 1000 if text == WARMUP else 1500
     out({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {
         "last": {"inputTokens": used, "outputTokens": 7}, "modelContextWindow": 258400}}})
@@ -88,6 +94,9 @@ def app_server():
                 {"name": "jarvis", "tools": {"capture": {}, "list_agents": {}}},
                 {"name": "broken", "tools": None}]}})
         elif method == "turn/start":
+            log(turn=params)
+            TURN.clear()
+            TURN.update(params)
             text = "".join(i.get("text", "") for i in params.get("input") or [])
             turn(rid, text)
         elif method == "account/rateLimits/read":
