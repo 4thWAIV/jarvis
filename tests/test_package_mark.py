@@ -129,13 +129,22 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
     session = {(f["field"], f["value"]) for f in by_file["jarvis/sender-session.md"]["facts"]}
     assert ("command", "pytest tests/test_work_folders.py -q") in session
 
-    # extract_prose: kept only where it stands verbatim; the invented one dropped.
+    # extract_prose: the prose parts of logs and transcripts, for that
+    # type's facts; kept only where it stands verbatim, the invented one
+    # dropped. A prose file is not extracted (the design names no facts for
+    # one), and its marks say so.
     extracted = [f for m in by_file.values() for f in m["facts"] if f["by"] == "extraction"]
     assert extracted and all(f["value"] != "invented" for f in extracted)
-    assert any(f["value"] == "Work items" for f in by_file["files/situation.md"]["facts"])
     for fact in by_file["jarvis/sender-session.md"]["facts"]:
         if fact["by"] == "extraction":
             assert fact["value"] == "12 tests"      # from its final message, its prose part
+    asked = [set(_ids(g["text"], "field")) for g in roles.given["extraction"]]
+    assert {"command", "outcome"} in asked
+    for stored in ("files/situation.md", "jarvis/tim.md", "handoff.json",
+                   "retrieved/pr-171.md"):
+        assert by_file[stored]["prose_file"]
+        assert by_file[stored]["extraction"] == package_mark.NO_PROSE_FACTS
+        assert not [f for f in by_file[stored]["facts"] if f["by"] == "extraction"]
 
     # mark_prose: one call a file; every part scored against all 28 labels;
     # each part's segment is the file's own characters at its position.
@@ -144,8 +153,17 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
     for p in situation:
         assert text_of("files/situation.md")[p["position"]["start"]:p["position"]["end"]] \
             == p["segment"]
+    # Only prose files are marked: Tim's record, the sender's words, docs,
+    # a PR's description; never the prose parts of a log or a transcript.
     marked_files = [g["text"] for g in roles.given["marking"]]
     assert len(marked_files) == sum(1 for m in by_file.values() if m["parts"])
+    assert {s for s, m in by_file.items() if m["parts"]} == \
+        {s for s, m in by_file.items() if m["prose_file"]} >= {
+            "files/situation.md", "jarvis/tim.md", "handoff.json", "retrieved/pr-171.md"}
+    assert not by_file["jarvis/sender-session.md"]["parts"]
+    assert not by_file["retrieved/ci_run-99881.md"]["parts"]
+    description = " ".join(p["segment"] for p in by_file["retrieved/pr-171.md"]["parts"])
+    assert description and "diff --git" not in description
     # The handoff's prose is the sender's own words, never its questions.
     handoff = " ".join(p["segment"] for p in by_file["handoff.json"]["parts"])
     assert "Tim decides whether PR 171 merges." in handoff
@@ -265,6 +283,49 @@ def test_the_handoff_s_prose_maps_back_to_its_raw_position():
     assert raw[at[0]:at[1]] == "two"
     start, end = view.to_file(0, len("Line one.\nLine"))
     assert raw[start:end] == "Line one.\\nLine"
+
+
+def test_a_value_over_two_pieces_keeps_both_places_in_the_file():
+    raw = json.dumps({"purpose": "The move is ready.", "recommendation": "Merge it now."})
+    view = es.prose_of("handoff.json", es.DATA, raw)
+    start = view.text.index("ready.")
+    end = view.text.index("Merge") + len("Merge")
+    spans = view.spans(start, end)
+    assert [raw[a:b] for a, b in spans] == ["ready.", "Merge"]
+    assert view.to_file(start, end) == (spans[0][0], spans[-1][1])
+    sep = view.text.index(es.SEPARATOR)
+    assert view.spans(sep, sep + len(es.SEPARATOR)) == []
+
+    row = pe.Row(id="r1", type="handoff", source="handoff.json", stored="handoff.json",
+                 file_type=es.DATA)
+    f = package_mark.FileMarks(row, raw, view)
+    assert f.position(start, end) == {"start": spans[0][0], "end": spans[1][1],
+                                      "spans": [{"start": a, "end": b} for a, b in spans]}
+    f.fact("x", view.text[start:end], f.position(start, end), package_mark.BY_EXTRACTION)
+    item = package_mark._items(f)[0]
+    assert item.source == f"handoff.json {spans[0][0]}-{spans[0][1]}, " \
+                          f"{spans[1][0]}-{spans[1][1]}, x"
+
+
+def test_extraction_fields_are_the_types_facts_and_none_for_prose():
+    def names(file_type):
+        found = package_mark.fields_for(file_type)
+        return None if found is None else [f.name for f in found]
+    assert names(es.TEST_RESULTS) == ["failed_test", "error", "file", "line"]
+    assert names(es.BUILD_LOG) == ["build_error", "failed_step"]
+    assert names(es.CI_RUN) == ["job", "result", "started", "finished"]
+    assert names(es.TRANSCRIPT) == ["command", "outcome"]
+    for other in (es.PROSE, es.DIFF, es.DATA):
+        assert names(other) is None
+
+
+def test_which_files_are_prose_files():
+    assert es.is_prose_file("files/notes.md", es.PROSE, "file")
+    assert es.is_prose_file("handoff.json", es.DATA, "handoff")
+    assert es.is_prose_file("retrieved/pr-1.md", es.DIFF, "pr")
+    assert not es.is_prose_file("retrieved/commit-a.md", es.DIFF, "commit")
+    assert not es.is_prose_file("jarvis/sender-session.md", es.TRANSCRIPT, "transcript")
+    assert not es.is_prose_file("files/ci.md", es.CI_RUN, "file")
 
 
 def test_the_labels_are_the_28_with_their_kinds():

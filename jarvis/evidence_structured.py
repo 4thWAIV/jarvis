@@ -13,9 +13,12 @@ structured file, and the prose a model is given.
   the files a diff changes; the commands a session ran and their outcome;
   the named fields of data. A value is the file's own characters at its
   position.
-- `prose_of`: the prose a model is given (extract_prose, mark_prose): a
-  prose file whole, and the prose parts of every other file, each piece
-  mapped back to its file position (`ProseView.to_file`).
+- `prose_of`: the prose of a file, each piece mapped back to its file
+  position (`ProseView.spans`, `to_file`): a prose file whole, and the
+  prose parts of every other file. `is_prose_file` says which files are
+  prose files (marked, mark_prose); the prose parts of logs and
+  transcripts go to extraction alone, for that type's facts
+  (`TYPE_FACTS`).
 
 Markdown is read by its fenced blocks: a block's info string says what it
 holds (`json`, `diff`, else a log), and the text outside the blocks is the
@@ -742,20 +745,25 @@ class ProseView:
             at += len(p.text) + len(SEPARATOR)
         return out
 
+    def spans(self, start: int, end: int) -> list[tuple[int, int]]:
+        """The file positions of [start, end) of `text`, one for each piece
+        it covers part of: a stretch that runs from one piece into the next
+        is in the file in two places, the separator between them being
+        JARVIS's, not the file's."""
+        out = []
+        for p, at in zip(self.pieces, self._offsets()):
+            a, b = max(start, at), min(end, at + len(p.text))
+            if a < b:
+                out.append((p.raw(a - at), p.raw(b - at)))
+        return out
+
     def to_file(self, start: int, end: int) -> Optional[tuple[int, int]]:
-        """The file position of [start, end) of `text`; None when it is not
-        inside the pieces (it runs over a separator's edge)."""
-        offsets = self._offsets()
-        first = last = None
-        for k, (p, at) in enumerate(zip(self.pieces, offsets)):
-            if at <= start < at + len(p.text):
-                first = k
-            if at < end <= at + len(p.text):
-                last = k
-        if first is None or last is None or last < first:
-            return None
-        return (self.pieces[first].raw(start - offsets[first]),
-                self.pieces[last].raw(end - offsets[last]))
+        """The file position of [start, end) of `text`: from where it starts
+        in its first piece to where it ends in its last (`spans` gives each
+        piece's part); None only when no character of it is in a piece (it
+        is all separator)."""
+        found = self.spans(start, end)
+        return (found[0][0], found[-1][1]) if found else None
 
 
 def _trim(text: str, start: int, end: int) -> Optional[Piece]:
@@ -798,12 +806,41 @@ def _outside(text: str, blocks: list[Fence], *, keep_headings: bool,
     return pieces
 
 
+def is_prose_file(stored: str, file_type: str, row_type: str) -> bool:
+    """A prose file, the files mark_prose marks (workflow.yaml mark
+    mark_prose: "prose file: Tim's messages, the sender's reason and
+    situation, docs, notes, PR descriptions"): a file of the prose type
+    (Tim's record, the sender's answers, docs and notes), the sender's own
+    words in its handoff, and a retrieved pull request's description. The
+    prose parts of the rest (logs and transcripts) go to extract_prose
+    only."""
+    return file_type == PROSE or stored == HANDOFF or \
+        (stored.startswith("retrieved/") and row_type == "pr")
+
+
+# What extract_prose looks for in the prose parts of a log or a transcript:
+# that type's facts, as workflow.yaml mark read_structured names them
+# ("failed tests with error, file and line; build errors and the failed
+# step; CI jobs with result and times; ... commands run and their
+# outcome"), by the field names read_structured gives them. The design
+# names no facts for a prose file, so none is listed for one.
+TYPE_FACTS: dict[str, tuple[tuple[str, str], ...]] = {
+    TEST_RESULTS: (("failed_test", "a failed test"), ("error", "a failed test's error"),
+                   ("file", "a failed test's file"), ("line", "a failed test's line")),
+    BUILD_LOG: (("build_error", "a build error"), ("failed_step", "the failed step")),
+    CI_RUN: (("job", "a CI job"), ("result", "a CI job's result"),
+             ("started", "the time a CI job started"),
+             ("finished", "the time a CI job finished")),
+    TRANSCRIPT: (("command", "a command run"), ("outcome", "a command's outcome")),
+}
+
+
 def prose_of(stored: str, file_type: str, text: str) -> ProseView:
-    """The prose of one file (extract_prose, mark_prose): a prose file whole
-    (outside its fenced blocks); the sender's own words in its handoff; and
-    the prose parts of every other Markdown file, its words outside the
-    fenced blocks of its log, transcript or record. A file with no reader
-    has none."""
+    """The prose of one file: a prose file whole (outside its fenced
+    blocks); the sender's own words in its handoff; and the prose parts of
+    every other Markdown file, its words outside the fenced blocks of its
+    log, transcript or record (a pull request's description among them). A
+    file with no reader has none."""
     if file_type == NO_READER:
         return ProseView(())
     if stored == HANDOFF:

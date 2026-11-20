@@ -1644,20 +1644,29 @@ the file's prose (`evidence_structured.prose_of`: a prose file whole; the
 prose parts of the rest, without the headings and `Source:` line JARVIS
 wrote; the sender's own words in `handoff.json`, its two answers, purpose
 and recommendation, mapped back through the JSON's escapes), one
-`ProseView` a file whose pieces map every offset back to the file.
-`extract_prose`: each file's prose to ExtractionSession (tier 4), one call a
-file, for its type's facts (`package_mark.fields_for`: a log's or
-transcript's own; for prose the `evidence` label's name, number, test, file
-and measurement), a value kept only verbatim at its position. `mark_prose`:
-the same prose to MarkingSession (tier 3), one call a file, every part
-scored against the 28 labels (`briefing_labels.py`, the one list: name,
+`ProseView` a file whose pieces map every offset back to the file
+(`spans`: a stretch running from one piece into the next is in the file in
+two places, kept as both, `position`'s `spans`).
+`extract_prose`: the prose parts of each log and transcript to
+ExtractionSession (tier 4), one call a file, for that type's facts
+(`evidence_structured.TYPE_FACTS`, read_structured's: a failed test with
+its error, file and line; a build error and the failed step; a CI job with
+its result and times; a command and its outcome), a value kept only
+verbatim at its position. A prose file is not extracted: the design names
+no facts for one, and its marks say so (`extraction`,
+`package_mark.NO_PROSE_FACTS`), waiting on Tim. `mark_prose`: each prose
+file (`evidence_structured.is_prose_file`: a prose-typed file, the sender's
+words in `handoff.json`, a retrieved pull request's description; never the
+prose parts of a log or a transcript) to MarkingSession (tier 3), one call
+a file, every part scored against the 28 labels (`briefing_labels.py`, the one list: name,
 meaning, action, kind keep, fix or remove, origin and example), with Tim's
 material: the file itself and every item he knows or had access to, whole,
 each with its state, and every item he probably does not know named by its
 source and state only (`package_mark.tims_material`).
 `relate_to_questions`: every fact and marked part of a file to
-ClassificationSession (tier 3), one call a file, scored against each of the
-handoff's questions plus background, never told what Tim knows. Each call
+ClassificationSession (tier 3), one call a file, every one with its place
+in the file, scored against each of the handoff's questions plus
+background, never told what Tim knows. Each call
 that finds no model or cannot answer puts the run in Error
 (`package_jobs.asked`, which the gather step's retrieval uses too). What it
 read goes beside the evidence, `mark/<stored file>.json` for each file (its
