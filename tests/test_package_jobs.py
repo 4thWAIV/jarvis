@@ -453,11 +453,12 @@ def test_a_step_not_built_yet_is_an_error_not_a_silent_stop(wired, tmp_path, spa
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
     monkeypatch.setitem(pj.PRODUCERS, "gather", f"{__name__}:gather_done")
+    monkeypatch.setitem(pj.PRODUCERS, "mark", f"{__name__}:gather_done")
     job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
     assert pj.run(job) == 1
     error = pj.get(job)["error"]
-    assert pj.get(job)["done"] == ["gather"]
-    assert error["step"] == "mark" and "not built" in error["reason"]
+    assert pj.get(job)["done"] == ["gather", "mark"]
+    assert error["step"] == "research" and "not built" in error["reason"]
 
 
 def test_with_no_work_item_the_error_is_a_message_to_tim(wired, tmp_path, spawned):

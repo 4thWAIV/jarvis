@@ -31,7 +31,6 @@ Nothing here classifies, marks, summarises, judges or selects.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -136,24 +135,14 @@ def retrieve_labels(g: Gathering, labels: list[tuple[int, dict]]) -> None:
     handled as an entry of its type; a label it finds nothing for is
     not_found with what it searched. A model sweep that finds no model, or
     a session that cannot answer, puts the run in Error."""
-    from jarvis import model_tiers, sessions
-    from jarvis.package_jobs import Blocked
+    from jarvis import package_jobs, sessions
     if not labels:
         return
     references = [sessions.Reference(f"label-{n}", e["text"]) for n, e in labels]
-    try:
-        # The design gives retrieval no deadline: it answers when its
-        # lookups do.
-        answered = asyncio.run(RETRIEVAL(g.doc).resolve(references, None))
-    except model_tiers.NoModel as e:
-        raise Blocked(STEP, f"No model could be found for retrieval: {e}",
-                      f"JARVIS swept the retrieval role's tier for {len(labels)} label(s).",
-                      "Make a model of the retrieval role's tier available (Settings, Brains), "
-                      "then a new run.") from e
-    except sessions.SessionFailed as e:
-        raise Blocked(STEP, f"Retrieval could not answer: {e}",
-                      f"JARVIS asked retrieval what {len(labels)} label(s) name.",
-                      "Read the run's log for the cause; once it is fixed, a new run.") from e
+    # The design gives retrieval no deadline: it answers when its lookups do.
+    answered = package_jobs.asked(STEP, "retrieval",
+                                  f"JARVIS asked retrieval what {len(labels)} label(s) name.",
+                                  RETRIEVAL(g.doc).resolve(references, None))
     by_id = {a["id"]: a for a in answered}
     for n, entry in labels:
         said = by_id.get(f"label-{n}") or {"resolved": NOT_FOUND, "entries": [], "searched": ""}

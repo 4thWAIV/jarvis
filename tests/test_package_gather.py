@@ -287,11 +287,16 @@ def test_a_label_retrieval_cannot_answer_is_an_error_saying_why(tmp_path, transc
     assert "No model could be found for retrieval" in blocked.value.reason
 
 
+def _marked(doc):
+    """The mark step, standing in (tests/test_package_mark.py runs it)."""
+
+
 def test_the_run_goes_through_gather_to_the_next_step(tmp_path, transcript, monkeypatch):
     doc = _job(tmp_path, "", [{"type": "content", "text": "Words."}])
+    monkeypatch.setitem(pj.PRODUCERS, "mark", f"{__name__}:_marked")
     assert pj.run(doc["id"]) == 1
     after = pj.get(doc["id"])
-    assert after["done"] == ["gather"] and after["error"]["step"] == "mark"
+    assert after["done"] == ["gather", "mark"] and after["error"]["step"] == "research"
 
 
 def test_the_sender_s_answers_join_the_evidence_as_they_arrive(tmp_path, transcript):

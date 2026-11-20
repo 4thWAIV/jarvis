@@ -42,6 +42,7 @@ in its session saying it all, and reads the same on its job (`status`).
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import importlib
 import os
@@ -50,7 +51,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional, TypeVar
 
 from jarvis import data_paths, env_names, records
 
@@ -70,13 +71,17 @@ STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
 # it returns WAITING when it asked the sender and waits on the answers,
 # raises Blocked when it cannot go on. A step with none is not built yet.
 # The deliver step signs with JARVIS's own key (`sign`).
-PRODUCERS: dict[str, str] = {"gather": "jarvis.package_gather:gather"}
+PRODUCERS: dict[str, str] = {"gather": "jarvis.package_gather:gather",
+                             "mark": "jarvis.package_mark:mark"}
 # At most five rounds of questions to the sender (Tim, 2026-11-19).
 MAX_ROUNDS = 5
 # A sender's answer is waited for 2 hours before Error (Tim, 2026-11-19).
 SENDER_WAIT_SEC = 2 * 3600.0
 LOG = "job.log"
 JARVIS = "jarvis"
+
+
+T = TypeVar("T")
 
 
 class JobError(ValueError):
@@ -90,6 +95,22 @@ class Blocked(Exception):
     def __init__(self, step: str, reason: str, tried: str, fix: str):
         super().__init__(reason)
         self.step, self.reason, self.tried, self.fix = step, reason, tried, fix
+
+
+def asked(step: str, role: str, tried: str, ask: Awaitable[T]) -> T:
+    """A role session's answer to one call of a step. A model sweep that
+    finds no model, or a session that cannot answer, puts the run in Error
+    (Blocked), saying which role and what was tried."""
+    from jarvis import model_tiers, sessions
+    try:
+        return asyncio.run(ask)
+    except model_tiers.NoModel as e:
+        raise Blocked(step, f"No model could be found for {role}: {e}", tried,
+                      f"Make a model of the {role} role's tier available (Settings, Brains), "
+                      "then a new run.") from e
+    except sessions.SessionFailed as e:
+        raise Blocked(step, f"{role[:1].upper()}{role[1:]} could not answer: {e}", tried,
+                      "Read the run's log for the cause; once it is fixed, a new run.") from e
 
 
 # -- where a run is ----------------------------------------------------------------------

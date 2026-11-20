@@ -454,6 +454,8 @@ EXEMPT = {
         "it writes JARVIS's own material into the package's evidence files (jarvis/), read by the package's steps as material; never a brain header, never said"),
     "package_gather.retrieve_labels": (
         "it writes manifest rows for the labels retrieval resolved, in the package's evidence; never a brain header, never said"),
+    "package_mark._items": (
+        "it gives ClassificationSession a file's facts and marked parts as items, each with its stored path, position and field as its source; the session's material inside its tagged items, never a brain header, never said"),
     "package_gather.tim_text": (
         "it writes Tim's record into the package's evidence file jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
     "session_transcript.find": (

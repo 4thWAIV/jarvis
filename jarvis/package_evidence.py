@@ -20,7 +20,10 @@ meaning. In it:
     given/             each content entry, `<n>.md`, as given
     jarvis/            what JARVIS gathers from its own records
     sender-answers/    the sender's answers, `<n>.md` a time it is asked
-    manifest.json      one row per stored file (`Row`)
+    manifest.json      one row per stored file (`Row`), each with its type
+                       once marked
+    mark/              what the mark step read, extracted, marked and
+                       scored, `<stored file>.json` for each (package_mark)
 
 Every row carries Tim's knowledge state, set here by a program from where
 the item came, never guessed by a model (`knowledge_state`). The evidence is
@@ -78,6 +81,10 @@ class Row:
     origin: str = "handoff"         # handoff, label <id>, work item <id>, jarvis
     why: str = ""                   # a label's entry: why it matches (RetrievalSession)
     record: Optional[str] = None    # the JARVIS record it read, an item path
+    # Its type, given by the mark step's program (evidence_structured.type_of):
+    # test_results, build_log, ci_run, diff, session_transcript, data, prose,
+    # or "no reader"; None until marked, and for a row that stored nothing.
+    file_type: Optional[str] = None
 
 
 @dataclass(frozen=True)

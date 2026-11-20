@@ -1624,6 +1624,47 @@ from `package_jobs.answer`). `knowledge_search` takes `under`, so a search
 keeps to one path (a package's evidence, a Work item's folder): the
 brain's, a role's, the route's (`POST /api/knowledge/search`) and
 `knowledge_api.search` alike.
+The mark step (`package_mark.mark`, `PRODUCERS["mark"]`; design: workflow.yaml
+mark) reads what gather collected, once per package like the evidence (the
+package's record's `marked_at`; a later run only waits for it to be
+indexed). `type_files`: each stored file gets a type by program from its
+content and name (`evidence_structured.type_of`: test_results, build_log,
+ci_run, diff, session_transcript, data, prose; anything else `no reader`,
+never guessed), written into its manifest row (`Row.file_type`).
+`read_structured`: each structured file parsed by program for its type's
+facts (`evidence_structured.read_structured`: failed tests with their
+error, file and line from pytest, JUnit XML, go, cargo and jest or vitest
+output; build errors and the failed step, a gh failed-steps log read after
+each line's job, step and time; a CI run's jobs with result and times and
+its failed steps; the files a diff changes; the commands a session ran and
+their outcome; the named fields of JSON, JSON lines, YAML, CSV and TSV),
+each fact the file's own characters at its position. Markdown is read by
+its fenced blocks (`json`, `diff`, else a log); the text outside them is
+the file's prose (`evidence_structured.prose_of`: a prose file whole; the
+prose parts of the rest, without the headings and `Source:` line JARVIS
+wrote; the sender's own words in `handoff.json`, its two answers, purpose
+and recommendation, mapped back through the JSON's escapes), one
+`ProseView` a file whose pieces map every offset back to the file.
+`extract_prose`: each file's prose to ExtractionSession (tier 4), one call a
+file, for its type's facts (`package_mark.fields_for`: a log's or
+transcript's own; for prose the `evidence` label's name, number, test, file
+and measurement), a value kept only verbatim at its position. `mark_prose`:
+the same prose to MarkingSession (tier 3), one call a file, every part
+scored against the 28 labels (`briefing_labels.py`, the one list: name,
+meaning, action, kind keep, fix or remove, origin and example), with Tim's
+material: the file itself and every item he knows or had access to, whole,
+each with its state, and every item he probably does not know named by its
+source and state only (`package_mark.tims_material`).
+`relate_to_questions`: every fact and marked part of a file to
+ClassificationSession (tier 3), one call a file, scored against each of the
+handoff's questions plus background, never told what Tim knows. Each call
+that finds no model or cannot answer puts the run in Error
+(`package_jobs.asked`, which the gather step's retrieval uses too). What it
+read goes beside the evidence, `mark/<stored file>.json` for each file (its
+type, facts, parts and their scores against the questions, each with its
+position) and `mark/marked.json` (the labels, the questions, the files),
+indexed with the raw files and waited for as gather's are;
+`package_mark.marked(place)` reads it all back.
 A Work item's own research (`work_research.py`; design: research
 work_item_research) is made again on every change of the item
 (`work_store.on_changed`, `REFRESHER`, started with the session watcher):
@@ -3228,7 +3269,8 @@ override); the brain's `engine_settings` and acting `set_engine_setting`
 The new package system's sessions (`sessions.py`, the design's
 sessions.yaml, approved 2026-11-18 and 2026-11-19), built for its later
 steps (gather, mark, research, the swarm) to use; the gather step calls
-RetrievalSession (see "A package's evidence"), the rest wait for theirs.
+RetrievalSession and the mark step ExtractionSession, MarkingSession and
+ClassificationSession (see "A package's evidence"), the rest wait for theirs.
 Composition, each type with its own interface (Tim, 2026-11-18): every
 session type is a `Protocol` its callers depend on (`ChatSession`,
 `SwarmSession`, `DecisionSession`, `ClassificationSession`,
@@ -3382,6 +3424,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   package's evidence (its place, manifest, Tim's knowledge states, urgent
   index and links), each typed entry's reader, a session's own transcript
   read by id, and a Work item's own research (see "A package's evidence")
+- `package_mark.py` / `evidence_structured.py` / `briefing_labels.py` — The
+  mark step, what a program reads in the evidence (each file's type, its
+  structured facts, its prose), and the 28 labels a briefing is marked with
+  (see "A package's evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
