@@ -97,7 +97,7 @@ from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
-from jarvis import package_jobs, package_jobs_api, package_request, work_research
+from jarvis import package_jobs, package_jobs_api, package_request, sessions, work_research
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, author_proof, package_signature
@@ -2756,7 +2756,8 @@ async def start_session_watcher() -> None:
     _work_task = _spawn(_watch_work())
     _spawn(_watch_agent_keys())
     _spawn(_watch_package_jobs())
-    work_research.REFRESHER.start(_research_search, _research_folder_for)
+    work_research.REFRESHER.start(_research_search, _research_folder_for,
+                                  sessions.BrainSummarizationSession)
     _subsystems_task = _spawn(_watch_subsystems())
     _follow_usage_poll()
 

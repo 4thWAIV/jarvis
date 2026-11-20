@@ -788,3 +788,42 @@ def test_every_role_has_its_approved_prompt_and_every_placeholder_is_filled():
     judge = role_prompts.PROMPTS["order_judge"].system
     assert judge.startswith("You are one of four judges") and \
         "Your question: **Is the most relevant information first?**" in judge
+
+
+# ── SummarizationSession ──────────────────────────────────────────────────
+
+def test_a_summary_citing_a_path_not_in_its_sources_is_rejected():
+    sources = [sessions.Source("knowledge_search: move", sessions.source_text(
+                   [("/work/w1/notes.md", "The move is ready."),
+                    ('/odd "quoted".md', "Odd.")])),
+               sessions.Source("/folders/f1/plan.md", "")]
+    said = [sessions.Summary("knowledge_search: move", "Ready.", ["/work/w1/notes.md"]),
+            sessions.Summary("knowledge_search: move", "Odd.", ['/odd "quoted".md']),
+            sessions.Summary("/folders/f1/plan.md", "The plan.", ["/folders/f1/plan.md"]),
+            sessions.Summary("knowledge_search: move", "Made up.", ["/work/w1/other.md"])]
+    kept = sessions.cited_in_sources(said, sources)
+    assert [s.text for s in kept] == ["Ready.", "Odd.", "The plan."]
+
+
+def test_the_brain_summarization_says_what_it_lacks_until_the_design_gives_it(tmp_path):
+    assert sessions.SUMMARIZATION not in role_prompts.PROMPTS
+    with pytest.raises(sessions.SessionFailed) as failed:
+        sessions.BrainSummarizationSession(tmp_path)
+    assert "approved prompt" in str(failed.value) and "effort" in str(failed.value)
+
+
+def test_the_brain_summarization_is_one_call_with_no_tools_and_checks_its_cites(
+        monkeypatch, tmp_path):
+    monkeypatch.setitem(role_prompts.PROMPTS, sessions.SUMMARIZATION, role_prompts.Prompt(
+        system="Summarise for {purpose}.", material="{sources}"))
+    monkeypatch.setitem(roles.ROLES, sessions.SUMMARIZATION, roles.Role(
+        sessions.SUMMARIZATION, 3, "low", "retrieval", roles.ONE_SHOT))
+    once = _Once({"summaries": [
+        {"source_id": "q", "text": "Ready.", "cites": ["/a.md"]},
+        {"source_id": "q", "text": "Invented.", "cites": ["/b.md"]}]})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    sources = [sessions.Source("q", sessions.source_text([("/a.md", "It is ready.")]))]
+    kept = sessions.BrainSummarizationSession(tmp_path).summarize(sources, "Work item w1")
+    assert kept == [sessions.Summary("q", "Ready.", ["/a.md"])]
+    assert len(once.seen) == 1 and once.seen[0]["role"] == "summarization"
+    assert '<hit path="/a.md">It is ready.</hit>' in once.seen[0]["text"]

@@ -284,6 +284,7 @@ def _transcript_lines(path: Path) -> list[str]:
 class Hits:
     def __init__(self):
         self.lines: list[str] = []
+        self.found: list[tuple[str, int]] = []   # each line's (source, line number)
         self.capped = False
         self.sources = 0
 
@@ -341,6 +342,7 @@ def search(query: str) -> Hits:
         for number, when, role, snippet in reversed(kept):
             who = f"{role}: " if role else ""
             hits.lines.append(f"{sid}:{number}: {when}: {who}{snippet}")
+            hits.found.append((sid, number))
             if len(hits.lines) >= MAX_HITS:
                 hits.capped = True
                 return hits

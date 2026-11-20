@@ -23,6 +23,9 @@ come later).
   file.
 - `RetrievalSession` and `EditingSession` (`BrainRetrievalSession`,
   `BrainEditingSession`): a ChatSession with its inputs structured.
+- `SummarizationSession` (`BrainSummarizationSession`): sources summarised
+  for a purpose, each summary citing the paths it rests on; one citing a
+  path not in its sources is rejected by the program.
 
 Every model is picked by model_tiers.pick (the role's tier on the brain
 engines.json gives its kind) and swept when it is not available; the
@@ -35,12 +38,13 @@ import asyncio
 import dataclasses
 import json
 import logging
+import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Optional, Protocol
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import quoteattr, unescape
 
 from jarvis import (brain_provider, evidence_types, model_tiers, private_files, role_mcp,
                     role_prompts, roles, settings_service, text_parts)
@@ -1055,6 +1059,105 @@ class BrainRetrievalSession:
                         "entries": entries if resolved == OK else [],
                         "searched": str(said.get("searched") or "")})
         return out
+
+
+# ── SummarizationSession ──────────────────────────────────────────────────
+
+SUMMARIZATION = "summarization"
+
+
+@dataclass(frozen=True)
+class Source:
+    id: str                         # the query, or the file's path
+    text: str                       # what was found: the hits' words, each with its path
+
+
+@dataclass(frozen=True)
+class Summary:
+    source_id: str
+    text: str
+    cites: list[str]                # the hit paths the summary rests on
+
+
+def source_text(hits: list[tuple[str, str]]) -> str:
+    """A source's text: each hit's words with its path, (path, words)."""
+    return "\n".join(_tag("hit", words, path=path) for path, words in hits)
+
+
+_HIT_PATH = re.compile(r"<hit path=(\"[^\"]*\"|'[^']*')>")
+
+
+def source_paths(sources: list[Source]) -> set[str]:
+    """Every path the sources name: their ids and their hits' paths."""
+    paths = {s.id for s in sources}
+    for source in sources:
+        paths |= {unescape(m.group(1)[1:-1], {"&quot;": '"', "&apos;": "'"})
+                  for m in _HIT_PATH.finditer(source.text)}
+    return paths
+
+
+def cited_in_sources(summaries: list[Summary], sources: list[Source]) -> list[Summary]:
+    """The summaries the program keeps: one citing a path that is not in its
+    sources is rejected (sessions.yaml SummarizationSession rules)."""
+    paths = source_paths(sources)
+    kept = []
+    for summary in summaries:
+        stray = [c for c in summary.cites if c not in paths]
+        if stray:
+            log.info("summarization: rejected the summary of %s: it cites %s, not in its "
+                     "sources", summary.source_id, ", ".join(stray))
+            continue
+        kept.append(summary)
+    return kept
+
+
+class SummarizationSession(Protocol):
+    """Summarises what was found for a purpose, each summary citing the hit
+    paths it rests on (sessions.yaml SummarizationSession, approved
+    2026-11-20)."""
+
+    def summarize(self, sources: list[Source], purpose: str) -> list[Summary]: ...
+
+
+class BrainSummarizationSession:
+    """On the brain providers: tier 3 (Sonnet / Terra), one call, no tools, a
+    fixed answer format; a summary citing a path not in its sources is
+    rejected by the program (`cited_in_sources`).
+
+    Its role (the effort and engines.json entry beside the tier) and its
+    prompt are the design's to give: sessions.yaml names the tier, and
+    role-prompts.md, effort_v1 and engines.json have no summarization entry
+    yet. Until roles.ROLES and role_prompts.PROMPTS hold one, it cannot be
+    started and says so (`SessionFailed`)."""
+
+    FORM = _object({"summaries": _array(_object({
+        "source_id": _TEXT, "text": _TEXT, "cites": _array(_TEXT)}))})
+
+    def __init__(self, folder: Path, timeout: Optional[float] = None, **pick_args):
+        missing = [what for what, there in (
+            ("an approved prompt (role-prompts.md)", SUMMARIZATION in role_prompts.PROMPTS),
+            ("a role with its effort and engines.json entry (sessions.yaml role_tiers_v1, "
+             "effort_v1)", SUMMARIZATION in roles.ROLES)) if not there]
+        if missing:
+            raise SessionFailed("the SummarizationSession cannot be started: it has no "
+                                + " and no ".join(missing))
+        self.folder = Path(folder)
+        self.timeout = timeout
+        self.pick_args = pick_args
+
+    def summarize(self, sources: list[Source], purpose: str) -> list[Summary]:
+        if not sources:
+            return []
+        system, first = role_prompt(SUMMARIZATION, {
+            "{purpose}": purpose,
+            "{sources}": "\n".join(_tag("source", s.text, id=s.id) for s in sources)})
+        session = BrainChatSession.for_role(SUMMARIZATION, system, self.folder,
+                                            answer_format=self.FORM, **self.pick_args)
+        answer = asyncio.run(session.once(first, self.timeout)).answer or {}
+        said = [Summary(str(s.get("source_id") or ""), str(s.get("text") or ""),
+                        [str(c) for c in s.get("cites") or []])
+                for s in answer.get("summaries") or [] if isinstance(s, dict)]
+        return cited_in_sources(said, sources)
 
 
 # ── EditingSession ────────────────────────────────────────────────────────

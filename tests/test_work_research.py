@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-from jarvis import evidence_readers, records, work_research, work_store
+from jarvis import evidence_readers, history_read, records, sessions, work_research, work_store
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge.uds import Caller, Stream
 from tests.settings_fixtures import hold_setting
@@ -23,6 +23,7 @@ def indexing(monkeypatch):
     monkeypatch.setattr(emb, "RUNNER", lambda: emb.FakeEmbedder(32))
     monkeypatch.setattr(evidence_readers, "_gh", lambda args: (True, json.dumps(
         {"number": 171, "title": "Work items in folders", "state": "MERGED"})))
+    monkeypatch.setattr(history_read, "search", lambda text: history_read.Hits())
 
 
 def _item(tmp_path):
@@ -50,11 +51,13 @@ def test_what_was_looked_up_is_written_and_indexed(tmp_path):
     assert ("Work items in folders", None, ["turn"]) in asked
     looked = json.loads((folder / work_research.QUERIES).read_text())
     tools = [q["tool"] for q in looked]
-    assert tools.count("knowledge_search") == 3 and "github" in tools and "recall" in tools
+    assert ("Work items in folders", None, None) in asked          # the whole record
+    assert tools.count("knowledge_search") == 4 and "github" in tools and "recall" in tools
+    assert {"conversation_history", "messages_to_him", "search_history"} <= set(tools)
     github = next(q for q in looked if q["tool"] == "github")
     assert github["query"]["number"] == "171" and github["hits"][0]["state"] == "MERGED"
     assert "The move is ready." in (folder / work_research.QUERIES_MD).read_text()
-    # No summaries until the SummarizationSession has its approved prompt.
+    # No SummarizationSession given: no summaries.
     assert not (folder / work_research.SUMMARIES).exists()
     research = f"{work_store.folder_of(item_id)}/research"
     item = records.uds().get(TIM, f"{research}/queries.md", {Stream.DATA})
@@ -88,3 +91,64 @@ def test_every_change_of_a_work_item_makes_its_research_again(tmp_path):
         assert done.wait(10)
     finally:
         refresher.stop()
+
+
+def test_the_brain_s_own_past_is_searched_then_each_turn_found_read(tmp_path, monkeypatch):
+    item_id = _item(tmp_path)
+    hits = history_read.Hits()
+    hits.lines = ["transcript-abc:12: 2026-11-18: user: the folders move",
+                  "transcript-abc:12: 2026-11-18: user: the folders move again"]
+    hits.found = [("transcript-abc", 12), ("transcript-abc", 12)]
+    monkeypatch.setattr(history_read, "search", lambda text: hits)
+    read = []
+
+    class Window:
+        text, first, last = "user: move the Work items into folders", 10, 14
+    monkeypatch.setattr(history_read, "resolve", lambda source: (source, tmp_path / source))
+    monkeypatch.setattr(history_read, "read_window",
+                        lambda path, around: read.append((path.name, around)) or Window())
+    folder = work_research.refresh(item_id, lambda text, under, kinds: {"hits": []})
+    looked = json.loads((folder / work_research.QUERIES).read_text())
+    searched = next(q for q in looked if q["tool"] == "search_history")
+    assert searched["query"] == "Work items in folders"
+    assert [h["path"] for h in searched["hits"]] == ["transcript-abc:12"] * 2
+    assert read == [("transcript-abc", 12)]                     # each turn found read once
+    window = next(q for q in looked if q["tool"] == "read_history")
+    assert window["hits"] == [{"path": "transcript-abc:10-14",
+                               "text": "user: move the Work items into folders"}]
+
+
+def test_the_summaries_are_written_and_only_cited_paths_kept(tmp_path):
+    item_id = _item(tmp_path)
+    given = {}
+
+    class Summarizer:
+        def __init__(self, folder):
+            given["folder"] = folder
+
+        def summarize(self, sources, purpose):
+            given["sources"], given["purpose"] = sources, purpose
+            said = [sessions.Summary(sources[0].id, "The move is ready.", ["/work/notes.md"]),
+                    sessions.Summary(sources[0].id, "Invented.", ["/nowhere.md"])]
+            return sessions.cited_in_sources(said, sources)
+
+    def search(text, under, kinds):
+        return {"hits": [{"key": "/work/notes.md", "text": "The move is ready."}]}
+    folder = work_research.refresh(item_id, search, summarizer=Summarizer)
+    assert given["folder"] == folder and item_id in given["purpose"]
+    assert '<hit path="/work/notes.md">The move is ready.</hit>' in given["sources"][0].text
+    assert all(s.text for s in given["sources"])                 # only queries that found something
+    written = (folder / work_research.SUMMARIES).read_text()
+    assert "The move is ready." in written and "Rests on: /work/notes.md" in written
+    assert "Invented." not in written
+    research = f"{work_store.folder_of(item_id)}/research"
+    item = records.uds().get(TIM, f"{research}/summaries.md", {Stream.DATA})
+    assert item is not None and item.data["state"] == "indexed"
+
+
+def test_a_summarization_that_cannot_be_made_leaves_what_was_looked_up(tmp_path):
+    item_id = _item(tmp_path)
+    folder = work_research.refresh(item_id, lambda text, under, kinds: {"hits": []},
+                                   summarizer=sessions.BrainSummarizationSession)
+    assert (folder / work_research.QUERIES).exists()
+    assert not (folder / work_research.SUMMARIES).exists()

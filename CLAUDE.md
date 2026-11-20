@@ -1614,8 +1614,8 @@ Indexer`), its vectors ahead of the background build and going on while the
 pace holds it (`vectors.build_rank`'s `URGENT`, `knowledge.paths.
 is_package_evidence`; `VectorIndex.set_held`), and waited for, every item's
 text and every vector (the item's vectors stream `complete`), at most
-`INDEX_WAIT_SEC` (10 minutes) before the run is in Error; with no embedding
-model it is in Error at once. Indexed, the package's own record
+`INDEX_WAIT_SEC` (10 minutes) before the run is in Error (with no
+embedding model the Error says so). Indexed, the package's own record
 (`<package id>.evidence` in its folder) names every stored file and every
 record gathered (`gathered`, `records`), which the engine makes its
 reference links (`package_evidence.link`). The sender's answers to a round
@@ -1627,13 +1627,22 @@ brain's, a role's, the route's (`POST /api/knowledge/search`) and
 A Work item's own research (`work_research.py`; design: research
 work_item_research) is made again on every change of the item
 (`work_store.on_changed`, `REFRESHER`, started with the session watcher):
-its title searched under its own folder, under its source's registered
-folder and in the conversation's turns, the PRs and CI runs recorded
-against it looked up as they are now, his messages on it and his memory;
-written to `data/work/<id>/research/` (`queries.json`, `queries.md`) and
-read into the engine at once (`package_evidence.index_folder`). Its
-summaries are a SummarizationSession's (`SUMMARIZE`), which has no approved
-prompt yet, so none are written.
+the key searches a package's research runs, its title the key terms:
+`knowledge_search` under its own folder, under its source's registered
+folder, across the whole record and in the conversation's turns; the PRs
+and CI runs recorded against it looked up as they are now; his messages on
+it (`conversation_history`) and the agents' (`messages_to_him`); his memory
+(`recall`); the brain's own past conversations (`search_history`, then
+`read_history` for each turn found, `history_read.Hits.found`). What was
+looked up is written to `data/work/<id>/research/` (`queries.json`,
+`queries.md`) with a SummarizationSession's summaries of it
+(`summaries.md`, `sessions.SummarizationSession`: `summarize(sources,
+purpose)`, each `Summary` citing the hit paths it rests on, one citing a
+path not in its sources rejected by `sessions.cited_in_sources`), and read
+into the engine at once (`package_evidence.index_folder`). The brain's
+(`BrainSummarizationSession`: tier 3, one call, no tools) has no approved
+prompt, effort or engines.json entry yet, so it cannot start and says so:
+what was looked up is written and the summaries wait.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
