@@ -108,15 +108,30 @@ async def test_a_failed_turn_fails_the_run_with_its_words(env, home, server):
 
 
 @pytest.mark.asyncio
-async def test_an_untested_app_server_starts_nothing_and_says_why(env, home):
+async def test_a_newer_app_server_than_any_seen_runs_as_it_comes(env, home):
     store, _, _, tmp = env
     fake = FakeAppServer(home, version="0.999.0")
     await fake.start()
     try:
         ex, engine, _ = await _engine(env, home)
         run = await ex.wait_for(await ex.spawn("x", "site", str(tmp), "voice", engine="codex"))
+        assert run["status"] == store.RunStatus.SUCCEEDED, run["error"]
+        assert len(fake.sent("thread/start")) == 1
+        await engine.close()
+    finally:
+        await fake.drop()
+
+
+@pytest.mark.asyncio
+async def test_an_app_server_older_than_the_minimum_starts_nothing_and_says_why(env, home):
+    store, _, _, tmp = env
+    fake = FakeAppServer(home, version="0.153.0")
+    await fake.start()
+    try:
+        ex, engine, _ = await _engine(env, home)
+        run = await ex.wait_for(await ex.spawn("x", "site", str(tmp), "voice", engine="codex"))
         assert run["status"] == store.RunStatus.FAILED
-        assert "0.999.0" in run["error"] and "has not been checked against" in run["error"]
+        assert "0.153.0" in run["error"] and "older than the 0.154.0" in run["error"]
         assert fake.sent("thread/start") == []
         await engine.close()
     finally:
@@ -306,7 +321,26 @@ def test_the_version_is_read_from_the_user_agent():
     from jarvis import codex_engine
     assert codex_engine.version_of({"userAgent": "codex_cli_rs/0.167.1 (Mac OS 15.0) x"}) == "0.167.1"
     assert codex_engine.version_of({}) is None
-    # The release the daemon moved to on its own, checked and run against.
+    # A release the daemon moves to on its own is used as it comes.
     assert codex_engine.check_version({"userAgent": "codex_cli_rs/0.167.2 (Mac OS 15.0)"}) == "0.167.2"
+    assert codex_engine.check_version({"userAgent": "codex_cli_rs/0.171.0 (Mac OS 15.0)"}) == "0.171.0"
+    assert codex_engine.check_version({"userAgent": "codex_cli_rs/9.0.0"}) == "9.0.0"
+    # Only one older than the minimum, or naming none, is refused.
+    assert codex_engine.check_version({"userAgent": "codex_cli_rs/0.154.0"}) == "0.154.0"
+    with pytest.raises(codex_engine.Untested):
+        codex_engine.check_version({"userAgent": "codex_cli_rs/0.153.9"})
     with pytest.raises(codex_engine.Untested):
         codex_engine.check_version({"userAgent": "codex_cli_rs/0.1.0"})
+    with pytest.raises(codex_engine.Untested):
+        codex_engine.check_version({})
+
+
+@pytest.mark.parametrize("shown, status", [("0.171.0", "ok"), ("0.154.0", "ok"), ("0.153.0", "warn")])
+def test_the_brain_s_codex_is_checked_against_the_minimum(monkeypatch, shown, status):
+    import asyncio
+    from jarvis import codex_provider, preflight
+    monkeypatch.setattr(codex_provider.shutil, "which", lambda name: "/bin/codex")
+    async def run(*args, timeout=None):
+        return 0, f"codex-cli {shown}", ""
+    monkeypatch.setattr(preflight, "_run_subprocess", run)
+    assert asyncio.run(codex_provider.check_codex_cli()).status == status
