@@ -299,7 +299,17 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
     - its file tools: the shell on, under `ROLE_PROFILE`, so a read or a
       write is confined to its folders (measured above) and nothing reaches
       the network; a writer gets the file-editing tool, its run folder
-      writable."""
+      writable.
+
+    The shell is `shell_tool` alone. `unified_exec` cannot be switched off
+    on Codex 0.171.0 (`--disable`, `-c features.unified_exec=false` and the
+    config file all leave `codex features list` saying true) and does not
+    decide the shell either: each model's catalog entry names its shell's
+    kind (`shell_type: unified_exec` for every model listed). Measured in
+    real role turns: a locked-down role (shell_tool off) is offered no
+    `exec_command` at all; a role with file tools is offered `exec_command`,
+    which runs a command, but its profile refuses ~/.zshrc, a write outside
+    its run folder and the network."""
     release = launch.role.release
     keep = ROLE_KEEP_FEATURES
     config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
