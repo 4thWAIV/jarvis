@@ -3304,11 +3304,15 @@ Read, Grep and Glob; the Theory of Mind reader and the cares and order
 judges nothing (their material, only what Tim knows and had access to, is
 in their prompt); retrieval its read tools for Work items, packages,
 messages, workflows and runs and its GitHub lookups (`role_lookups.py`:
-pull requests and a pull request's diff, CI runs with their jobs and a
-run's failed logs, issues, a commit by its hash, searches, branches and a
-branch's commits not on main, each one fixed read-only `gh` argument list with what the role
-gives passed only as data, checked by shape, never a shell string, and no
-deadline of its own); marking, classification and
+lists and searches of pull requests, CI runs, issues and commits, one pull
+request, CI run or issue by its number and a commit by its hash, each
+enough to say which it is, and a repository's branches; each one fixed
+read-only `gh` argument list with what the role gives passed only as data,
+checked by shape, never a shell string, and no deadline of its own). They
+find what a reference names and never fetch it: a pull request's
+description and diff, a CI run's jobs and failed logs, a commit's diff and
+a branch's commits are gather's own fetch (`evidence_readers.py`, the same
+checks of shape), never a role's tool; marking, classification and
 extraction nothing. A role's tools are its own tool server (`role_mcp.py`,
 `python -m jarvis.role_mcp --role <role>`, server name `jarvis_role`),
 which offers only them: a GitHub lookup runs there, and every other call

@@ -97,8 +97,9 @@ def _prs_and_runs(item_id: str) -> list[dict]:
             args = role_lookups.argv("github_pr_view", {"repo": entry["repo"],
                                                         "number": entry["number"]})
         else:
-            args = role_lookups.argv("github_run_view", {"repo": entry["repo"],
-                                                         "run_id": entry["id"]})
+            run = {"repo": entry["repo"], "run_id": entry["id"]}
+            args = evidence_readers.run_view_args(role_lookups._repo(run),
+                                                  role_lookups._number(run, "run_id"))
         ok, said = evidence_readers._gh(args)
         out.append({"tool": "github", "query": entry, "hits": [json.loads(said)] if ok else [],
                     **({} if ok else {"error": said})})

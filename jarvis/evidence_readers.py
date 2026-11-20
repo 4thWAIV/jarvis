@@ -22,11 +22,13 @@ names nothing is not_found, saying what was looked for.
   ci_run     gh run view and its failed logs
   commit     git show, in a checkout of the repository on this Mac
   issue      gh issue view
-  branch     its commits not on main (role_lookups' compare lookup)
+  branch     its commits not on main (GitHub's compare API)
 
 Every gh call is a fixed argument list through the one seam
 (gh_lookup._run_gh), what the entry names going in only as data, checked
-by shape (role_lookups' checks).
+by shape (role_lookups' checks). These fetches are the program's alone:
+none is offered to a model (retrieval's own lookups only find what a
+reference names, sessions.yaml RetrievalSession).
 """
 from __future__ import annotations
 
@@ -118,6 +120,33 @@ def _gh_read(args: list[str], what: str, source: str) -> tuple[Optional[str], Op
 _PR_FIELDS = ("number,title,state,url,author,body,headRefName,baseRefName,createdAt,"
               "mergedAt,mergeCommit,headRefOid")
 _ISSUE_FIELDS = "number,title,state,url,author,body,createdAt,closedAt,comments"
+_RUN_FIELDS = ("databaseId,name,workflowName,displayTitle,status,conclusion,event,"
+               "headBranch,headSha,url,createdAt,jobs")
+_BRANCH_COMMITS_JQ = (".commits[] | {sha, author: .commit.author.name, "
+                      "date: .commit.author.date, message: .commit.message}")
+
+
+def pr_diff_args(repo: str, number: str) -> list[str]:
+    # A pr's diff (entry_types: "gh pr view and gh pr diff").
+    return ["pr", "diff", number, f"--repo={repo}", "--color=never"]
+
+
+def run_view_args(repo: str, run_id: str) -> list[str]:
+    # A ci_run's record and its jobs (entry_types: "gh run view and its
+    # failed logs"; gather: "a CI run's jobs and failed tests").
+    return ["run", "view", run_id, f"--repo={repo}", f"--json={_RUN_FIELDS}"]
+
+
+def run_failed_logs_args(repo: str, run_id: str) -> list[str]:
+    return ["run", "view", run_id, f"--repo={repo}", "--log-failed"]
+
+
+def branch_commits_args(repo: str, name: str) -> list[str]:
+    # A branch's commits not on main (entry_types: "branch: {repo, name}:
+    # its commits not on main"), through GitHub's compare API with a fixed
+    # path, GET only: each commit's hash, author, date and message.
+    return ["api", "--method=GET", f"repos/{repo}/compare/main...{name}", "--paginate",
+            "--jq=" + _BRANCH_COMMITS_JQ]
 
 
 def pr(entry: dict) -> Read:
@@ -128,7 +157,7 @@ def pr(entry: dict) -> Read:
                             "gh pr view", source)
     if failed:
         return failed
-    diff, failed = _gh_read(role_lookups.argv("github_pr_diff", args), "gh pr diff", source)
+    diff, failed = _gh_read(pr_diff_args(repo, number), "gh pr diff", source)
     if failed:
         return failed
     data = json.loads(view)
@@ -142,13 +171,13 @@ def ci_run(entry: dict) -> Read:
     args = {"repo": entry["repo"], "run_id": entry["id"]}
     repo, run_id = role_lookups._repo(args), role_lookups._number(args, "run_id")
     source = f"https://github.com/{repo}/actions/runs/{run_id}"
-    view, failed = _gh_read(role_lookups.argv("github_run_view", args), "gh run view", source)
+    view, failed = _gh_read(run_view_args(repo, run_id), "gh run view", source)
     if failed:
         return failed
     data = json.loads(view)
     parts = [("Record and jobs", _json(data))]
     if str(data.get("conclusion") or "") not in ("success", "skipped", ""):
-        ok, logs = _gh(role_lookups.argv("github_run_failed_logs", args))
+        ok, logs = _gh(run_failed_logs_args(repo, run_id))
         parts.append(("Failed logs", f"```\n{logs}\n```" if ok else
                       f"The failed logs could not be read: {logs}"))
     return Read(OK, _md(f"CI run {repo} {run_id}: {data.get('displayTitle') or data.get('name')}",
@@ -171,13 +200,13 @@ def issue(entry: dict) -> Read:
 
 def branch(entry: dict) -> Read:
     args = {"repo": entry["repo"], "name": entry["name"]}
-    repo = role_lookups._repo(args)
-    source = f"https://github.com/{repo}/tree/{entry['name']}"
-    commits, failed = _gh_read(role_lookups.argv("github_branch_commits", args),
-                               "its commits not on main", source)
+    repo, name = role_lookups._repo(args), role_lookups.branch_name(args)
+    source = f"https://github.com/{repo}/tree/{name}"
+    commits, failed = _gh_read(branch_commits_args(repo, name), "its commits not on main",
+                               source)
     if failed:
         return failed
-    return Read(OK, _md(f"Branch {entry['name']} of {repo}: its commits not on main", source,
+    return Read(OK, _md(f"Branch {name} of {repo}: its commits not on main", source,
                         [("Commits", f"```json\n{commits}\n```")]), source=source)
 
 

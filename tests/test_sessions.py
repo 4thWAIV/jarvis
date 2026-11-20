@@ -158,23 +158,12 @@ def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
         "api", "--method=GET", "repos/o/r/branches", "--paginate"]
     assert role_lookups.argv("github_commit_view", {"repo": "4thWAIV/jarvis",
                                                     "sha": "4ffd18b6"}) == [
-        "api", "--method=GET", "repos/4thWAIV/jarvis/commits/4ffd18b6"]
-    assert role_lookups.argv("github_pr_diff", {"repo": "4thWAIV/jarvis", "number": 176}) == [
-        "pr", "diff", "176", "--repo=4thWAIV/jarvis", "--color=never"]
-    assert role_lookups.argv("github_run_failed_logs", {"repo": "o/r", "run_id": 42}) == [
-        "run", "view", "42", "--repo=o/r", "--log-failed"]
-    assert role_lookups.argv("github_branch_commits", {"repo": "o/r",
-                                                       "name": "package/v2-sessions"}) == [
-        "api", "--method=GET", "repos/o/r/compare/main...package/v2-sessions", "--paginate",
-        "--jq=" + role_lookups._BRANCH_COMMITS_JQ]
+        "api", "--method=GET", "repos/4thWAIV/jarvis/commits/4ffd18b6",
+        "--jq=" + role_lookups._COMMIT_JQ]
     for name, bad in (("github_pr_view", {"repo": "o/r; ls", "number": 1}),
-                      ("github_pr_diff", {"repo": "o/r", "number": "1 --web"}),
-                      ("github_run_failed_logs", {"repo": "o/r", "run_id": "x"}),
-                      ("github_branch_commits", {"repo": "o/r"}),
-                      ("github_branch_commits", {"repo": "o/r", "name": "a..b"}),
-                      ("github_branch_commits", {"repo": "o/r", "name": "--x"}),
                       ("github_pr_view", {"repo": "o/r", "number": "1 --web"}),
                       ("github_run_view", {"repo": "o/r", "run_id": True}),
+                      ("github_run_view", {"repo": "o/r", "run_id": "x"}),
                       ("github_run_list", {"repo": "o/r", "branch": "a b"}),
                       ("github_pr_list", {"repo": "o/r", "state": "draft"}),
                       ("github_search_commits", {"query": "  "}),
@@ -182,17 +171,48 @@ def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
                       ("github_commit_view", {"repo": "o/r", "sha": "main/../x"})):
         with pytest.raises(role_lookups.Refused):
             role_lookups.argv(name, bad)
+    for bad in ({"repo": "o/r"}, {"repo": "o/r", "name": "a..b"},
+                {"repo": "o/r", "name": "--x"}):
+        with pytest.raises(role_lookups.Refused):
+            role_lookups.branch_name(bad)
 
 
-def test_every_github_entry_type_has_its_lookups():
-    # workflow.yaml entry_types: pr "gh pr view and gh pr diff", ci_run "gh
-    # run view and its failed logs", commit "git show", issue "gh issue
-    # view", branch "its commits not on main".
-    assert {"github_pr_view", "github_pr_diff", "github_run_view", "github_run_failed_logs",
-            "github_commit_view", "github_issue_view",
-            "github_branch_commits"} <= set(role_lookups.NAMES)
-    assert "jobs" in role_lookups._RUN_VIEW_FIELDS.split(",")
-    assert "jobs" not in role_lookups._RUN_FIELDS.split(","), "gh run list has no jobs field"
+def test_retrieval_finds_what_a_reference_names_and_never_fetches_it():
+    # sessions.yaml RetrievalSession: "it works out what a reference names;
+    # it never fetches, copies, summarises or judges"; the program fetches
+    # (workflow.yaml gather resolve_typed). No lookup returns a diff, a
+    # description, a CI run's jobs or logs, or a branch's commits.
+    assert set(role_lookups.NAMES) == {
+        "github_pr_list", "github_pr_view", "github_run_list", "github_run_view",
+        "github_issue_list", "github_issue_view", "github_search_prs",
+        "github_search_issues", "github_commit_view", "github_search_commits",
+        "github_branches"}
+    every = [role_lookups.argv(name, {"repo": "o/r", "number": 1, "run_id": 2, "sha": "abcd",
+                                      "query": "words"}) for name in role_lookups.NAMES]
+    for args in every:
+        assert "diff" not in args and "--log-failed" not in args and "--log" not in args
+        assert not any("compare/" in a for a in args)
+        for a in args:
+            if a.startswith("--json="):
+                assert not {"jobs", "body", "comments", "files"} & set(a[7:].split(","))
+    commit = role_lookups.argv("github_commit_view", {"repo": "o/r", "sha": "abcd"})
+    assert "files" not in commit[-1] and "patch" not in commit[-1]
+
+
+def test_the_program_fetches_what_each_github_type_names():
+    # workflow.yaml entry_types and gather retrieved/: a PR's description and
+    # diff, a CI run's jobs and failed logs, a branch's commits not on main;
+    # the program's own fixed calls, never a role's tool.
+    from jarvis import evidence_readers as er
+    assert er.pr_diff_args("4thWAIV/jarvis", "176") == [
+        "pr", "diff", "176", "--repo=4thWAIV/jarvis", "--color=never"]
+    assert "body" in er._PR_FIELDS.split(",")
+    assert er.run_view_args("o/r", "42")[-1].split(",")[-1] == "jobs"
+    assert er.run_failed_logs_args("o/r", "42") == [
+        "run", "view", "42", "--repo=o/r", "--log-failed"]
+    assert er.branch_commits_args("o/r", "package/v2-sessions") == [
+        "api", "--method=GET", "repos/o/r/compare/main...package/v2-sessions", "--paginate",
+        "--jq=" + er._BRANCH_COMMITS_JQ]
 
 
 def test_a_github_lookup_runs_in_the_role_s_server_never_forwarded(monkeypatch):

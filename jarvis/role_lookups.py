@@ -11,6 +11,14 @@ same seam the brain's repository lookups use (`gh_lookup._run_gh`: an
 argument list), with no deadline: the design gives these lookups none, so
 one answers when GitHub does (a long branch list included).
 
+They find what a reference names and never fetch it (sessions.yaml
+RetrievalSession: "it works out what a reference names; it never fetches,
+copies, summarises or judges"): lists, searches, branches and each thing's
+record enough to say which it is, never a pull request's diff or
+description, a CI run's jobs or logs, a commit's diff or a branch's
+commits. Those are the program's fetch, gather's resolve_typed
+(`evidence_readers.py`), which uses the same checks of shape.
+
 These run in the role's tool server itself, never as the brain's tools:
 they are retrieval's alone (`roles.RETRIEVAL_LOOKUPS`).
 """
@@ -30,7 +38,6 @@ _PR_VIEW_FIELDS = _PR_FIELDS + ",mergeCommit,headRefOid"
 _ISSUE_FIELDS = "number,title,state,url,author,createdAt,closedAt"
 _RUN_FIELDS = ("databaseId,name,workflowName,displayTitle,status,conclusion,event,"
                "headBranch,headSha,url,createdAt")
-_RUN_VIEW_FIELDS = _RUN_FIELDS + ",jobs"      # `gh run list` has no jobs
 _SEARCH_PR_FIELDS = "number,title,state,url,repository,createdAt"
 _SEARCH_COMMIT_FIELDS = "sha,url,repository,commit"
 
@@ -135,17 +142,7 @@ def _run_list(a: dict) -> list[str]:
 
 def _run_view(a: dict) -> list[str]:
     return ["run", "view", _number(a, "run_id"), f"--repo={_repo(a)}",
-            f"--json={_RUN_VIEW_FIELDS}"]
-
-
-def _run_failed_logs(a: dict) -> list[str]:
-    # A ci_run's failed logs (entry_types: "gh run view and its failed logs").
-    return ["run", "view", _number(a, "run_id"), f"--repo={_repo(a)}", "--log-failed"]
-
-
-def _pr_diff(a: dict) -> list[str]:
-    # A pr's diff (entry_types: "gh pr view and gh pr diff").
-    return ["pr", "diff", _number(a, "number"), f"--repo={_repo(a)}", "--color=never"]
+            f"--json={_RUN_FIELDS}"]
 
 
 def _search_prs(a: dict) -> list[str]:
@@ -163,35 +160,37 @@ def _search_commits(a: dict) -> list[str]:
             + ["--", _words(a)])
 
 
-def _commit_view(a: dict) -> list[str]:
-    # One commit by its hash: its message and its diff (each file's patch),
-    # read through GitHub's API with a fixed path, GET only. `gh search
-    # commits` does not find a repository's commits by hash.
+def commit_sha(a: dict) -> str:
     sha = _optional(a, "sha", _SHA)
     if sha is None:
         raise Refused("sha must name a commit")
-    return ["api", "--method=GET", f"repos/{_repo(a)}/commits/{sha}"]
+    return sha
+
+
+def branch_name(a: dict) -> str:
+    name = _optional(a, "name", _BRANCH)
+    if name is None or ".." in name or name.startswith(("/", "-")) or name.endswith("/"):
+        raise Refused("name must name a branch")
+    return name
+
+
+def _commit_view(a: dict) -> list[str]:
+    # One commit by its hash, enough to say which it is: its full hash,
+    # address, author, date and the first line of its message, read through
+    # GitHub's API with a fixed path, GET only, never its diff. `gh search
+    # commits` does not find a repository's commits by hash.
+    return ["api", "--method=GET", f"repos/{_repo(a)}/commits/{commit_sha(a)}",
+            "--jq=" + _COMMIT_JQ]
+
+
+_COMMIT_JQ = ("{sha, url: .html_url, author: .commit.author.name, "
+              "date: .commit.author.date, subject: (.commit.message | split(\"\\n\")[0])}")
 
 
 def _branches(a: dict) -> list[str]:
     # What `git ls-remote` gave: the repository's branches and the commit
     # each is at, read through GitHub's API with a fixed path, GET only.
     return ["api", "--method=GET", f"repos/{_repo(a)}/branches", "--paginate"]
-
-
-def _branch_commits(a: dict) -> list[str]:
-    # A branch's commits not on main (entry_types: "branch: {repo, name}:
-    # its commits not on main"), through GitHub's compare API with a fixed
-    # path, GET only: each commit's hash, author, date and message.
-    name = _optional(a, "name", _BRANCH)
-    if name is None or ".." in name or name.startswith(("/", "-")) or name.endswith("/"):
-        raise Refused("name must name a branch")
-    return ["api", "--method=GET", f"repos/{_repo(a)}/compare/main...{name}", "--paginate",
-            "--jq=" + _BRANCH_COMMITS_JQ]
-
-
-_BRANCH_COMMITS_JQ = (".commits[] | {sha, author: .commit.author.name, "
-                      "date: .commit.author.date, message: .commit.message}")
 
 
 @dataclass(frozen=True)
@@ -216,17 +215,13 @@ LOOKUPS: dict[str, Lookup] = {l.name: l for l in (
            ("repo",), _pr_list),
     Lookup("github_pr_view", "One pull request by its number (gh pr view).",
            {"repo": _REPO, "number": _NUMBER}, ("repo", "number"), _pr_view),
-    Lookup("github_pr_diff", "One pull request's diff by its number (gh pr diff).",
-           {"repo": _REPO, "number": _NUMBER}, ("repo", "number"), _pr_diff),
     Lookup("github_run_list", "List a repository's CI runs (gh run list), optionally on a "
            "branch or for a commit.",
            {"repo": _REPO, "branch": {"type": "string"}, "commit": {"type": "string"},
             "limit": _LIMIT}, ("repo",), _run_list),
-    Lookup("github_run_view", "One CI run by its id, with its jobs (gh run view).",
+    Lookup("github_run_view", "One CI run by its id (gh run view): its workflow, branch, "
+           "commit and conclusion.",
            {"repo": _REPO, "run_id": _NUMBER}, ("repo", "run_id"), _run_view),
-    Lookup("github_run_failed_logs", "One CI run's failed logs by its id "
-           "(gh run view --log-failed).",
-           {"repo": _REPO, "run_id": _NUMBER}, ("repo", "run_id"), _run_failed_logs),
     Lookup("github_issue_list", "List a repository's issues (gh issue list), optionally by "
            "state and search words.",
            {"repo": _REPO, "state": _STATE, "search": {"type": "string"}, "limit": _LIMIT},
@@ -239,8 +234,8 @@ LOOKUPS: dict[str, Lookup] = {l.name: l for l in (
     Lookup("github_search_issues", "Search issues by words (gh search issues), optionally in "
            "one repository.",
            {"query": _WORDS, "repo": _REPO, "limit": _LIMIT}, ("query",), _search_issues),
-    Lookup("github_commit_view", "One commit by its hash, full or short: its message, "
-           "author and diff (GitHub's commits API).",
+    Lookup("github_commit_view", "One commit by its hash, full or short: its full hash, "
+           "author, date and subject (GitHub's commits API).",
            {"repo": _REPO, "sha": {"type": "string", "description": "The commit's hash."}},
            ("repo", "sha"), _commit_view),
     Lookup("github_search_commits", "Search commit messages by words (gh search commits), "
@@ -249,10 +244,6 @@ LOOKUPS: dict[str, Lookup] = {l.name: l for l in (
            {"query": _WORDS, "repo": _REPO, "limit": _LIMIT}, ("query",), _search_commits),
     Lookup("github_branches", "A repository's branches and the commit each is at.",
            {"repo": _REPO}, ("repo",), _branches),
-    Lookup("github_branch_commits", "One branch's commits that are not on main "
-           "(GitHub's compare API, main...branch).",
-           {"repo": _REPO, "name": {"type": "string", "description": "The branch's name."}},
-           ("repo", "name"), _branch_commits),
 )}
 
 NAMES: tuple[str, ...] = tuple(LOOKUPS)
