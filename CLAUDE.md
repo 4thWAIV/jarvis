@@ -2410,7 +2410,9 @@ its records") with Try again. It
 listens through `loopback_http.LoopbackThreadingHTTPServer`, never the
 stdlib's bind, whose reverse lookup of 127.0.0.1 takes about 35 s on the
 macOS CI runner. The supervisor restarts it at once when it
-exits or stops answering, then after 1, 2 and 5 s (capped) while it keeps
+exits or stops answering (an engine that has not answered since it started
+is opening, about 40 s on a full data folder, and is waited for up to
+`OPEN_BOUND_SEC`, never pinged to death), then after 1, 2 and 5 s (capped) while it keeps
 dying, starting over once it has stayed healthy `STABLE_AFTER_SEC`, and never
 gives up; its footprint is reported against the budget, never acted on. An
 engine not running (not up yet, restarting, not answering) is down on its
