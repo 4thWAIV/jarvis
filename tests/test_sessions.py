@@ -119,12 +119,12 @@ def test_the_roles_have_his_tiers_efforts_and_tools():
         "classification": (3, "low"), "extraction": (4, "low")}
     research = set(roles.RESEARCH_TOOLS)
     assert {"search_history", "read_history"} <= research
-    assert set(by["author"].tools) == research and by["author"].writes
+    assert set(by["author"].tools) == research and by["author"].release.writes
     assert set(by["decision_ready_judge"].tools) == research == set(by["background_judge"].tools)
     assert by["editor"].tools == ("knowledge_search",)
     for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
                  "classification", "extraction"):
-        assert not by[name].tools and not by[name].builtins, name
+        assert by[name].release == roles.LOCKDOWN, name
 
 
 def test_no_role_has_a_sending_command_or_a_tool_the_brain_lacks():
@@ -169,8 +169,12 @@ def test_claude_launches_a_role_on_jarvis_s_own_settings_with_only_its_tools(tmp
     assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"
     assert cmd[cmd.index("--session-id") + 1] == "u-1"
     assert cmd[cmd.index("--add-dir") + 1] == str(tmp_path / "evidence")
-    allowed = cmd[cmd.index("--allowedTools") + 1:]
+    allowed = cmd[cmd.index("--allowedTools") + 1:cmd.index("--add-dir")]
     assert roles.tool_name("search_history") in allowed
+    denied = cmd[cmd.index("--disallowedTools") + 1]
+    assert denied == f"Edit(/{(tmp_path / 'evidence').resolve()}/**)", "it writes in its run only"
+    reader = claude_provider.role_command("claude", _config(tmp_path, "editor"), "R")
+    assert "--disallowedTools" not in reader and "--permission-mode" not in reader
     for never in ("--dangerously-skip-permissions", "--append-system-prompt", "--safe-mode",
                   "--bare", "--setting-sources", "--no-session-persistence"):
         assert never not in cmd
@@ -208,7 +212,7 @@ async def test_codex_runs_a_role_locked_down_in_jarvis_s_own_home(tmp_path, code
     monkeypatch.setenv("FAKE_CODEX_ANSWER", json.dumps({"answer": "yes"}))
     pick = model_tiers.Pick("codex", "gpt-6-luna", 4, "fixed", ["gpt-6-luna"])
     form = {"type": "object", "properties": {"answer": {"type": "string"}}}
-    chat = sessions.ChatSession("extraction", "THE ROLE", tmp_path, pick=pick, answer_format=form)
+    chat = sessions.BrainChatSession("extraction", "THE ROLE", tmp_path, pick=pick, answer_format=form)
     reply = await chat.once("the text", 20)
     assert reply.answer == {"answer": "yes"} and chat.model == "gpt-6-luna"
     log = codex_log()
@@ -222,26 +226,75 @@ async def test_codex_runs_a_role_locked_down_in_jarvis_s_own_home(tmp_path, code
     assert thread["ephemeral"] is True and thread["personality"] == "none"
     assert thread["sandbox"] == "read-only" and thread["approvalPolicy"] == "never"
     assert thread["config"] == {"project_doc_max_bytes": 0, "project_root_markers": [],
-                                "web_search": "disabled", "include_apply_patch_tool": False,
+                                "web_search": "disabled", "agents": {"enabled": False},
+                                "include_apply_patch_tool": False,
                                 "mcp_servers": {"jarvis": {"enabled": False}}}
+    assert not any(a.startswith("mcp_servers.") for a in start["argv"]), "no server added"
     turn = next(e["turn"] for e in log if "turn" in e)
     assert turn["effort"] == "low" and turn["outputSchema"] == form
 
 
+def _codex_role(tmp_path, name):
+    from jarvis import data_paths
+    mcp = tmp_path / "mcp.json"
+    mcp.write_text(json.dumps({"mcpServers": {roles.SERVER_NAME: {
+        "command": "py", "args": ["-m", "jarvis.role_mcp", "--role", name]}}}))
+    launch = roles.Launch(role=roles.role(name), mcp_config=mcp, reads=(tmp_path / "evidence",))
+    return launch, data_paths
+
+
+def test_codex_releases_a_role_from_the_lockdown_to_exactly_its_release(tmp_path):
+    run = tmp_path / "run"
+    launch, _ = _codex_role(tmp_path, "editor")
+    keep, config, overrides = codex_provider.role_release(launch, run)
+    assert {"code_mode_host", "shell_tool"} <= keep, "its tools and its file tools"
+    assert overrides == ["-c", 'mcp_servers.jarvis_role.command="py"',
+                         "-c", 'mcp_servers.jarvis_role.default_tools_approval_mode="approve"',
+                         "-c", 'mcp_servers.jarvis_role.args=["-m", "jarvis.role_mcp", '
+                               '"--role", "editor"]']
+    assert config["agents"] == {"enabled": False} and config["include_apply_patch_tool"] is False
+    profile = config["permissions"][config["default_permissions"]]
+    assert profile["network"] == {"enabled": False}
+    assert profile["filesystem"] == {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
+                                     ":tmpdir": "deny", str(tmp_path / "evidence"): "read",
+                                     str(run): "read"}
+    author, _ = _codex_role(tmp_path, "author")
+    keep, config, _ = codex_provider.role_release(author, run)
+    assert config["include_apply_patch_tool"] is True
+    assert config["permissions"][codex_provider.ROLE_PROFILE]["filesystem"][str(run)] == "write"
+    for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
+                 "classification", "extraction"):
+        locked, _ = _codex_role(tmp_path, name)
+        keep, config, overrides = codex_provider.role_release(locked, run)
+        assert keep == codex_provider.ROLE_KEEP_FEATURES and not overrides, name
+        assert "default_permissions" not in config and not config["include_apply_patch_tool"]
+
+
+def test_codex_cannot_confine_a_role_s_commands(tmp_path):
+    launch, _ = _codex_role(tmp_path, "retrieval")
+    with pytest.raises(OSError, match="cannot confine a shell to its commands"):
+        codex_provider.role_release(launch, tmp_path)
+
+
 @pytest.mark.asyncio
-async def test_codex_refuses_a_role_whose_tools_the_lockdown_would_take(tmp_path, codex_log):
+async def test_codex_starts_a_tool_role_released_and_without_the_sandbox_flag(tmp_path,
+                                                                              codex_log):
     from tests.settings_fixtures import hold_setting
     hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
     pick = model_tiers.Pick("codex", "gpt-6.2-astra", 1, "fixed", ["gpt-6.2-astra"])
-    for name in ("author", "editor", "decision_ready_judge", "background_judge", "retrieval"):
-        chat = sessions.ChatSession(name, "THE ROLE", tmp_path, pick=pick)
-        with pytest.raises(sessions.SessionFailed, match="waits on Tim's decision"):
-            await chat.open()
-    assert not (tmp_path / "codex.log").exists() or not any(
-        "app-server" in e.get("argv", []) for e in codex_log()), "nothing was started"
-    for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
-                 "classification", "extraction"):
-        assert roles.codex_refusal(roles.role(name)) is None
+    chat = sessions.BrainChatSession("editor", "THE ROLE", tmp_path, pick=pick,
+                                     reads=(tmp_path / "evidence",))
+    await chat.open()
+    await chat.close()
+    log = codex_log()
+    start = next(e for e in log if "argv" in e and "app-server" in e["argv"])
+    disabled = [start["argv"][i + 1] for i, a in enumerate(start["argv"]) if a == "--disable"]
+    assert "code_mode_host" not in disabled and "shell_tool" not in disabled
+    assert "computer_use" in disabled, "everything else stays off"
+    assert any(a.startswith("mcp_servers.jarvis_role.command=") for a in start["argv"])
+    thread = next(e["thread"] for e in log if "thread" in e)
+    assert "sandbox" not in thread, "the permission profile, never both"
+    assert thread["config"]["default_permissions"] == codex_provider.ROLE_PROFILE
 
 
 class _Brain:
@@ -283,7 +336,7 @@ async def test_a_model_refused_on_the_first_turn_is_swept_past(monkeypatch, tmp_
     monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
     lines = []
     pick = model_tiers.Pick("claude", "opus", 2, "fixed", ["opus", "fable"])
-    chat = sessions.ChatSession("cares_judge", "R", tmp_path, pick=pick, on_log=lines.append)
+    chat = sessions.BrainChatSession("cares_judge", "R", tmp_path, pick=pick, on_log=lines.append)
     await chat.open()
     reply = await chat.ask("hello", 5)
     assert reply.text == "on fable" and chat.model == "fable"
@@ -303,10 +356,10 @@ async def test_a_sweep_with_no_model_left_is_no_model(monkeypatch, tmp_path):
     fake = _Brain(refused={"opus", "fable"})
     monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
     pick = model_tiers.Pick("claude", "opus", 2, "fixed", ["opus", "fable"])
-    chat = sessions.ChatSession("marking", "R", tmp_path, pick=pick)
+    chat = sessions.BrainChatSession("marking", "R", tmp_path, pick=pick)
     with pytest.raises(model_tiers.NoModel):
         await chat.once("hello", 5)
-    resumed = sessions.ChatSession("editor", "R", tmp_path, resume="s-1",
+    resumed = sessions.BrainChatSession("editor", "R", tmp_path, resume="s-1",
                                    pick=model_tiers.Pick("claude", "fable", 1, "fixed", ["fable"]))
     monkeypatch.setattr(role_mcp, "entry", lambda role: {"command": "x"})
     fake.refused = set()
@@ -401,7 +454,7 @@ async def test_extraction_keeps_only_values_at_their_positions(monkeypatch, tmp_
          "start": text.index("test_login"), "end": text.index("test_login") + 10},
         {"field": "pr", "value": "43", "confidence": 0.8, "start": 31, "end": 33}]}
     once = _Once(answer)
-    monkeypatch.setattr(sessions.ChatSession, "for_role", once)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     out = await sessions.BrainExtractionSession(tmp_path).extract(
         text, [sessions.Field("test", "failed test name"), sessions.Field("pr", "PR number")], 5)
     assert out[0] == {"field": "test", "value": "test_login", "confidence": 0.9,
@@ -419,8 +472,8 @@ async def test_marking_scores_every_part_against_every_label(monkeypatch, tmp_pa
               sessions.Label("filler", "Words that say nothing.")]
     ids = [s.id for s in text_parts.split(text)]
     once = _Once({"scores": [{"id": i, "scores": {"background": 0.5, "filler": 0}} for i in ids]})
-    monkeypatch.setattr(sessions.ChatSession, "for_role", once)
-    marked = await sessions.MarkingSession(tmp_path).mark(
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    marked = await sessions.BrainMarkingSession(tmp_path).mark(
         text, labels, [sessions.Known("He said fix it.", "knows")], 5)
     assert [m["id"] for m in marked] == ids == ["s1", "s1.p1", "s1.p2"]
     assert marked[1] == {"id": "s1.p1", "segment": "It broke,", "kind": "phrase",
@@ -430,13 +483,13 @@ async def test_marking_scores_every_part_against_every_label(monkeypatch, tmp_pa
     assert '<material state="knows">He said fix it.</material>' in sent
     once.answer = {"scores": [{"id": "s1", "scores": {"background": 1, "filler": 0}}]}
     with pytest.raises(sessions.SessionFailed):
-        await sessions.MarkingSession(tmp_path).mark(text, labels, [], 5)
+        await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
 
 
 @pytest.mark.asyncio
 async def test_classification_adds_background_and_takes_no_states(monkeypatch, tmp_path):
     once = _Once({"scores": [{"item": "f1", "scores": {"q1": 0.9, "background": 0.1}}]})
-    monkeypatch.setattr(sessions.ChatSession, "for_role", once)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     out = await sessions.BrainClassificationSession(tmp_path).classify(
         [sessions.Item("f1", "CI failed", "ci.log:3")], [sessions.ClassQuestion("q1", "Ship?")], 5)
     assert out == [{"item": "f1", "scores": {"q1": 0.9, "background": 0.1}}]
@@ -452,8 +505,8 @@ async def test_retrieval_answers_typed_entries_or_not_found(monkeypatch, tmp_pat
          "entries": [{"type": "pr", "repo": "o/r", "number": "176", "why": "named"},
                      {"type": "pr", "repo": "o/r", "why": "no number"}]},
         {"id": "r2", "resolved": "ok", "searched": "gh search prs", "entries": []}]})
-    monkeypatch.setattr(sessions.ChatSession, "for_role", once)
-    out = await sessions.RetrievalSession(tmp_path).resolve(
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    out = await sessions.BrainRetrievalSession(tmp_path).resolve(
         [sessions.Reference("r1", "the judges PR"), sessions.Reference("r2", "that thing")], 5)
     assert out[0] == {"id": "r1", "resolved": "ok", "searched": "",
                       "entries": [{"type": "pr", "repo": "o/r", "number": "176", "why": "named"}]}
@@ -466,7 +519,7 @@ async def test_a_brain_decision_asks_each_question_apart_and_takes_the_most(monk
                                                                           tmp_path):
     answers = iter(["yes", "no", "yes"])
     once = _Once(lambda text: {"answer": next(answers)})
-    monkeypatch.setattr(sessions.ChatSession, "for_role", once)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     q = sessions.DecisionQuestion("ready", "Is it ready?", sessions.YES_NO)
     out = await sessions.BrainDecisionSession("cares_judge", tmp_path).decide("text", [q], 5)
     assert out == [{"id": "ready", "answer": "yes", "probability": pytest.approx(2 / 3)}]
@@ -495,7 +548,7 @@ async def test_the_editor_s_edits_are_applied_by_the_program(tmp_path):
                       "sent_back": [{"start": 3, "end": 8, "old": "broke", "needs": "when"}]}
             return sessions.Reply(json.dumps(answer), answer)
     chat = Chat()
-    out = await sessions.EditingSession(chat).edit(
+    out = await sessions.BrainEditingSession(chat).edit(
         "It broke.", [{"id": "s1", "segment": "It broke.", "kind": "sentence",
                        "position": {"start": 0, "end": 9}, "scores": {"vague-referent": 0.9}}],
         [sessions.Known("The store moved.", "probably_does_not_know")], 5)
@@ -532,7 +585,7 @@ async def test_the_swarm_relays_word_for_word_and_counts_votes():
               "cares_judge": _Participant("cares_judge", ["no", "no"]),
               "order_judge": _Participant("order_judge", ["yes", "yes"]),
               "theory_of_mind_reader": _Participant("theory_of_mind_reader")}
-    swarm = sessions.SwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
+    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
                                            sessions.Question("enough", "Enough?",
                                                              author_votes=True)])
     swarm.say("author", "The script, as written.")
@@ -561,7 +614,7 @@ async def test_a_participant_calls_the_vote_when_its_discussion_settles():
     people = {"author": _Participant("author"),
               "cares_judge": _Participant("cares_judge", ["yes"], calls=[["cares", "nope"]]),
               "order_judge": _Participant("order_judge", ["yes"])}
-    swarm = sessions.SwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
+    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
                                            sessions.Question("order", "First?")])
     await swarm.turn("cares_judge", 5)
     assert swarm.state == {"cares": sessions.PROVEN, "order": sessions.OPEN}
@@ -594,7 +647,7 @@ async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes
               "theory_of_mind_reader": _Participant("theory_of_mind_reader", log=log)}
     material = [sessions.Known("He asked for it.", sessions.KNOWS),
                 sessions.Known("CI failed twice.", sessions.PROBABLY_NOT)]
-    swarm = sessions.SwarmSession(people, [sessions.Question("cares", "Does Tim care?")],
+    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?")],
                                   material=material)
 
     async def mark(text):
@@ -626,7 +679,7 @@ def test_each_participant_is_given_exactly_its_share_of_what_tim_knows():
         shown = sessions.share_values(role, material)[
             "{the evidence, each item with its knowledge state}"]
         assert 'state="probably_does_not_know"' in shown and 'state="knows"' in shown
-    swarm = sessions.SwarmSession({"cares_judge": _Participant("c"), "editor": _Participant("e")},
+    swarm = sessions.BrainSwarmSession({"cares_judge": _Participant("c"), "editor": _Participant("e")},
                                   [], material=material)
     assert [k.state for k in swarm.share_of("cares_judge")] == [sessions.KNOWS,
                                                                 sessions.HAD_ACCESS]

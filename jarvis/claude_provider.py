@@ -384,31 +384,42 @@ def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
     """One role's `claude -p` (sessions.yaml launch_v1, participants.md
     section 0.3): JARVIS's own settings, never the user's (`--restricted`
     drops CLAUDE.md, memory and the user's settings; `--strict-mcp-config`
-    every server but its own), its prompt in place of Claude Code's,
-    exactly its built-in tools, its own tool server's tools and its allowed
-    commands, and nothing asked of anyone (`--permission-prompts none`).
-    Never `--safe-mode` (it drops the role's tool server) or `--bare` (it
-    drops the subscription login)."""
+    every server but its own), its prompt in place of Claude Code's, and
+    locked down: no built-in tool, no server, no command, nothing asked of
+    anyone (`--permission-prompts none`), then released to exactly its
+    `roles.Release` (Tim, 2026-11-20, the same definition Codex reads): its
+    built-in tools, its own tool server's tools, its allowed commands, the
+    folders it reads and, for a writer, edits in its run folder. Never
+    `--safe-mode` (it drops the role's tool server) or `--bare` (it drops
+    the subscription login)."""
     launch = c.role
     role = launch.role
+    release = role.release
     cmd = claude_env.command_prefix(claude) + [
         "-p", "--restricted", "--strict-mcp-config",
         "--system-prompt", instructions,
-        "--tools", ",".join(role.builtins),
+        "--tools", ",".join(release.builtins),
         "--permission-prompts", "none",
         "--name", role.name,
         "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     ]
-    if role.writes:
+    if release.writes:
         cmd += ["--permission-mode", "acceptEdits"]
-    allowed = [f"Bash({command})" for command in role.commands]
-    if launch.mcp_config is not None and role.tools:
+    allowed = [f"Bash({command})" for command in release.commands]
+    if launch.mcp_config is not None and release.tools:
         cmd += ["--mcp-config", str(launch.mcp_config)]
-        allowed += [roles.tool_name(tool) for tool in role.tools]
+        allowed += [roles.tool_name(tool) for tool in release.tools]
     if allowed:
         cmd += ["--allowedTools", *allowed]
     for folder in launch.reads:
         cmd += ["--add-dir", str(folder)]
+    if release.writes and launch.reads:
+        # A writer writes in its run folder only: the folders it reads are
+        # read only (measured: `acceptEdits` writes in every --add-dir).
+        # An Edit rule covers every file-editing tool; `//` is an absolute
+        # path.
+        cmd += ["--disallowedTools",
+                *(f"Edit(/{Path(folder).resolve()}/**)" for folder in launch.reads)]
     if c.model:
         cmd += ["--model", c.model]
     if c.effort:
@@ -417,7 +428,7 @@ def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
         cmd += ["--no-session-persistence"]
         if launch.answer_format is not None:
             cmd += ["--json-schema", json.dumps(launch.answer_format)]
-        if not role.builtins and not role.tools:
+        if release == roles.LOCKDOWN:
             # Its answer is the schema's, itself one turn: two in all
             # (participants.md section 0.1, measured).
             cmd += ["--max-turns", "2"]

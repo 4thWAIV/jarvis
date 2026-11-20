@@ -79,14 +79,23 @@ KEEP_FEATURES = frozenset({
     "item_ids", "sqlite", "steer", "resize_all_images",
 })
 
-# A role of a package's making keeps the same features less the code-mode
-# host (the Codex lockdown, Tim's "Awesome", 2026-11-19): with it off, `exec`
-# is listed but refuses to run, so a role session cannot read files. Its
-# MCP tools go through that host too (measured, above), so a role whose
-# approved tools are its job is not started on Codex at all
-# (`roles.codex_refusal`) until he decides how the two fit.
+# A role of a package's making starts from the lockdown (Tim's "Awesome",
+# 2026-11-19): the same features less the code-mode host, so `exec` is listed
+# but refuses to run and a role session can neither read a file nor call a
+# tool. Each role is then released for its run to exactly its
+# `roles.Release` (Tim, 2026-11-20), the definition Claude reads too
+# (`role_release`).
 ROLE_KEEP_FEATURES = KEEP_FEATURES - {"code_mode_host"}
 
+# The permission profile a role that reads or writes files runs under,
+# measured on Codex 0.171.0: reads denied everywhere (`:root`, and the temp
+# folders, which `:minimal` would otherwise leave readable) but the
+# platform's own paths (`:minimal`, the programs its shell runs), the
+# folders it reads and its run folder; writes only in its run folder, for
+# a writer; no network. Measured: a file in a folder it reads came back,
+# one beside it "Operation not permitted", its home folder and ~/.zshrc
+# refused, a write outside its run folder refused, curl could not resolve.
+ROLE_PROFILE = "jarvis_role"
 # Never inherited by the Codex child: with one of these set, Codex would bill
 # an API key instead of the ChatGPT plan. The plan is the whole point.
 SCRUBBED_ENV_KEYS = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID",
@@ -270,6 +279,56 @@ def _has_brain_server() -> bool:
     except OSError:
         return False
     return f"[mcp_servers.{OWN_SERVER}]" in text
+
+
+def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, list[str]]:
+    """A role on Codex: the lockdown, then exactly its `roles.Release`, as
+    (the features kept on, the thread's config, the app server's `-c`
+    overrides). Measured on Codex 0.171.0:
+
+    - the lockdown, every role: `ROLE_KEEP_FEATURES`, subagents off
+      (`agents.enabled`: Codex 0.171.0 offers spawn_agent and its
+      companions whatever `multi_agent` says, and a long-lived thread's
+      subagent runs), no project docs, web search or file-editing tool, the
+      sandbox read-only;
+    - its tools: the code-mode host on, its own tool server the only one
+      added. With it on and the shell off, `exec` runs JavaScript with no
+      require, Deno, fetch or import: it reaches the configured servers'
+      tools and nothing else of the Mac (Codex's own clock and MCP resource
+      listing aside), and apply_patch, which the read-only sandbox refuses;
+    - its file tools: the shell on, under `ROLE_PROFILE`, so a read or a
+      write is confined to its folders (measured above) and nothing reaches
+      the network; a writer gets the file-editing tool, its run folder
+      writable.
+
+    Raises OSError for a role released to commands: Codex has no list of
+    the commands a shell may run, and the network those commands need
+    reaches every program (measured: with the profile's network on, curl
+    answered 200, and gh, outside `:minimal`, could not run), so they cannot
+    be confined to the role's commands (`roles.Release.commands`)."""
+    release = launch.role.release
+    if release.commands:
+        raise OSError(f"the {launch.role.name} role cannot run on Codex: Codex cannot confine "
+                      f"a shell to its commands ({', '.join(release.commands)})")
+    keep = ROLE_KEEP_FEATURES
+    config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
+                    "web_search": "disabled", "agents": {"enabled": False},
+                    "include_apply_patch_tool": release.writes}
+    overrides: list[str] = []
+    if release.tools and launch.mcp_config is not None:
+        keep = keep | {"code_mode_host"}
+        overrides = config_overrides(
+            {roles.SERVER_NAME: _servers_of(launch.mcp_config).get(roles.SERVER_NAME)})
+    if release.file_tools:
+        keep = keep | {"shell_tool"}
+        filesystem = {":root": "deny", ":minimal": "read",
+                      ":slash_tmp": "deny", ":tmpdir": "deny"}
+        filesystem.update({str(folder): "read" for folder in launch.reads})
+        filesystem[str(run)] = "write" if release.writes else "read"
+        config["default_permissions"] = ROLE_PROFILE
+        config["permissions"] = {ROLE_PROFILE: {"filesystem": filesystem,
+                                                "network": {"enabled": False}}}
+    return keep, config, overrides
 
 
 def features_to_disable(listing: str, keep: frozenset = KEEP_FEATURES) -> list[str]:
@@ -469,30 +528,28 @@ class CodexSession:
     async def _open_role(self, instructions: str) -> None:
         """One role's thread (sessions.yaml launch_v1, participants.md
         section 0.3): JARVIS's own Codex home, never the user's (its
-        AGENTS.md would reach the role), every feature off but the kept
-        plumbing and the code-mode host off too (the lockdown), the role's
-        prompt as the base instructions, no project docs, no web search, no
-        file-editing tool and JARVIS's brain server off. Under the lockdown
-        no tool can be called, so a role that has tools is refused before
-        anything starts (`roles.codex_refusal`)."""
-        role = self.config.role.role
-        refusal = roles.codex_refusal(role)
-        if refusal:
-            raise OSError(refusal)
+        AGENTS.md would reach the role), the role's prompt as the base
+        instructions, no project docs, no web search, JARVIS's brain server
+        off, locked down and released to exactly its role's `Release`
+        (`role_release`)."""
+        launch = self.config.role
+        role = launch.role
+        keep, config, overrides = role_release(launch, self.config.home)
         env = child_env()
-        await self._features_off(env, ROLE_KEEP_FEATURES)
-        argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
+        await self._features_off(env, keep)
+        argv = (self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
+                + overrides)
         await self._start(argv, env)
-        config = {"project_doc_max_bytes": 0, "project_root_markers": [],
-                  "web_search": "disabled", "include_apply_patch_tool": False}
         if _has_brain_server():
             config["mcp_servers"] = {OWN_SERVER: {"enabled": False}}
         settings = {
             "model": self.config.model, "cwd": str(self.config.home),
-            "approvalPolicy": "never", "sandbox": "read-only",
+            "approvalPolicy": "never",
             "baseInstructions": instructions, "developerInstructions": None,
             "personality": "none", "config": config,
         }
+        if "default_permissions" not in config:
+            settings["sandbox"] = "read-only"
         try:
             if self.config.resume:
                 started = await self._call("thread/resume", {"threadId": self.config.resume,

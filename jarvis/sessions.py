@@ -2,21 +2,27 @@
 sessions.py — the sessions a package is made with (sessions.yaml, approved
 by Tim 2026-11-18 and 2026-11-19).
 
-Composition, each type with its own interface (his word, 2026-11-18):
+Composition, each type with its own interface (his word, 2026-11-18:
+"Composition is most sensible but each type has it's own intrface."):
+each is a `Protocol` its callers depend on, and its Brain implementation
+runs on the brain providers (the Team ones, on the team server's models,
+come later).
 
-- `ChatSession`: one role's conversation with a model, on the brain's own
-  transport (claude_provider / codex_provider: one transport per brain,
-  shared by the voice brain and the roles), launched on JARVIS's own
-  settings with only the role's tools (roles.py). One-shot or long-lived.
-- `SwarmSession`: several long-lived ChatSessions in one conversation,
-  every message sent to the others word for word; votes and questions.
+- `ChatSession` (`BrainChatSession`): one role's conversation with a
+  model, on the brain's own transport (claude_provider / codex_provider:
+  one transport per brain, shared by the voice brain and the roles),
+  launched on JARVIS's own settings, locked down and released to exactly
+  its role's `roles.Release`. One-shot or long-lived.
+- `SwarmSession` (`BrainSwarmSession`): several long-lived ChatSessions in
+  one conversation, every message sent to the others word for word;
+  votes and questions.
 - `DecisionSession`, `ClassificationSession`, `ExtractionSession`: designed
-  around Jev and CDM; their Brain implementations run on the brain
-  providers (the Team ones, on the team server's models, come later).
-- `MarkingSession`: the text split by a program (text_parts.py), then
-  every part scored against every label, one call a file.
-- `RetrievalSession` and `EditingSession`: a ChatSession with its inputs
-  structured.
+  around Jev and CDM.
+- `MarkingSession` (`BrainMarkingSession`): the text split by a program
+  (text_parts.py), then every part scored against every label, one call a
+  file.
+- `RetrievalSession` and `EditingSession` (`BrainRetrievalSession`,
+  `BrainEditingSession`): a ChatSession with its inputs structured.
 
 Every model is picked by model_tiers.pick (the role's tier on the brain
 engines.json gives its kind) and swept when it is not available; the
@@ -116,8 +122,33 @@ def model_refused(error: str) -> bool:
         "issue with the selected model", "may not exist"))
 
 
-class ChatSession:
-    """One role's conversation with a model (sessions.yaml ChatSession).
+class ChatSession(Protocol):
+    """One role's conversation with a model (sessions.yaml ChatSession):
+    a general inference chat, one-shot or long-lived. In: the role, its
+    prompt, the run folder and the folders it may read, an answer format
+    where the answer has a fixed form, and the turns, in order. Out: each
+    turn's reply, and its session (`session`), so a long-lived one is
+    resumed after a restart."""
+
+    role: roles.Role
+    session: Optional[str]
+    model: Optional[str]
+
+    @property
+    def one_shot(self) -> bool: ...
+
+    async def open(self) -> None: ...
+
+    async def ask(self, text: str, timeout: float,
+                  answer_format: Optional[dict] = None) -> "Reply": ...
+
+    async def close(self) -> None: ...
+
+    async def once(self, text: str, timeout: float) -> "Reply": ...
+
+
+class BrainChatSession:
+    """A ChatSession on the brain providers' own transports.
 
     In: the role (its tier, effort, tools and lifetime, roles.py), its
     prompt as the system prompt, the run folder it works in and the folders
@@ -157,7 +188,7 @@ class ChatSession:
     @classmethod
     def for_role(cls, role: str, prompt: str, folder: Path, *, requester: Optional[str] = None,
                  engine: Optional[str] = None, model: Optional[str] = None,
-                 author_engine: Optional[str] = None, **kwargs) -> "ChatSession":
+                 author_engine: Optional[str] = None, **kwargs) -> "BrainChatSession":
         """The role's brain and model picked (model_tiers.pick). Raises
         model_tiers.NoModel when the sweep finds none."""
         spec = kwargs.get("role_spec") or roles.role(role)
@@ -170,7 +201,7 @@ class ChatSession:
         return self.role.lifetime == roles.ONE_SHOT
 
     def _mcp_config(self) -> Optional[Path]:
-        if not self.role.tools:
+        if not self.role.release.tools:
             return None
         path = self.folder / ".jarvis-role" / f"{self.role.name}-mcp.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,9 +459,35 @@ class Vote:
     called_by: str = "program"      # the participant who called it, or the program
 
 
-class SwarmSession:
-    """Several long-lived ChatSessions in one conversation (sessions.yaml
-    SwarmSession; workflow.yaml swarm). The program runs the turns and
+class SwarmSession(Protocol):
+    """Several long-lived ChatSessions working together in one conversation
+    (sessions.yaml SwarmSession). In: the participants, the background and
+    the questions to prove. Out: the conversation word for word, the
+    votes, each question's state and the result (`result`)."""
+
+    participants: dict[str, ChatSession]
+
+    async def open(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    def say(self, name: str, text: str) -> None: ...
+
+    async def turn(self, name: str, timeout: float, add: str = "") -> str: ...
+
+    async def vote(self, question: str, timeout: float, called_by: str = "program") -> str: ...
+
+    def reopen(self, question: str) -> None: ...
+
+    async def round(self, timeout: float, script: Path,
+                    mark: Callable[[str], Awaitable[list[dict]]]) -> Optional[dict]: ...
+
+    def result(self) -> dict: ...
+
+
+class BrainSwarmSession:
+    """A SwarmSession of ChatSessions on the brain providers (workflow.yaml
+    swarm). The program runs the turns and
     keeps the log word for word, never summarising or rewriting: each
     participant is sent every new message of the others, verbatim, with
     who said it, and is given exactly its share of what Tim knows
@@ -449,8 +506,10 @@ class SwarmSession:
                  editor: str = "editor",
                  non_voters: tuple[str, ...] = ("theory_of_mind_reader",),
                  material: Optional[list[Known]] = None,
-                 first: Optional[dict[str, str]] = None):
+                 first: Optional[dict[str, str]] = None,
+                 editing: Optional[Callable[[ChatSession], "EditingSession"]] = None):
         self.participants = participants
+        self.editing = editing or BrainEditingSession
         self.background = background or {}
         self.questions = {q.id: q for q in questions}
         self.state = {q.id: OPEN for q in questions}
@@ -473,7 +532,7 @@ class SwarmSession:
                   material: list[Known], values: dict[str, dict[str, str]],
                   background: Optional[dict] = None, reads: tuple[Path, ...] = (),
                   on_log: Optional[Callable[[str], None]] = None,
-                  **pick_args) -> "SwarmSession":
+                  **pick_args) -> "BrainSwarmSession":
         """Each participant on its role, its approved prompt filled with its
         share of the material (`share_values`) and the rest of its values
         (`values`, by role: the script, the prep, the labels ...). The
@@ -485,7 +544,7 @@ class SwarmSession:
         for name in sorted(names, key=lambda n: n != "author"):
             system, first[name] = role_prompt(name, {**share_values(name, material),
                                                      **values.get(name, {})})
-            participants[name] = ChatSession.for_role(
+            participants[name] = BrainChatSession.for_role(
                 name, system, folder, reads=reads, on_log=on_log,
                 author_engine=author_engine, **pick_args)
             if name == "author":
@@ -600,7 +659,7 @@ class SwarmSession:
         await self.turn(self.author, timeout)
         text = script.read_text(encoding="utf-8")
         marked = await mark(text)
-        editing = EditingSession(self.participants[self.editor])
+        editing = self.editing(self.participants[self.editor])
         out = await editing.edit(text, marked, self.share_of(self.editor), timeout,
                                  source=script.name,
                                  conversation=self._new_for(self.editor), call_vote=True)
@@ -714,14 +773,14 @@ class BrainDecisionSession:
     effort it runs on."""
 
     def __init__(self, role: str, folder: Path, *, asks: int = ASKS, **pick_args):
-        self.role = dataclasses.replace(roles.role(role), lifetime=roles.ONE_SHOT, builtins=(),
-                                        tools=(), commands=(), writes=False)
+        self.role = dataclasses.replace(roles.role(role), lifetime=roles.ONE_SHOT,
+                                        release=roles.LOCKDOWN)
         self.folder = Path(folder)
         self.asks = asks
         self.pick_args = pick_args
 
     async def _ask(self, question: DecisionQuestion, text: str, timeout: float):
-        session = ChatSession.for_role(self.role.name, question.asks, self.folder,
+        session = BrainChatSession.for_role(self.role.name, question.asks, self.folder,
                                        role_spec=self.role, answer_format=question.schema(),
                                        **self.pick_args)
         answer = (await session.once(text, timeout)).answer.get("answer")
@@ -796,7 +855,7 @@ class BrainClassificationSession:
                 "\n".join(_tag("item", i.text, id=i.id, source=i.source) for i in items),
             "{the handoff's questions}":
                 "\n".join(_tag("question", c.asks, id=c.id) for c in classes)})
-        session = ChatSession.for_role("classification", system, self.folder,
+        session = BrainChatSession.for_role("classification", system, self.folder,
                                        answer_format=form, **self.pick_args)
         answer = (await session.once(first, timeout)).answer
         by_item = {str(s.get("item")): s.get("scores") for s in answer.get("scores") or []
@@ -842,7 +901,7 @@ class BrainExtractionSession:
             "{fields for this file's type}":
                 "\n".join(_tag("field", f.describes, name=f.name,
                                many="true" if f.many else "false") for f in fields)})
-        session = ChatSession.for_role("extraction", system, self.folder, answer_format=form,
+        session = BrainChatSession.for_role("extraction", system, self.folder, answer_format=form,
                                        **self.pick_args)
         answer = (await session.once(first, timeout)).answer
         many = {f.name: f.many for f in fields}
@@ -877,8 +936,16 @@ class Label:
     example: str = ""
 
 
-class MarkingSession:
-    """A text's sentences and phrases (split by text_parts), each scored
+class MarkingSession(Protocol):
+    """Marks a text: its sentences and phrases, each scored 0..1 against
+    every label (sessions.yaml MarkingSession)."""
+
+    async def mark(self, text: str, labels: list[Label], knowledge: list[Known],
+                   timeout: float) -> list[dict]: ...
+
+
+class BrainMarkingSession:
+    """On the brain providers: a text's sentences and phrases (split by text_parts), each scored
     against every label, each label on its own; one call a file. Tim's
     material comes with its knowledge states, for the labels that depend on
     him."""
@@ -905,7 +972,7 @@ class MarkingSession:
             "{Tim's material, each item with its knowledge state}":
                 "\n".join(_tag("material", k.text, state=k.state, source=k.source or None)
                           for k in knowledge)})
-        session = ChatSession.for_role("marking", system, self.folder, answer_format=form,
+        session = BrainChatSession.for_role("marking", system, self.folder, answer_format=form,
                                        **self.pick_args)
         answer = (await session.once(first, timeout)).answer
         by_id = {str(s.get("id")): s.get("scores") for s in answer.get("scores") or []
@@ -944,8 +1011,15 @@ def _entry(raw: dict) -> Optional[dict]:
     return entry
 
 
-class RetrievalSession:
-    """Works out what each free-text reference names (sessions.yaml
+class RetrievalSession(Protocol):
+    """Works out what each free-text reference names, as typed entries or
+    not found (sessions.yaml RetrievalSession)."""
+
+    async def resolve(self, references: list[Reference], timeout: float) -> list[dict]: ...
+
+
+class BrainRetrievalSession:
+    """On the brain providers: works out what each free-text reference names (sessions.yaml
     RetrievalSession): a ChatSession on the retrieval role, its read-only
     search tools only; it never fetches, copies, summarises or judges. The
     program fetches what each entry names (gather)."""
@@ -966,7 +1040,7 @@ class RetrievalSession:
             "searched": _TEXT}))})
         system, first = role_prompt("retrieval", {
             "{list}": "\n".join(_tag("reference", r.text, id=r.id) for r in references)})
-        session = ChatSession.for_role("retrieval", system, self.folder, answer_format=form,
+        session = BrainChatSession.for_role("retrieval", system, self.folder, answer_format=form,
                                        **self.pick_args)
         answer = (await session.once(first, timeout)).answer
         by_id = {str(r.get("id")): r for r in answer.get("references") or []
@@ -1029,9 +1103,19 @@ def apply_edits(text: str, edits: list[dict]) -> tuple[str, list[dict], list[dic
     return text, applied, refused
 
 
-class EditingSession:
-    """The one editor (sessions.yaml EditingSession): a ChatSession on the
-    editor role, given the script, the same script marked part by part,
+class EditingSession(Protocol):
+    """The one editor: edits a text guided by its marked parts and the
+    information, the program applying them (sessions.yaml
+    EditingSession)."""
+
+    async def edit(self, text: str, marked: list[dict], information: list[Known],
+                   timeout: float, source: str = "", conversation: str = "",
+                   call_vote: bool = False) -> dict: ...
+
+
+class BrainEditingSession:
+    """On the brain providers: the one editor, a ChatSession on the editor
+    role, given the script, the same script marked part by part,
     and the information to take facts from, each item marked with its
     knowledge state. It decides part by part what edit each needs; the
     program applies the edits and refuses any whose old text is not at its

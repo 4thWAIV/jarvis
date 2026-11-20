@@ -3062,7 +3062,13 @@ override); the brain's `engine_settings` and acting `set_engine_setting`
 The new package system's sessions (`sessions.py`, the design's
 sessions.yaml, approved 2026-11-18 and 2026-11-19), built for its later
 steps (gather, mark, research, the swarm) to use; nothing calls them yet.
-A `ChatSession` is one role's conversation on the brain's own transport
+Composition, each type with its own interface (Tim, 2026-11-18): every
+session type is a `Protocol` its callers depend on (`ChatSession`,
+`SwarmSession`, `DecisionSession`, `ClassificationSession`,
+`ExtractionSession`, `MarkingSession`, `RetrievalSession`,
+`EditingSession`), each with its Brain implementation on the brain
+providers (`BrainChatSession`, `BrainSwarmSession` ...); the Team ones come
+later. A `ChatSession` is one role's conversation on the brain's own transport
 (`ClaudeSession`, `CodexSession`: one transport per brain, the voice brain
 and every role alike), one-shot (one item in, one answer out, nothing
 kept) or long-lived (its session id kept and resumed, never started
@@ -3075,7 +3081,7 @@ says so on the first turn, Codex at the thread or the turn) is logged and
 the session opened again on the sweep's next model, its first turn sent
 again there; a new long-lived Claude session takes a new id on each try,
 never `--resume` of a refused one; after an answer nothing is swept.
-`SwarmSession` is long-lived ChatSessions in one conversation (`for_roles`
+`BrainSwarmSession` is long-lived ChatSessions in one conversation (`for_roles`
 builds them, the author picked first so the judges' Settings option can
 put them on the other brain): each participant sent every new message of
 the others word for word, with who said it, and on its first turn its
@@ -3092,9 +3098,9 @@ a majority of yes proving a question and anything else failing it, the
 Theory of Mind reader never voting and the author only where
 `Question.author_votes`. A `round` is the design's order: the author's
 turn (it revises the script file), the script marked, the editor's edits
-through its own session (`EditingSession`, applied and written by the
-program, the script marked again when they changed it), then the judges
-(from the marked script) and the Theory of Mind reader (from the script),
+through its own session (its `editing`, `BrainEditingSession` by
+default, applied and written by the program, the script marked again
+when they changed it), then the judges (from the marked script) and the Theory of Mind reader (from the script),
 then the program's vote on every open question (`vote_open`) and
 `end_round`, whose result after `ROUNDS_MAX` (3) is passed or not passed
 with the findings; `reopen` when the script changes what a question was
@@ -3104,54 +3110,62 @@ share that agreed (`agreement`); `BrainClassificationSession` scores each
 item against every question plus `background`; `BrainExtractionSession`
 keeps only values the program finds verbatim at their offsets, a field
 not found empty and its context the sentence around it;
-`MarkingSession` splits the text by program (`text_parts.py`: speech.py's
+`BrainMarkingSession` splits the text by program (`text_parts.py`: speech.py's
 sentence rule, `speech.sentence_end`, extended for headings, list items
 and paragraphs, and phrases cut at commas, semicolons, colons, dashes,
 brackets and the joining words) and scores every part against every label
-in one call, Tim's material with its knowledge states; `RetrievalSession`
+in one call, Tim's material with its knowledge states; `BrainRetrievalSession`
 answers each free-text reference as typed entries of
-`evidence_types.NAMED_BY_LABEL` or not found; `EditingSession` gives the
+`evidence_types.NAMED_BY_LABEL` or not found; `BrainEditingSession` gives the
 editor the script, its marked parts and the information, and the program
 applies only edits whose old text is at their offsets (`apply_edits`).
-The Team implementations come later. A session that cannot answer raises
+A session that cannot answer raises
 `SessionFailed`, the step's Error.
 Each role (`roles.py`) has its tier, effort, engines.json kind, lifetime
-and exactly its tools: the author the research tools
-(`roles.RESEARCH_TOOLS`, the research right's with `search_history` and
-`read_history`) and Read, Write, Edit, Grep and Glob; the editor the
-evidence search (`knowledge_search`) and Read, Grep and Glob; the decision
-ready and background judges the research tools and Read, Grep and Glob;
-the Theory of Mind reader nothing (its material is in its prompt); the
-cares and order judges nothing for now: sessions.yaml gives them "only the
-package evidence, filtered to what Tim knows and had access to" and their
-approved prompt says they are given it and have no research tools, which
-of the two is meant (that evidence in the prompt, or a filtered search) is
-Tim's to say, and until he does it comes in the prompt;
-retrieval its read tools for Work items, packages, messages, workflows
-and runs and Bash for read-only `gh` and `git ls-remote` only; marking,
-classification and extraction nothing. A role's JARVIS tools are its own
-tool server (`role_mcp.py`, `python -m jarvis.role_mcp --role <role>`,
-server name `jarvis_role`), which offers only them and calls
-`/internal/tool` with the tool token naming the role; the server answers
-a role only for its own tools and as a call that is never his turn
-(`_tool_caller` `role:<name>`). Claude launches a role on JARVIS's own
-settings (`claude_provider.role_command`: `--restricted
+and its `Release`: every role on either brain starts locked down (no tool,
+no server, no command, no file) and is released for its run to exactly
+its release, the one definition both brains read (Tim, 2026-11-20; no role
+is exclusive to one brain): its built-in tools, its own tool server's
+tools, its allowed commands and, for a writer, writes in its run folder;
+the folders it reads are its run's (`Launch.reads`). The author has the
+research tools (`roles.RESEARCH_TOOLS`, the research right's with
+`search_history` and `read_history`) and Read, Write, Edit, Grep and Glob;
+the editor the evidence search (`knowledge_search`) and Read, Grep and
+Glob; the decision ready and background judges the research tools and
+Read, Grep and Glob; the Theory of Mind reader and the cares and order
+judges nothing (their material, only what Tim knows and had access to, is
+in their prompt); retrieval its read tools for Work items, packages,
+messages, workflows and runs and Bash for read-only `gh` and `git
+ls-remote` only; marking, classification and extraction nothing. A role's
+JARVIS tools are its own tool server (`role_mcp.py`, `python -m
+jarvis.role_mcp --role <role>`, server name `jarvis_role`), which offers
+only them and calls `/internal/tool` with the tool token naming the role;
+the server answers a role only for its own tools and as a call that is
+never his turn (`_tool_caller` `role:<name>`). Claude launches a role on
+JARVIS's own settings (`claude_provider.role_command`: `--restricted
 --strict-mcp-config --system-prompt`, its `--tools`, `--allowedTools`,
-`--permission-prompts none`, `acceptEdits` for a writer, `--add-dir` for
-what it may read; never `--safe-mode`, `--bare` or skipped permissions);
-Codex in JARVIS's own Codex home (`CodexSession._open_role`: every
-feature off but `ROLE_KEEP_FEATURES`, which leaves out `code_mode_host`,
-the lockdown, so `exec` refuses to run and a Codex role cannot read files
-or call MCP tools; the role's prompt as `baseInstructions`, personality
-none, no project docs, web search or file-editing tool, read-only, the
-brain's own server switched off, ephemeral for one-shot). Because Codex
-calls MCP tools only through that host, a role whose approved tools are
-its job (the author, the editor, the decision ready and background judges,
-retrieval) is refused on Codex before anything starts
-(`roles.codex_refusal`), never run without them: the lockdown and the
-tools per role conflict there, and that waits on Tim's decision. On Codex
-0.154.0 the tier names (GPT-6.2) are not listed, so its tiers do not
-resolve until Codex is updated. The approved
+`--permission-prompts none`, `--add-dir` for what it may read, and for a
+writer `acceptEdits` with those folders denied to `Edit`, so it writes in
+its run folder only; never `--safe-mode`, `--bare` or skipped
+permissions). Codex runs a role in JARVIS's own Codex home
+(`CodexSession._open_role`, `codex_provider.role_release`, measured on
+Codex 0.171.0): the lockdown is every feature off but
+`ROLE_KEEP_FEATURES` (no `code_mode_host`, so `exec` refuses to run),
+subagents off (`agents.enabled`), the role's prompt as `baseInstructions`,
+personality none, no project docs or web search, the brain's own server
+switched off, read-only, ephemeral for one-shot; a role with tools has the
+code-mode host on and its own tool server, the only one added (with the
+shell off, `exec` runs JavaScript with no file, process or network access
+and reaches only that server's tools, Codex's clock and MCP resource
+listing beside them); a role with file tools has the shell on under the
+`ROLE_PROFILE` permission profile (reads denied everywhere but
+`:minimal`, the folders it reads and its run folder; writes in its run
+folder only, for a writer, with the file-editing tool; no network). A role
+released to commands (retrieval) is not started on Codex: Codex has no
+list of the commands a shell may run, and the network they need reaches
+every program, so they cannot be confined to its commands. On Codex
+0.171.0 the live list holds every tier's model (GPT-6.2 Astra and Sol,
+GPT-6.1 Terra, GPT-6 Luna) and each tier resolves. The approved
 prompts are `role_prompts.py`, word for word, each split into its system
 prompt and its closing material, every `{...}` filled by `fill`.
 Models come from the four tiers (`model_tiers.py`, a code file: Fable /

@@ -1,12 +1,13 @@
 """
 roles.py — each role of a package's making: its tier, its effort, its
-engines.json entry, how long it lives, and exactly the tools it has.
+engines.json entry, how long it lives, and what it is released to.
 
 Every value here is the design's (sessions.yaml role_tiers_v1, effort_v1
 and launch_v1, participants.md, workflow.yaml swarm tools and
 tim_knowledge), approved by Tim on 2026-11-18 and 2026-11-19. A role is
 launched the way the main brains are (no more setup than theirs, his word
-2026-11-19): on JARVIS's own settings on both brains, with its own tool
+2026-11-19): on JARVIS's own settings on both brains, locked down and
+released to exactly its `Release` (his word, 2026-11-20), its own tool
 server holding only its tools, never a sending command (message,
 work_report, package_start).
 
@@ -49,16 +50,45 @@ RETRIEVAL_COMMANDS: tuple[str, ...] = (
 
 
 @dataclass(frozen=True)
+class Release:
+    """What a role is released to from the lockdown, the one definition
+    both brains read (Tim, 2026-11-20: every role on either brain starts
+    locked down, no tools, and is released for its run to exactly what it
+    needs; "THAT lockdown and release shoudl apply to Claude as well"; no
+    role is exclusive to one brain). Claude reads it in
+    `claude_provider.role_command`, Codex in `codex_provider.role_release`.
+    The folders it reads are its run's (`Launch.reads`, beside its own run
+    folder)."""
+    builtins: tuple[str, ...] = ()  # the brain's own tools, by Claude's --tools names
+    tools: tuple[str, ...] = ()     # JARVIS's tools, on its own tool server
+    commands: tuple[str, ...] = ()  # the shell commands it may run
+    writes: bool = False            # writes in its run folder (its prep and script)
+
+    @property
+    def file_tools(self) -> tuple[str, ...]:
+        """Its tools that read or write files in its folders."""
+        return tuple(t for t in self.builtins if t in FILE_TOOLS)
+
+
+LOCKDOWN = Release()                # what every role starts from
+
+# The built-in tools that read or write files; Bash is released only to run
+# the role's own commands.
+FILE_TOOLS = ("Read", "Write", "Edit", "Grep", "Glob")
+
+
+@dataclass(frozen=True)
 class Role:
     name: str
     tier: int                       # role_tiers_v1
     effort: str                     # effort_v1
     kind: str                       # its engines.json entry (engine_choice.KINDS)
     lifetime: str                   # ONE_SHOT or LONG_LIVED
-    builtins: tuple[str, ...] = ()  # Claude Code's own tools (--tools)
-    tools: tuple[str, ...] = ()     # JARVIS's tools, on its own tool server
-    commands: tuple[str, ...] = ()  # the shell commands Claude's Bash may run
-    writes: bool = False            # writes in its run folder (its prep and script)
+    release: Release = LOCKDOWN     # what it is released to for its run
+
+    @property
+    def tools(self) -> tuple[str, ...]:
+        return self.release.tools
 
 
 _READS = ("Read", "Grep", "Glob")
@@ -66,29 +96,27 @@ _READS = ("Read", "Grep", "Glob")
 ROLES: dict[str, Role] = {r.name: r for r in (
     # The swarm (workflow.yaml swarm; participants.md sections 6 to 8).
     Role("author", 1, "high", "package_author", LONG_LIVED,
-         builtins=("Read", "Write", "Edit", "Grep", "Glob"), tools=RESEARCH_TOOLS, writes=True),
-    Role("editor", 1, "medium", "editor", LONG_LIVED, builtins=_READS, tools=EVIDENCE_SEARCH),
+         Release(builtins=("Read", "Write", "Edit", "Grep", "Glob"), tools=RESEARCH_TOOLS,
+                 writes=True)),
+    Role("editor", 1, "medium", "editor", LONG_LIVED,
+         Release(builtins=_READS, tools=EVIDENCE_SEARCH)),
     Role("decision_ready_judge", 2, "medium", "judges", LONG_LIVED,
-         builtins=_READS, tools=RESEARCH_TOOLS),
+         Release(builtins=_READS, tools=RESEARCH_TOOLS)),
     Role("background_judge", 2, "medium", "judges", LONG_LIVED,
-         builtins=_READS, tools=RESEARCH_TOOLS),
-    # sessions.yaml gives these two "only the package evidence, filtered to
-    # what Tim knows and had access to"; their approved prompt says "You are
-    # given only what Tim knows and what he had access to ... and you have
-    # no research tools". Which of the two is meant (that evidence given in
-    # the prompt, or a search of it filtered by knowledge state) is his to
-    # say: until he does they have no tool, and their material comes in the
-    # prompt as the approved words say (sessions.share).
+         Release(builtins=_READS, tools=RESEARCH_TOOLS)),
+    # Given only what Tim knows and had access to, in the prompt, and no
+    # tools (Tim, 2026-11-20).
     Role("cares_judge", 2, "medium", "judges", LONG_LIVED),
     Role("order_judge", 2, "medium", "judges", LONG_LIVED),
     Role("theory_of_mind_reader", 1, "high", "theory_of_mind_reader", LONG_LIVED),
     # The reading steps (participants.md sections 1 to 4).
-    Role("retrieval", 3, "low", "retrieval", ONE_SHOT, builtins=("Bash",),
-         tools=RETRIEVAL_TOOLS, commands=RETRIEVAL_COMMANDS),
+    Role("retrieval", 3, "low", "retrieval", ONE_SHOT,
+         Release(builtins=("Bash",), tools=RETRIEVAL_TOOLS, commands=RETRIEVAL_COMMANDS)),
     Role("marking", 3, "low", "marking", ONE_SHOT),
     Role("classification", 3, "low", "classification", ONE_SHOT),
     Role("extraction", 4, "low", "extraction", ONE_SHOT),
 )}
+
 
 @dataclass(frozen=True)
 class Launch:
@@ -122,23 +150,7 @@ def tool_name(tool: str) -> str:
     return f"mcp__{SERVER_NAME}__{tool}"
 
 
-def codex_refusal(found: Role) -> Optional[str]:
-    """Why this role is not started on Codex, or None. Codex roles run with
-    the code-mode host off (Tim's "Awesome", 2026-11-19: "exec is listed but
-    refuses to run, so a Codex session cannot read files"), and Codex calls
-    MCP tools only through that host (codex_provider.KEEP_FEATURES,
-    measured), so a role whose approved tools are its job (launch_v1
-    tools_per_swarm_role, RetrievalSession) would run without them. That
-    conflict between the two approved entries is his to settle; until then
-    such a role is refused on Codex, never run without its tools."""
-    if not (found.tools or found.commands):
-        return None
-    return (f"the {found.name} role cannot run on Codex: Codex roles run with the code-mode "
-            f"host off, which leaves no way to call its tools "
-            f"({', '.join(found.tools + found.commands)}); this waits on Tim's decision")
-
-
 def allows(name: Optional[str], tool: str) -> bool:
     """A role's tool server may call this tool for it."""
     found = ROLES.get(name or "")
-    return found is not None and tool in found.tools
+    return found is not None and tool in found.release.tools
