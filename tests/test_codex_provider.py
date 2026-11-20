@@ -180,8 +180,15 @@ def test_it_is_the_provider_named_openai_with_its_own_default_model(tmp_path, mo
     from jarvis import brains_config
     brains_config.add("openai")
     brains_config.set_default("openai")
+    # Its default is never a fixed name: the tiers' sweep over the models
+    # it lists now, the newest of the default tier's family first.
+    monkeypatch.setattr(codex_provider.CodexProvider, "models",
+                        lambda self: ["gpt-6-astra", "gpt-5.6-terra", "gpt-6.1-terra"])
     cfg = brain.BrainConfig.from_env(tmp_path)
-    assert (cfg.provider, cfg.model) == ("openai", codex_provider.DEFAULT_MODEL)
+    assert (cfg.provider, cfg.model) == ("openai", "gpt-6.1-terra")
+    monkeypatch.setattr(codex_provider.CodexProvider, "models", lambda self: [])
+    assert codex_provider.CodexProvider().default_model is None, \
+        "with no list, Codex's own default, never an out-of-date name"
 
 
 def test_its_failures_and_foreign_reads_are_its_own():

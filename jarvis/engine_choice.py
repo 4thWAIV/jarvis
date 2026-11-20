@@ -22,6 +22,15 @@ seven-day window): stressed is ahead below 0, least stressed is the highest
 ahead. A brain not measured is never called stressed, nor chosen as least.
 An engine he names for one agent ("on Codex") is his choice and is kept.
 
+Each role of a package's making is a kind too, by the same method (his
+word, "engines per role by the main brains' method", 2026-11-19): the
+author is `package_author`; the editor, the judges, the Theory of Mind
+reader, retrieval, marking, classification and extraction each have their
+own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
+(model_tiers.pick) unless its entry names one. One more setting, "run the
+judges on the other brain from the author's" (`judges_other_brain`, his
+word 2026-11-19), is ignored while JARVIS has only one brain.
+
 Kept in `<data>/jarvis/engines.json`, beside brains.json, so the page, the
 brain's tools and make_package (another process) read the same choice. A
 missing or unreadable file is the defaults below: what JARVIS did before
@@ -41,7 +50,10 @@ from jarvis import brain_provider, brains_config, data_paths, usage_store
 
 log = logging.getLogger("jarvis.engines")
 
-KINDS = ("package_author", "run", "build", "agent_package")
+# The roles of a package's making beside its author (sessions.py).
+ROLE_KINDS = ("editor", "judges", "theory_of_mind_reader", "retrieval", "marking",
+              "classification", "extraction")
+KINDS = ("package_author", "run", "build", "agent_package") + ROLE_KINDS
 PICKS = ("fixed", "requester", "least_stress")
 ENGINES = brain_provider.ENGINES
 
@@ -50,6 +62,9 @@ DEFAULTS = {
     "run": {"pick": "fixed", "engine": "claude", "model": None},
     "build": {"pick": "fixed", "engine": "claude", "model": None},
     "agent_package": {"pick": "fixed", "engine": "claude", "model": None},
+    # Each role on the engine of whoever asks, as its author is: what the
+    # editors and judges did before (they ran on the author's choice).
+    **{kind: {"pick": "requester"} for kind in ROLE_KINDS},
 }
 
 
@@ -100,8 +115,10 @@ def load() -> dict:
         body = {}
     kinds = body.get("kinds") if isinstance(body, dict) else None
     kinds = kinds if isinstance(kinds, dict) else {}
+    body = body if isinstance(body, dict) else {}
     return {"kinds": {k: _setting(kinds.get(k)) or dict(DEFAULTS[k]) for k in KINDS},
-            "override_stressed": bool(body.get("override_stressed")) if isinstance(body, dict) else False}
+            "override_stressed": bool(body.get("override_stressed")),
+            "judges_other_brain": bool(body.get("judges_other_brain"))}
 
 
 def _save(cfg: dict) -> None:
@@ -154,6 +171,23 @@ def set_override(on: bool) -> dict:
     cfg["override_stressed"] = bool(on)
     _save(cfg)
     return cfg
+
+
+def set_judges_other_brain(on: bool) -> dict:
+    cfg = load()
+    cfg["judges_other_brain"] = bool(on)
+    _save(cfg)
+    return cfg
+
+
+def other_brain_for_judges(kind: str, author_engine: Optional[str]) -> Optional[str]:
+    """The brain the judges run on when Settings puts them on the other
+    brain from the author's, or None: not the judges, the setting off, the
+    author's brain unknown, or only one brain."""
+    if kind != "judges" or not author_engine or not load()["judges_other_brain"]:
+        return None
+    others = [e for e in available() if e != author_engine]
+    return others[0] if others else None
 
 
 # ── token stress ──────────────────────────────────────────────────────────

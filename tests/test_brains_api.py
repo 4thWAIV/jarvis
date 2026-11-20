@@ -50,7 +50,7 @@ def test_with_no_file_claude_alone_is_the_brain(server):
     by = {c["name"]: c for c in cards}
     assert by["anthropic"]["added"] and by["anthropic"]["default"]
     assert by["anthropic"]["account"]["signed_in"] is True
-    assert by["anthropic"]["models"] == ["sonnet", "opus", "haiku"]
+    assert by["anthropic"]["models"] == ["fable", "opus", "sonnet", "haiku"]
     assert by["openai"]["added"] is False and "account" not in by["openai"]
 
 

@@ -99,7 +99,12 @@ export function activeBrain(cards: BrainCard[] | null): string | null {
 
 // ── which engine each kind of agent goes on (engine_choice.py) ───────────
 
-export type EngineKind = "package_author" | "run" | "build" | "agent_package";
+export type EngineKind = "package_author" | "run" | "build" | "agent_package" | "editor" | "judges"
+  | "theory_of_mind_reader" | "retrieval" | "marking" | "classification" | "extraction";
+/** Every kind, in engine_choice.KINDS's order. */
+export const ENGINE_KINDS: EngineKind[] = ["package_author", "run", "build", "agent_package",
+  "editor", "judges", "theory_of_mind_reader", "retrieval", "marking", "classification",
+  "extraction"];
 export type Engine = "claude" | "codex";
 
 export interface EngineSetting {
@@ -112,6 +117,8 @@ export interface EngineSettings {
   kinds: Record<EngineKind, EngineSetting>;
   kinds_order: EngineKind[];
   override_stressed: boolean;
+  /** A package's judges on the other brain from its author's (ignored with one brain). */
+  judges_other_brain: boolean;
   /** Each brain JARVIS has, with its plus/minus against its pace this week. */
   engines: { engine: Engine; provider: string; ahead: number | null; stressed: boolean }[];
   least_stressed: Engine | null;
@@ -126,10 +133,11 @@ export async function readEngines(): Promise<EngineSettings> {
   return (await res.json()) as EngineSettings;
 }
 
-/** One kind's setting, or the override; the settings as they now stand. */
+/** One kind's setting, the override or the judges' brain; the settings as they now stand. */
 export async function changeEngines(change: { kind: EngineKind; pick: EngineSetting["pick"];
                                               engine?: Engine; model?: string | null }
-                                     | { override_stressed: boolean }): Promise<EngineSettings> {
+                                     | { override_stressed: boolean }
+                                     | { judges_other_brain: boolean }): Promise<EngineSettings> {
   const res = await fetch("/api/settings/engines", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change) });
   if (!res.ok) throw await refusal(res);

@@ -3037,16 +3037,102 @@ selected agent is in token stress", which moves a choice off a stressed brain
 to the least stressed one. Token stress is the brain board's plus/minus,
 `usage_store.week`'s `ahead` (expected use minus actual, points, seven-day
 window): stressed below 0, least stressed the highest; a brain not measured
-is neither. An engine he names for one agent (the tools' `engine`, or a model
+is neither. Each role of a package's making is a kind too
+(`engine_choice.ROLE_KINDS`: editor, judges, Theory of Mind reader,
+retrieval, marking, classification, extraction; the author is
+`package_author`), each on the requester's engine by default, its model
+its tier's (model_tiers.pick); and "Run the judges on the other brain from
+the author's" (`judges_other_brain`, `other_brain_for_judges`) moves the
+judges off the author's brain, ignored while there is only one brain. An engine he names for one agent (the tools' `engine`, or a model
 that names its engine: "opus" is Claude's, "gpt-..." Codex's,
 `server._engine_for`) is kept, override or not. The defaults are what JARVIS
 did before (the author on the requester's engine, the rest on Claude). Kept
 in `<data>/jarvis/engines.json` beside brains.json, so make_package (another
 process) reads the same. Settings, Brains shows each kind and the override
 with each brain's plus/minus (`BrainsSection.tsx` `EngineChoices`,
-`GET`/`POST /api/settings/engines`); the brain's `engine_settings` and acting
-`set_engine_setting` call the same `engine_choice.view` and
+`GET`/`POST /api/settings/engines`, the judges' option beside the
+override); the brain's `engine_settings` and acting `set_engine_setting`
+(`judges_other_brain` too) call the same `engine_choice.view` and
 `server._change_engine_setting`.
+
+## The sessions a package is made with
+The new package system's sessions (`sessions.py`, the design's
+sessions.yaml, approved 2026-11-18 and 2026-11-19), built for its later
+steps (gather, mark, research, the swarm) to use; nothing calls them yet.
+A `ChatSession` is one role's conversation on the brain's own transport
+(`ClaudeSession`, `CodexSession`: one transport per brain, the voice brain
+and every role alike), one-shot (one item in, one answer out, nothing
+kept) or long-lived (its session id kept and resumed, never started
+fresh), its prompt the system prompt, a turn's answer parsed where it has
+a form (`json_answer`; Claude takes a one-shot's form for the process,
+`--json-schema`, and a long-lived turn's in the message, `SCHEMA_GIVEN`;
+Codex per turn, `outputSchema`); `TurnEnded.reply` is a turn's final
+answer. `SwarmSession` is long-lived ChatSessions in one conversation:
+each participant sent every new message of the others word for word, with
+who said it (`turn`, `say`); a vote a turn in each voter's own session
+(`vote`, `VOTE_FORM`), a majority of yes proving a question and anything
+else failing it, the Theory of Mind reader never voting and the author
+only where `Question.author_votes`; `reopen`, `vote_open`, and `end_round`,
+whose result after `ROUNDS_MAX` (3) is passed or not passed with the
+findings. `BrainDecisionSession` asks each question `ASKS` (3) times in
+one-shot sessions of its own with no tools, the answer most gave and the
+share that agreed (`agreement`); `BrainClassificationSession` scores each
+item against every question plus `background`; `BrainExtractionSession`
+keeps only values the program finds verbatim at their offsets, a field
+not found empty and its context the sentence around it;
+`MarkingSession` splits the text by program (`text_parts.py`: speech.py's
+sentence rule, `speech.sentence_end`, extended for headings, list items
+and paragraphs, and phrases cut at commas, semicolons, colons, dashes,
+brackets and the joining words) and scores every part against every label
+in one call, Tim's material with its knowledge states; `RetrievalSession`
+answers each free-text reference as typed entries of
+`evidence_types.NAMED_BY_LABEL` or not found; `EditingSession` gives the
+editor the script, its marked parts and the information, and the program
+applies only edits whose old text is at their offsets (`apply_edits`).
+The Team implementations come later. A session that cannot answer raises
+`SessionFailed`, the step's Error.
+Each role (`roles.py`) has its tier, effort, engines.json kind, lifetime
+and exactly its tools: the author the research tools
+(`roles.RESEARCH_TOOLS`, the research right's with `search_history` and
+`read_history`) and Read, Write, Edit, Grep and Glob; the editor the
+evidence search (`knowledge_search`) and Read, Grep and Glob; the decision
+ready and background judges the research tools and Read, Grep and Glob;
+the cares and order judges and the Theory of Mind reader nothing (their
+material is in their prompt, so nothing Tim has never seen reaches them);
+retrieval its read tools for Work items, packages, messages, workflows
+and runs and Bash for read-only `gh` and `git ls-remote` only; marking,
+classification and extraction nothing. A role's JARVIS tools are its own
+tool server (`role_mcp.py`, `python -m jarvis.role_mcp --role <role>`,
+server name `jarvis_role`), which offers only them and calls
+`/internal/tool` with the tool token naming the role; the server answers
+a role only for its own tools and as a call that is never his turn
+(`_tool_caller` `role:<name>`). Claude launches a role on JARVIS's own
+settings (`claude_provider.role_command`: `--restricted
+--strict-mcp-config --system-prompt`, its `--tools`, `--allowedTools`,
+`--permission-prompts none`, `acceptEdits` for a writer, `--add-dir` for
+what it may read; never `--safe-mode`, `--bare` or skipped permissions);
+Codex in JARVIS's own Codex home (`CodexSession._open_role`: every
+feature off but `ROLE_KEEP_FEATURES`, which leaves out `code_mode_host`,
+the lockdown, so `exec` refuses to run and a Codex role cannot read files
+or call MCP tools; the role's prompt as `baseInstructions`, personality
+none, no project docs or web search, the brain's own server switched off,
+the role's server added at launch, ephemeral for one-shot). The approved
+prompts are `role_prompts.py`, word for word, each split into its system
+prompt and its closing material, every `{...}` filled by `fill`.
+Models come from the four tiers (`model_tiers.py`, a code file: Fable /
+Astra, Opus / Sol, Sonnet / Terra, Haiku / Luna, one line a family): a
+Claude family is its alias, the latest; a Codex family the newest in the
+live `model/list` by the version in its name (`PINNED` names an older one
+in full). `pick` takes the role's brain from engines.json (the main
+brains' method, the override included) and its tier's model there, unless
+its entry names a model; the sweep (`sweep`) goes down the family newest
+to oldest, then up a tier at a time, each oldest to newest, and on to the
+next when a provider refuses one by name at start (`model_refused`); none
+is `NoModel`, the job's Error. Claude's models are the tiers' families
+(Fable among them); Codex's fallback is the sweep's first for the
+default tier (`DEFAULT_TIER`, 3) over its live list
+(`codex_provider.fallback_model`), Codex's own default when it lists
+nothing, never a fixed name.
 
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
@@ -3148,6 +3234,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   server (see "The Run Pipeline")
 - `engine_choice.py` — Which engine and model each kind of agent goes on,
   token stress and the override (see "Which engine each kind of agent goes on")
+- `sessions.py` / `roles.py` / `role_mcp.py` / `role_prompts.py` /
+  `model_tiers.py` / `text_parts.py` / `evidence_types.py` — The sessions a
+  package is made with, each role's launch and tools, a role's own tool
+  server, the approved prompts, the four tiers and the sweep, the written
+  text splitter and the evidence types (see "The sessions a package is
+  made with")
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
 - `builds.py` — The spec/brief/plan pipeline behind real, phased,
   multi-session builds (see "The Run Pipeline" above)
