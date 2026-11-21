@@ -514,7 +514,8 @@ EXEMPT = {
         "the signed package is and its message on the job record for its own sender; never a "
         "brain header, never said. Driven by tests/test_package_deck.py"),
     "package_deliver.message_of": (
-        "it writes the message that carries a package from the passed deck's own words, which "
+        "it writes the message that carries a package from the passed deck's opening slide and "
+        "the request's questions, which "
         "reaches Tim as a message in his Inbox, read by the brain walled as every message is; "
         "never a brain header, never said. Driven by tests/test_package_deck.py"),
     "server._deliver_package_run": (

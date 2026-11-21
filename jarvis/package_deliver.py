@@ -7,8 +7,12 @@ process after the deck passed (package_jobs.PRODUCERS):
                  conversation and its votes (BRIEFING); who asked
                  (`requested_by`) is in JARVIS's signature.
   write_message  the message that carries it to Tim, written by the program
-                 from the passed deck's opening slide (its title and its
-                 words, in reading order) and its questions; no sender text.
+                 (no sender text): an opening (the passed deck's opening
+                 slide, its title and its words in reading order) and the
+                 question the request gave, each of its questions' text in
+                 order. The design's opening is the passed script's opening
+                 slide; script.md has no slide format a program can read,
+                 so the deck's opening slide stands until one is decided.
   sign           with JARVIS's own key, naming who asked
                  (package_jobs.sign).
   sender_check   the finished package goes back to the sender with the
@@ -72,10 +76,11 @@ def _words(obj: dict) -> list[str]:
     return ["".join(r["text"] for r in p.get("runs") or []) for p in obj.get("paragraphs") or []]
 
 
-def message_of(source: Path) -> str:
+def message_of(source: Path, request: dict) -> str:
     """The message that carries the package to Tim (workflow.yaml deliver
-    write_message): the passed deck's opening slide, its title and its
-    words in reading order, then each question it asks him; nothing else."""
+    write_message): the opening (the passed deck's opening slide, its title
+    and its words in reading order), then the question the request gave,
+    each of its questions' text in order; nothing else."""
     deck = yaml.safe_load(source.read_text(encoding="utf-8"))
     opening = next(s for s in deck["slides"] if s.get("type") == "content")
     objects = {o["id"]: o for o in opening.get("objects") or []}
@@ -83,7 +88,7 @@ def message_of(source: Path) -> str:
     for ident in opening.get("readingOrder") or []:
         if objects.get(ident, {}).get("type") == "text":
             lines += _words(objects[ident])
-    asked = [d["question"] for d in deck.get("decisions") or []]
+    asked = [q["text"] for q in request.get("questions") or []]
     if asked:
         lines += [""] + asked
     return "\n".join(lines).strip()
@@ -106,7 +111,7 @@ def deliver(doc: dict) -> Optional[str]:
     signed = folder / built.name
     package_jobs.sign(doc, unsigned, signed)
     unsigned.unlink()
-    message = message_of(Path(noted["source"]))
+    message = message_of(Path(noted["source"]), doc.get("request") or {})
     package_jobs.noted(doc["id"], DELIVER, {"archive": str(signed), "message": message})
     package_jobs.ask_check(doc["id"], {"archive": str(signed), "folder": noted["folder"],
                                        "message": message})

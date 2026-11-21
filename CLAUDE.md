@@ -1800,8 +1800,10 @@ The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
 design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
 (`briefing_files`: research.md, prep.md, script.md, conversation.md and
 votes.json), writes the message that carries it from the passed deck's
-opening slide (its title and words in reading order) and its questions
-(`message_of`, no sender text), signs it with JARVIS's own key
+opening slide (its title and words in reading order) and the question the
+request gave, its questions' text in order (`message_of`, no sender text;
+the design's opening is the passed script's, which has no slide format a
+program reads yet), signs it with JARVIS's own key
 (`package_jobs.sign`) in the run's `package/` and sends it back to its
 sender to check (`package_jobs.ask_check`: a round of kind `check`, its one
 question `check` with `SENDER_CHECK` word for word; the server's look

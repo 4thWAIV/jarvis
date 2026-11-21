@@ -160,11 +160,13 @@ def test_the_package_is_assembled_signed_and_sent_to_its_sender_to_check(marked,
         "This is the package JARVIS made from your request, before Tim sees it. Open it and "
         "judge broadly whether it does what you asked for and what Tim needs from it. Approve "
         "it, or say what is wrong, and a new run starts with your words.")
-    # The message is the program's: the opening slide and the question.
+    # The message is the program's: the opening slide and the question the
+    # request gave (never the deck author's wording of it).
     assert check["package"]["message"] == (
         "Friday's lunch has moved\n\nFriday's lunch is now in the office, at noon.\nThis tells "
         "the team where Friday's lunch is now: nobody has to book a table.\nKeep it in the "
-        "office.\n\nWhere do we eat on Friday?")
+        "office.\n\nMerge PR 171?")
+    assert "Where do we eat on Friday?" not in check["package"]["message"]
     archive = Path(check["package"]["archive"])
     signed = package_signature.read(archive)
     assert signed.by_jarvis() and signed.requested_by == f"agent:{job['session']}"
