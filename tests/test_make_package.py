@@ -2,8 +2,8 @@
 (jarvis/make_package.py): a presentation deck built (no votes) for the
 package workflow, a hand-made package's folder with only its purpose given,
 the version worked out, an agent's package sent to Tim's package inbox with
-who sent it, and a deck or a page from the fresh author refused as a
-briefing. Content checks shared with decision packages are in
+who sent it, a working tool's page delivered, and a deck from the fresh
+author refused as a briefing. Content checks shared with decision packages are in
 tests/test_decision_package.py; the isolated JARVIS here is a stand-in."""
 from __future__ import annotations
 
@@ -69,19 +69,37 @@ def test_a_presentation_carries_the_standard_vote_asked_at_done(tmp_path):
     assert not any(s.get("waits") for s in story["slides"]), "the vote is asked at Done"
 
 
-def test_a_deck_or_a_page_from_the_fresh_author_is_refused_as_a_briefing(tmp_path, monkeypatch,
-                                                                         capsys):
-    """A deck or a page for Tim is a briefing: only the package workflow
-    makes one (make_package --start), so the fresh author's is refused and
-    nothing is delivered."""
+def test_a_deck_from_the_fresh_author_is_refused_as_a_briefing(tmp_path, monkeypatch, capsys):
+    """A deck for Tim is a briefing: only the package workflow makes one
+    (make_package --start), so the fresh author's is refused and nothing is
+    delivered."""
     from jarvis import package_author
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    for source in (write_yaml(tmp_path / "deck", presentation()), page_folder(tmp_path / "page")):
-        assert mp.main([str(source), "--work", "work-1", "--out", str(tmp_path / "out"),
-                        "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 1
-        assert package_author.BRIEFING_BY_REQUEST in capsys.readouterr().out
+    assert mp.main([str(write_yaml(tmp_path / "deck", presentation())), "--work", "work-1",
+                    "--out", str(tmp_path / "out"), "--session", "sess-1",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 1
+    assert package_author.BRIEFING_BY_REQUEST in capsys.readouterr().out
     assert delivery.calls == [], "nothing delivered, nothing reported"
+
+
+def test_a_working_tool_s_page_from_the_fresh_author_is_delivered(tmp_path, monkeypatch, capsys):
+    """Hand-made pages stay, for tools: the fresh author's page folder is
+    built, carries the vote and is delivered on its Work item."""
+    from jarvis import package_author
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    assert mp.main([str(page_folder(tmp_path / "in")), "--work", "work-1",
+                    "--out", str(tmp_path / "out"), "--project", "globe", "--session", "sess-1",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    archive = tmp_path / "out" / "globe-numbers-1.0.0.zip"
+    names = zipfile.ZipFile(archive).namelist()
+    assert "app.js" in names and "story.json" in names
+    assert json.loads(zipfile.ZipFile(archive).read("package.json"))["vote"] == "approve-package"
+    [(url, _, _)] = delivery.calls
+    assert "work=work-1" in url
+    out = capsys.readouterr().out
+    assert "Built a page package" in out and package_author.BRIEFING_BY_REQUEST not in out
 
 def test_a_deck_with_neither_slides_nor_decisions_is_refused(tmp_path, capsys):
     assert mp.main([str(write_yaml(tmp_path, {"title": "Nothing"})), "--check-only"]) == 1

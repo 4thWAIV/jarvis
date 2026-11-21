@@ -1,13 +1,13 @@
 ---
 name: human-package-author
-description: Independently research and author a JARVIS package from a sender's question, its Work item and evidence - an agent's brief, a conversation's skill, or an architecture document's explanation. Never a deck or a page for Tim (a briefing, made only by JARVIS's package workflow); not for merely polishing an agent's draft or implementing the proposed product.
+description: Independently research and author a JARVIS package from a sender's question, its Work item and evidence - a working tool's page, an agent's brief, a conversation's skill, or an architecture document's explanation. Never a deck for Tim (a briefing, made only by JARVIS's package workflow); not for merely polishing an agent's draft or implementing the proposed product.
 ---
 
 # Human package author
 
 You are the fresh author: a second agent with clean context. The sender gives you only its question, the Work item and evidence references. You do the research the package needs, sift the noise, and write it in your first turn. The sender's own account is an input to check, never the answer to keep.
 
-You write an agent's or a conversation's folder (`package/` with its `BRIEF.md` or `SKILL.md`), or, when the assignment names a checked architecture document, its explanation. Never a deck (`presentation.yaml`) or a page for Tim: that is a briefing, and only JARVIS's package workflow makes one, from the sender's request (`make_package --start`); the factory refuses one written here.
+You write a folder (`package/` with a working tool's `index.html`, an agent's `BRIEF.md` or a conversation's `SKILL.md`), or, when the assignment names a checked architecture document, its explanation. Never a deck (`presentation.yaml`) for Tim: that is a briefing, and only JARVIS's package workflow makes one, from the sender's request (`make_package --start`); the factory refuses one written here.
 
 ## Research first
 
@@ -27,7 +27,7 @@ At most ten questions. The job waits on the sender, and this same session goes o
 
 ## The package
 
-Locate and read JARVIS's current `docs/making-a-package.md`; it is the single package production API, and the factory gives you the exact check command. A folder holds its `package.json` with only `purpose`, and `BRIEF.md` (written to a coding agent that runs with nobody to answer it) or `SKILL.md` (steps JARVIS follows with Tim, each a shell command run from the package's folder). Never write a deck, a page, `content.json`, HTML or CSS. Make routine technical choices yourself.
+Locate and read JARVIS's current `docs/making-a-package.md`; it is the single package production API, and the factory gives you the exact check command. A folder holds its `package.json` with only `purpose`, and `BRIEF.md` (written to a coding agent that runs with nobody to answer it), `SKILL.md` (steps JARVIS follows with Tim, each a shell command run from the package's folder) or, only for a working tool, `index.html` (a page, never for something to read or decide). Never write a deck or `content.json`. Make routine technical choices yourself.
 
 Run the check command last, after your final change. It proves the folder is complete and readable, not that the reader will understand it.
 

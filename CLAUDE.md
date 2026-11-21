@@ -1418,13 +1418,13 @@ SVG's size read from its width and height, else its viewBox) and a story of
 about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
-`work_packages.recognise`) is for a working tool. A deck or a page for Tim
-is a briefing, and only the package workflow makes one, from a request
-(see "Package requests"; workflow.yaml deliver `only_way_in`): the old
-fresh author (`make_package --handoff` without `--start`) writes an agent's
-or conversation's folder or an architecture document's explanation, and a
-deck or a page it writes is refused (`package_author.BRIEFING_BY_REQUEST`,
-`make_package.is_page`). No package goes through a browser on its way to
+`work_packages.recognise`) is for a working tool. A deck for Tim is a
+briefing, and only the package workflow makes one, from a request (see
+"Package requests"; workflow.yaml deliver `only_way_in`): the old fresh
+author (`make_package --handoff` without `--start`) writes a hand-made
+folder (a working tool's page, an agent's brief, a conversation's skill)
+or an architecture document's explanation, and a deck it writes is refused
+(`package_author.BRIEFING_BY_REQUEST`). No package goes through a browser on its way to
 Tim: make_package builds the author's source once (no screenshot review),
 signs it with the session's key and delivers it unshown to his package
 inbox. Every unpack

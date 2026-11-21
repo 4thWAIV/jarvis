@@ -38,7 +38,7 @@ def only_engine(request, tmp_path, monkeypatch):
     session = 'SESSION_ID' if engine == 'claude' else '"thread-1"'
     resumed = "'--resume' in sys.argv" if engine == 'claude' else 'RESUMED'
     # The author writes its source in its first turn: an agent package
-    # (package/), or, to be refused, a deck or a page.
+    # or a working tool's page (package/), or, to be refused, a deck.
     action = f'''
     with open('received-prompt.txt', 'a') as output:
         output.write(text + '\\n---turn---\\n')
@@ -64,6 +64,8 @@ def only_engine(request, tmp_path, monkeypatch):
         if mode == 'page':
             with open('package/index.html', 'w') as output:
                 output.write('<p>Approve the result?</p>')
+            with open('package/explanation.md', 'w') as output:
+                output.write('# The tool\\nA page that shows the result.\\n')
         else:
             with open('package/BRIEF.md', 'w') as output:
                 output.write('Count the words.\\n')
@@ -124,7 +126,7 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     assert server['env']['JARVIS_AGENT_SESSION'] == 'origin-session'
     first = prompt.split('---turn---')[0]
     assert 'a folder package under package/' in first and pa.BRIEFING_BY_REQUEST in first, \
-        "the first turn writes the package itself; a deck or a page is no business of it"
+        "the first turn writes the package itself; a deck is no business of it"
     if only_engine == 'codex':
         log = [json.loads(line) for line in (tmp_path / 'codex.log').read_text().splitlines()]
         start = next(row for row in log if 'argv' in row)
@@ -158,17 +160,32 @@ def test_creation_cannot_bypass_author_with_source(tmp_path, monkeypatch, capsys
     assert mp.main([str(source), '--check-only']) == 0
 
 
-@pytest.mark.parametrize('mode', ['deck', 'page'])
-def test_a_deck_or_a_page_the_author_writes_is_refused_as_a_briefing(only_engine, origin_key,
-                                                                     mode, tmp_path,
-                                                                     monkeypatch, capsys):
-    """A deck or a page for Tim is a briefing: only the package workflow
-    makes one (make_package --start); nothing is delivered."""
-    monkeypatch.setenv('AUTHOR_TEST_MODE', mode)
+def test_a_deck_the_author_writes_is_refused_as_a_briefing(only_engine, origin_key, tmp_path,
+                                                          monkeypatch, capsys):
+    """A deck for Tim is a briefing: only the package workflow makes one
+    (make_package --start); nothing is delivered."""
+    monkeypatch.setenv('AUTHOR_TEST_MODE', 'deck')
     monkeypatch.setattr(dp, 'post', lambda *a, **kw: pytest.fail('a briefing delivered'))
     assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
                     '--session', 'origin-session', '--out', str(tmp_path / 'out')]) == 1
     assert pa.BRIEFING_BY_REQUEST in capsys.readouterr().out
+
+
+def test_a_working_tool_s_page_the_author_writes_is_built(only_engine, origin_key, tmp_path,
+                                                          monkeypatch, capsys):
+    """Hand-made pages stay, for tools: a page the author writes is built
+    and delivered, never refused as a briefing."""
+    monkeypatch.setenv('AUTHOR_TEST_MODE', 'page')
+    monkeypatch.setenv('AUTHOR_TEST_CONTENT', json.dumps(
+        {'purpose': 'Show the result.', 'understanding': {'index.html': 'explanation.md'}}))
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, 'post', delivery)
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin-session', '--out', str(tmp_path / 'out'),
+                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
+    out = capsys.readouterr().out
+    assert 'Built a page package' in out and pa.BRIEFING_BY_REQUEST not in out
+    assert len(delivery.calls) == 1
 
 
 def test_invalid_handoff_never_starts_engine(tmp_path, monkeypatch):

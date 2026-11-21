@@ -33,14 +33,16 @@ docs/making-a-package.md is the whole of how to use it. In short:
   asked at the package view's Done, never as a slide. Got it is retired: a
   source that declares it (`understood`), or the vote itself, is refused.
   content.json decks are no longer made (JSON_DECK_RETIRED).
-- FOLDER is a hand-made package (an agent's brief or a conversation's
-  skill). Its package.json needs only `purpose`; the rest is worked out
-  from the files there. An agent or conversation package cannot carry a
-  vote, so it may not name a Work item.
-- A deck or a page for Tim is a briefing: only JARVIS's package workflow
-  makes one, from a request (`--start`); the fresh author here writes
-  neither, and one it writes is refused (package_author.BRIEFING_BY_REQUEST;
-  workflow.yaml deliver only_way_in).
+- FOLDER is a hand-made package (a page of its own for a working tool, an
+  agent's brief or a conversation's skill). Its package.json needs only
+  `purpose`; the rest is worked out from the files there. Every page
+  carries the same vote, named in its package.json (`vote`) and asked at
+  Done. An agent or conversation package cannot carry a vote, so it may
+  not name a Work item.
+- A deck is a briefing: only JARVIS's package workflow makes one, from a
+  request (`--start`); the fresh author here writes none, and one it
+  writes is refused (package_author.BRIEFING_BY_REQUEST; workflow.yaml
+  deliver only_way_in).
 - `--document ID --revision REV` is a canonical architecture document an
   agent checked with `python -m jarvis.language_document validate`: the
   package is JARVIS's projection of that exact checked revision
@@ -258,20 +260,6 @@ def _zipper():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def is_page(folder: Path) -> bool:
-    """Whether the folder is a page package: its package.json says it runs
-    as a page, or names no way to run and the folder holds the page."""
-    try:
-        given = json.loads((folder / "package.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        given = {}
-    if not isinstance(given, dict):
-        given = {}
-    if given.get("runs"):
-        return given["runs"] == "page"
-    return "entry" in given or (folder / USUAL_FILES["page"]).is_file()
 
 
 def manifest_of(folder: Path) -> dict:
@@ -848,15 +836,16 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         made = None
 
         async def finish(authored_source, turn):
-            """Build the author's source: an agent's or conversation's
-            folder, or an architecture document's explanation. A deck or a
-            page is a briefing, made only by the package workflow, and is
-            refused (package_author.BRIEFING_BY_REQUEST). Anything refused
-            is said."""
+            """Build the author's source: a hand-made folder (a working
+            tool's page, an agent's brief, a conversation's skill), or an
+            architecture document's explanation. A deck is a briefing, made
+            only by the package workflow, and is refused
+            (package_author.BRIEFING_BY_REQUEST). Anything refused is
+            said."""
             nonlocal made, built
             if envelope is None:
                 refuse_json_deck(authored_source)
-                if is_presentation(authored_source) or is_page(authored_source):
+                if is_presentation(authored_source):
                     raise dp.Refused([package_author.BRIEFING_BY_REQUEST])
             built = True        # the author's source is taken: a refusal now is reported on --work
             if envelope is not None:

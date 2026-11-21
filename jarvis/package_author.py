@@ -3,10 +3,10 @@
 Uses the same provider sessions as the conversational runtime, with the explicit
 coding profile. The originating process owns validation and delivery afterwards.
 
-What a fresh author writes here is an agent or conversation package
-(package/ with its brief or skill) or an architecture document's
-explanation (make_package --document). A deck or a page for Tim is a
-briefing, made only by JARVIS's package workflow from a request
+What a fresh author writes here is a hand-made folder package (package/
+with a working tool's page, an agent's brief or a conversation's skill)
+or an architecture document's explanation (make_package --document). A
+deck is a briefing, made only by JARVIS's package workflow from a request
 (package_request.py, make_package --start; workflow.yaml deliver
 only_way_in), never here.
 """
@@ -33,8 +33,8 @@ SKILL = data_paths.PACKAGE_DIR / "session_skills" / "human-package-author" / "SK
 GUIDE = data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"
 # The fresh author's first words: which skill it uses.
 PROMPT_HEAD = "Use the human-package-author skill for this authorized source-only assignment."
-# Why a deck or a page is not made here (make_package refuses either).
-BRIEFING_BY_REQUEST = ("A deck or a page for Tim is a briefing, and only JARVIS's package "
+# Why a deck is not made here (make_package refuses one).
+BRIEFING_BY_REQUEST = ("A deck for Tim is a briefing, and only JARVIS's package "
                        "workflow makes one: ask for it with python -m jarvis.make_package "
                        "--start --handoff <file> --session <your session id> (docs/"
                        "making-a-package.md, Asking JARVIS for a package).")
@@ -92,8 +92,9 @@ def _assignment(document: Document | tuple[Document, ...] | None) -> str:
     documents = _documents(document)
     if not documents:
         return ("Write a folder package under package/ with package.json: an agent's brief "
-                "(BRIEF.md) or a conversation's skill (SKILL.md), as docs/making-a-package.md's "
-                "\"A folder\" says. Write no deck (presentation.yaml) and no page: "
+                "(BRIEF.md), a conversation's skill (SKILL.md) or, only for a working tool, a page "
+                "(index.html), as docs/making-a-package.md's \"A folder\" says. Write no deck "
+                "(presentation.yaml): "
                 + BRIEFING_BY_REQUEST + " Put supporting files alongside that source, and your "
                 "evidence/review notes in evidence.md. Validate with this installation’s exact "
                 "command: " + session_skill._module("make_package", cert=False)
