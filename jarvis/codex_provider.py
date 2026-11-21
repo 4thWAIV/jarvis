@@ -447,6 +447,12 @@ class CodexSession:
         self._call_names: dict[str, str] = {}
         self._info: Optional[SessionInfo] = None
         self._last_usage: dict = {}
+        # The thread's running total, and what its last turn used (input,
+        # cached input and output tokens, the total's change over the turn),
+        # for a role's record of each turn.
+        self._total_usage: dict = {}
+        self._turn_from: dict = {}
+        self.turn_usage: Optional[dict] = None
         self._reply: Optional[str] = None
         self.disabled: list[str] = []
         # When it last wrote a line (time.monotonic()): what a role
@@ -722,7 +728,9 @@ class CodexSession:
                                       str(err.get("message") if isinstance(err, dict) else err)
                                       or "the tool call failed"))
         elif method == "thread/tokenUsage/updated":
-            self._last_usage = ((params.get("tokenUsage") or {}).get("last") or {})
+            usage = params.get("tokenUsage") or {}
+            self._last_usage = usage.get("last") or {}
+            self._total_usage = usage.get("total") or self._total_usage
         elif method == "turn/completed":
             turn = params.get("turn") or {}
             error = None
@@ -734,6 +742,10 @@ class CodexSession:
                 log.error(f"codex: {name} failed in the code-mode host: {failure}")
                 self._emit(ToolFailed(name, failure))
             u, self._last_usage = self._last_usage, {}
+            self.turn_usage = {k: int(self._total_usage.get(k) or 0)
+                               - int(self._turn_from.get(k) or 0)
+                               for k in ("inputTokens", "cachedInputTokens", "outputTokens")}
+            self._turn_from = dict(self._total_usage)
             reply, self._reply = self._reply, None
             self._emit(TurnEnded(context_tokens=int(u.get("inputTokens") or 0),
                                  output_tokens=int(u.get("outputTokens") or 0), error=error,

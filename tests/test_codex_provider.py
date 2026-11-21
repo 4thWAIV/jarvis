@@ -368,3 +368,23 @@ def test_on_macos_a_configured_codex_keeps_shell_rules_and_a_found_one_is_whole(
 def test_natively_a_configured_interpreter_and_script_split_by_windows_rules():
     assert codex_provider._codex_binary(f'"{sys.executable}" "{FAKE}"') == [
         sys.executable, str(FAKE)]
+
+
+def test_a_turn_s_whole_use_is_the_thread_total_s_change_over_it(tmp_path):
+    seen = []
+    session = codex_provider.CodexSession(_config(tmp_path), lambda s, ev: seen.append(ev), None)
+
+    def usage(total, last):
+        session._handle({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {
+            "total": total, "last": last}}})
+    usage({"inputTokens": 900, "cachedInputTokens": 600, "outputTokens": 40},
+          {"inputTokens": 500, "outputTokens": 30})
+    session._handle({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+    assert session.turn_usage == {"inputTokens": 900, "cachedInputTokens": 600,
+                                  "outputTokens": 40}
+    assert seen[-1].context_tokens == 500 and seen[-1].output_tokens == 30
+    usage({"inputTokens": 2000, "cachedInputTokens": 1500, "outputTokens": 70},
+          {"inputTokens": 1100, "outputTokens": 30})
+    session._handle({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+    assert session.turn_usage == {"inputTokens": 1100, "cachedInputTokens": 900,
+                                  "outputTokens": 30}

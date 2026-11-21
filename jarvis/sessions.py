@@ -374,6 +374,11 @@ class BrainChatSession:
         self.last_turn = {"engine": self.pick.engine, "model": self.model,
                           "seconds": round(time.monotonic() - started, 1),
                           "context_tokens": self._tokens[0], "output_tokens": self._tokens[1]}
+        used = getattr(self._child, "turn_usage", None)
+        if isinstance(used, dict):
+            # The turn's whole use where the brain reports it (Codex: every
+            # request of the turn, cached input apart).
+            self.last_turn["turn_tokens"] = dict(used)
         self._on_log(f"{self.role.name}: turn answered in {self.last_turn['seconds']} s, "
                      f"context {self._tokens[0]} tokens, output {self._tokens[1]} tokens")
         answer = json_answer(said) if form is not None else None
