@@ -25,8 +25,8 @@ An engine he names for one agent ("on Codex") is his choice and is kept.
 Each role of a package's making is a kind too, by the same method (his
 word, "engines per role by the main brains' method", 2026-11-19): the
 author is `package_author`; the editor, the judges, the Theory of Mind
-reader, retrieval, marking, classification and extraction each have their
-own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
+reader, retrieval, marking, classification, extraction and summarization
+each have their own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
 (model_tiers.pick) unless its entry names one. One more setting, "run the
 judges on the other brain from the author's" (`judges_other_brain`, his
 word 2026-11-19), is ignored while JARVIS has only one brain.
@@ -52,7 +52,7 @@ log = logging.getLogger("jarvis.engines")
 
 # The roles of a package's making beside its author (sessions.py).
 ROLE_KINDS = ("editor", "judges", "theory_of_mind_reader", "retrieval", "marking",
-              "classification", "extraction")
+              "classification", "extraction", "summarization")
 KINDS = ("package_author", "run", "build", "agent_package") + ROLE_KINDS
 PICKS = ("fixed", "requester", "least_stress")
 ENGINES = brain_provider.ENGINES

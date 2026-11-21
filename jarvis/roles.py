@@ -40,6 +40,14 @@ RETRIEVAL_TOOLS: tuple[str, ...] = (
     "work_status", "work_detail", "package_inbox", "list_packages", "messages_to_him",
     "workflow_status", "run_status")
 
+# A role that reads files reads them with these, on its own tool server
+# (role_files.py: read only, inside its run folder and the folders its run
+# gives it), the same on both brains: on Claude in place of the built-in
+# Read, Grep and Glob, on Codex in place of its shell (Tim, 2026-11-20:
+# roles get only the MCP tools they need, written by us, never exec or a
+# shell, never exclusive to one brain).
+FILE_READ_TOOLS: tuple[str, ...] = ("list_package_files", "read_package_file", "search_package_files")
+
 # And GitHub, read only, for pull requests, CI runs, commits, issues and
 # branches: each a fixed `gh` lookup on its own tool server, never a shell
 # (Tim, 2026-11-20; role_lookups.py).
@@ -55,22 +63,23 @@ class Release:
     role is exclusive to one brain). Claude reads it in
     `claude_provider.role_command`, Codex in `codex_provider.role_release`.
     The folders it reads are its run's (`Launch.reads`, beside its own run
-    folder)."""
+    folder), read with its file tools (`FILE_READ_TOOLS`)."""
     builtins: tuple[str, ...] = ()  # the brain's own tools, by Claude's --tools names
     tools: tuple[str, ...] = ()     # its tools, on its own tool server
     writes: bool = False            # writes in its run folder (its prep and script)
 
     @property
-    def file_tools(self) -> tuple[str, ...]:
-        """Its tools that read or write files in its folders."""
-        return tuple(t for t in self.builtins if t in FILE_TOOLS)
+    def reads_files(self) -> bool:
+        """It has the file tools (`FILE_READ_TOOLS`) on its tool server."""
+        return any(t in FILE_READ_TOOLS for t in self.tools)
 
 
 LOCKDOWN = Release()                # what every role starts from
 
-# The built-in tools that read or write files. No role has a shell on either
-# brain (Tim, 2026-11-20).
-FILE_TOOLS = ("Read", "Write", "Edit", "Grep", "Glob")
+# The built-in tools a writer writes its run folder's files with, on Claude
+# (on Codex, its file-editing tool). No role reads a file with a built-in
+# tool, and no role has a shell, on either brain (Tim, 2026-11-20).
+WRITE_TOOLS = ("Write", "Edit")
 
 
 @dataclass(frozen=True)
@@ -87,19 +96,16 @@ class Role:
         return self.release.tools
 
 
-_READS = ("Read", "Grep", "Glob")
-
 ROLES: dict[str, Role] = {r.name: r for r in (
     # The swarm (workflow.yaml swarm; participants.md sections 6 to 8).
     Role("author", 1, "high", "package_author", LONG_LIVED,
-         Release(builtins=("Read", "Write", "Edit", "Grep", "Glob"), tools=RESEARCH_TOOLS,
-                 writes=True)),
+         Release(builtins=WRITE_TOOLS, tools=RESEARCH_TOOLS + FILE_READ_TOOLS, writes=True)),
     Role("editor", 1, "medium", "editor", LONG_LIVED,
-         Release(builtins=_READS, tools=EVIDENCE_SEARCH)),
+         Release(tools=EVIDENCE_SEARCH + FILE_READ_TOOLS)),
     Role("decision_ready_judge", 2, "medium", "judges", LONG_LIVED,
-         Release(builtins=_READS, tools=RESEARCH_TOOLS)),
+         Release(tools=RESEARCH_TOOLS + FILE_READ_TOOLS)),
     Role("background_judge", 2, "medium", "judges", LONG_LIVED,
-         Release(builtins=_READS, tools=RESEARCH_TOOLS)),
+         Release(tools=RESEARCH_TOOLS + FILE_READ_TOOLS)),
     # Given only what Tim knows and had access to, in the prompt, and no
     # tools (Tim, 2026-11-20).
     Role("cares_judge", 2, "medium", "judges", LONG_LIVED),
@@ -111,6 +117,9 @@ ROLES: dict[str, Role] = {r.name: r for r in (
     Role("marking", 3, "low", "marking", ONE_SHOT),
     Role("classification", 3, "low", "classification", ONE_SHOT),
     Role("extraction", 4, "low", "extraction", ONE_SHOT),
+    # Work item research's summaries (sessions.yaml SummarizationSession,
+    # role_tiers_v1 and effort_v1; Tim 2026-11-20): one call, no tools.
+    Role("summarization", 3, "low", "summarization", ONE_SHOT),
 )}
 
 

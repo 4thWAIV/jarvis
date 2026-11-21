@@ -100,11 +100,12 @@ export function activeBrain(cards: BrainCard[] | null): string | null {
 // ── which engine each kind of agent goes on (engine_choice.py) ───────────
 
 export type EngineKind = "package_author" | "run" | "build" | "agent_package" | "editor" | "judges"
-  | "theory_of_mind_reader" | "retrieval" | "marking" | "classification" | "extraction";
+  | "theory_of_mind_reader" | "retrieval" | "marking" | "classification" | "extraction"
+  | "summarization";
 /** Every kind, in engine_choice.KINDS's order. */
 export const ENGINE_KINDS: EngineKind[] = ["package_author", "run", "build", "agent_package",
   "editor", "judges", "theory_of_mind_reader", "retrieval", "marking", "classification",
-  "extraction"];
+  "extraction", "summarization"];
 export type Engine = "claude" | "codex";
 
 export interface EngineSetting {

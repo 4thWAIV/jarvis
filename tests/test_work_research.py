@@ -148,7 +148,9 @@ def test_the_summaries_are_written_and_only_cited_paths_kept(tmp_path):
 
 def test_a_summarization_that_cannot_be_made_leaves_what_was_looked_up(tmp_path):
     item_id = _item(tmp_path)
+    def cannot(folder):
+        raise sessions.SessionFailed("no model found")
     folder = work_research.refresh(item_id, lambda text, under, kinds: {"hits": []},
-                                   summarizer=sessions.BrainSummarizationSession)
+                                   summarizer=cannot)
     assert (folder / work_research.QUERIES).exists()
     assert not (folder / work_research.SUMMARIES).exists()

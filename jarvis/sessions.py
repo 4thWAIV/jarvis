@@ -25,7 +25,7 @@ come later).
   `BrainEditingSession`): a ChatSession with its inputs structured.
 - `SummarizationSession` (`BrainSummarizationSession`): sources summarised
   for a purpose, each summary citing the paths it rests on; one citing a
-  path not in its sources is rejected by the program.
+  path not in its source is rejected by the program.
 
 Every model is picked by model_tiers.pick (the role's tier on the brain
 engines.json gives its kind) and swept when it is not available; the
@@ -212,8 +212,9 @@ class BrainChatSession:
             return None
         path = self.folder / ".jarvis-role" / f"{self.role.name}-mcp.json"
         path.parent.mkdir(parents=True, exist_ok=True)
+        folders = (self.folder, *self.reads) if self.role.release.reads_files else ()
         body = {"mcpServers": {roles.SERVER_NAME: role_mcp.entry(self.role.name,
-                                                                  self.search_log)}}
+                                                                  self.search_log, folders)}}
         private_files.replace(path, json.dumps(body, indent=2).encode("utf-8"))
         return path
 
@@ -1278,10 +1279,12 @@ def source_paths(sources: list[Source]) -> set[str]:
 
 def cited_in_sources(summaries: list[Summary], sources: list[Source]) -> list[Summary]:
     """The summaries the program keeps: one citing a path that is not in its
-    sources is rejected (sessions.yaml SummarizationSession rules)."""
-    paths = source_paths(sources)
+    source is rejected (sessions.yaml SummarizationSession rules; the
+    prompt's "Cite only paths that appear in that source")."""
+    by_id = {s.id: source_paths([s]) for s in sources}
     kept = []
     for summary in summaries:
+        paths = by_id.get(summary.source_id, set())
         stray = [c for c in summary.cites if c not in paths]
         if stray:
             log.info("summarization: rejected the summary of %s: it cites %s, not in its "
@@ -1301,14 +1304,11 @@ class SummarizationSession(Protocol):
 
 class BrainSummarizationSession:
     """On the brain providers: tier 3 (Sonnet / Terra), one call, no tools, a
-    fixed answer format; a summary citing a path not in its sources is
-    rejected by the program (`cited_in_sources`).
-
-    Its role (the effort and engines.json entry beside the tier) and its
-    prompt are the design's to give: sessions.yaml names the tier, and
-    role-prompts.md, effort_v1 and engines.json have no summarization entry
-    yet. Until roles.ROLES and role_prompts.PROMPTS hold one, it cannot be
-    started and says so (`SessionFailed`)."""
+    fixed answer format; a summary citing a path not in its source is
+    rejected by the program (`cited_in_sources`). Its prompt is
+    role-prompts.md Summarization, its role tier 3, effort low and its own
+    engines.json entry, `summarization` (Tim, 2026-11-20). Without either
+    it cannot be started and says so (`SessionFailed`)."""
 
     FORM = _object({"summaries": _array(_object({
         "source_id": _TEXT, "text": _TEXT, "cites": _array(_TEXT)}))})
@@ -1330,7 +1330,8 @@ class BrainSummarizationSession:
             return []
         system, first = role_prompt(SUMMARIZATION, {
             "{purpose}": purpose,
-            "{sources}": "\n".join(_tag("source", s.text, id=s.id) for s in sources)})
+            "{sources: each id, then its hits with their paths}":
+                "\n".join(_tag("source", s.text, id=s.id) for s in sources)})
         session = BrainChatSession.for_role(SUMMARIZATION, system, self.folder,
                                             answer_format=self.FORM, **self.pick_args)
         answer = asyncio.run(session.once(first, self.timeout)).answer or {}

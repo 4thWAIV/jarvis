@@ -90,6 +90,7 @@ const KIND_ITEM: Record<EngineKind, SettingsItem> = {
   agent_package: "engineAgentPackage", editor: "engineEditor", judges: "engineJudges",
   theory_of_mind_reader: "engineTheoryOfMindReader", retrieval: "engineRetrieval",
   marking: "engineMarking", classification: "engineClassification", extraction: "engineExtraction",
+  summarization: "engineSummarization",
 };
 
 /** A setting as one select's value, and back. */

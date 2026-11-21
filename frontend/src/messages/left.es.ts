@@ -453,6 +453,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.brains.engines.kind.marking": "Marcado",
   "left.brains.engines.kind.classification": "Clasificación",
   "left.brains.engines.kind.extraction": "Extracción",
+  "left.brains.engines.kind.summarization": "Resumen",
   "left.brains.engines.requester": "El mismo que el agente que lo pide",
   "left.brains.engines.leastStress": "Menor presión de tokens",
   "left.brains.engines.defaultModel": "{brain}, su modelo predeterminado",

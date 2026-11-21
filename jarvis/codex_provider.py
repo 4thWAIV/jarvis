@@ -87,14 +87,12 @@ KEEP_FEATURES = frozenset({
 # (`role_release`).
 ROLE_KEEP_FEATURES = KEEP_FEATURES - {"code_mode_host"}
 
-# The permission profile a role that reads or writes files runs under,
-# measured on Codex 0.171.0: reads denied everywhere (`:root`, and the temp
-# folders, which `:minimal` would otherwise leave readable) but the
-# platform's own paths (`:minimal`, the programs its shell runs), the
-# folders it reads and its run folder; writes only in its run folder, for
-# a writer; no network. Measured: a file in a folder it reads came back,
-# one beside it "Operation not permitted", its home folder and ~/.zshrc
-# refused, a write outside its run folder refused, curl could not resolve.
+# The permission profile a writer runs under, measured on Codex 0.171.0:
+# reads denied everywhere (`:root`, and the temp folders, which `:minimal`
+# would otherwise leave readable) but the platform's own paths (`:minimal`)
+# and its run folder; writes only in its run folder; no network. Measured
+# with a shell: its home folder and ~/.zshrc refused, a write outside its
+# run folder refused, curl could not resolve.
 ROLE_PROFILE = "jarvis_role"
 # Never inherited by the Codex child: with one of these set, Codex would bill
 # an API key instead of the ChatGPT plan. The plan is the whole point.
@@ -296,20 +294,20 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
       require, Deno, fetch or import: it reaches the configured servers'
       tools and nothing else of the Mac (Codex's own clock and MCP resource
       listing aside), and apply_patch, which the read-only sandbox refuses;
-    - its file tools: the shell on, under `ROLE_PROFILE`, so a read or a
-      write is confined to its folders (measured above) and nothing reaches
-      the network; a writer gets the file-editing tool, its run folder
-      writable.
+      a role that reads files reads them with its file tools on that
+      server (role_files.py), as it does on Claude;
+    - a writer: the file-editing tool, under `ROLE_PROFILE`, so a write is
+      confined to its run folder and nothing reaches the network.
 
-    The shell is `shell_tool` alone. `unified_exec` cannot be switched off
+    The shell is `shell_tool` alone, and it stays off for every role (Tim,
+    2026-11-20: never exec or a shell; Codex's code-mode exec only as the
+    way its MCP tools are called). `unified_exec` cannot be switched off
     on Codex 0.171.0 (`--disable`, `-c features.unified_exec=false` and the
     config file all leave `codex features list` saying true) and does not
     decide the shell either: each model's catalog entry names its shell's
     kind (`shell_type: unified_exec` for every model listed). Measured in
-    real role turns: a locked-down role (shell_tool off) is offered no
-    `exec_command` at all; a role with file tools is offered `exec_command`,
-    which runs a command, but its profile refuses ~/.zshrc, a write outside
-    its run folder and the network."""
+    real role turns: a role with shell_tool off is offered no
+    `exec_command` at all."""
     release = launch.role.release
     keep = ROLE_KEEP_FEATURES
     config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
@@ -320,12 +318,9 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
         keep = keep | {"code_mode_host"}
         overrides = config_overrides(
             {roles.SERVER_NAME: _servers_of(launch.mcp_config).get(roles.SERVER_NAME)})
-    if release.file_tools:
-        keep = keep | {"shell_tool"}
+    if release.writes:
         filesystem = {":root": "deny", ":minimal": "read",
-                      ":slash_tmp": "deny", ":tmpdir": "deny"}
-        filesystem.update({str(folder): "read" for folder in launch.reads})
-        filesystem[str(run)] = "write" if release.writes else "read"
+                      ":slash_tmp": "deny", ":tmpdir": "deny", str(run): "write"}
         config["default_permissions"] = ROLE_PROFILE
         config["permissions"] = {ROLE_PROFILE: {"filesystem": filesystem,
                                                 "network": {"enabled": False}}}

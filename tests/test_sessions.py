@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from jarvis import (brain, brains_config, claude_provider, codex_provider, engine_choice,
-                    evidence_types, jarvis_mcp, model_tiers, role_lookups, role_mcp,
-                    role_prompts, roles, sessions, text_parts)
+                    evidence_types, jarvis_mcp, model_tiers, role_files, role_lookups,
+                    role_mcp, role_prompts, roles, sessions, text_parts)
 
 FAKE_CODEX = Path(__file__).parent / "fixtures" / "fake_codex.py"
 
@@ -116,33 +116,101 @@ def test_the_roles_have_his_tiers_efforts_and_tools():
         "decision_ready_judge": (2, "medium"), "background_judge": (2, "medium"),
         "cares_judge": (2, "medium"), "order_judge": (2, "medium"),
         "theory_of_mind_reader": (1, "high"), "retrieval": (3, "low"), "marking": (3, "low"),
-        "classification": (3, "low"), "extraction": (4, "low")}
+        "classification": (3, "low"), "extraction": (4, "low"), "summarization": (3, "low")}
     research = set(roles.RESEARCH_TOOLS)
     assert {"search_history", "read_history"} <= research
-    assert set(by["author"].tools) == research and by["author"].release.writes
-    assert set(by["decision_ready_judge"].tools) == research == set(by["background_judge"].tools)
-    assert by["editor"].tools == ("knowledge_search",)
+    files = set(roles.FILE_READ_TOOLS)
+    assert set(by["author"].tools) == research | files and by["author"].release.writes
+    assert by["author"].release.builtins == ("Write", "Edit"), "it reads with its file tools"
+    assert (set(by["decision_ready_judge"].tools) == research | files
+            == set(by["background_judge"].tools))
+    assert by["editor"].tools == ("knowledge_search", *roles.FILE_READ_TOOLS)
+    for name in ("author", "editor", "decision_ready_judge", "background_judge"):
+        assert by[name].release.reads_files, name
+        assert not {"Read", "Grep", "Glob", "Bash"} & set(by[name].release.builtins), name
     for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
-                 "classification", "extraction"):
+                 "classification", "extraction", "summarization"):
         assert by[name].release == roles.LOCKDOWN, name
 
 
 def test_no_role_has_a_sending_command_or_a_tool_the_brain_lacks():
     from jarvis import agent_mcp
     sending = {c.name for c in agent_mcp.COMMANDS} | {s["name"] for s in agent_mcp.PACKAGE_SPECS}
-    known = {s["name"] for s in jarvis_mcp.TOOL_SPECS} | set(role_lookups.NAMES)
+    known = ({s["name"] for s in jarvis_mcp.TOOL_SPECS} | set(role_lookups.NAMES)
+             | set(role_files.NAMES))
     for role in roles.ROLES.values():
         assert not set(role.tools) & sending, role.name
         assert set(role.tools) <= known, (role.name, set(role.tools) - known)
         assert "Bash" not in role.release.builtins, f"{role.name}: no role has a shell"
+    assert not set(role_files.NAMES) & {s["name"] for s in jarvis_mcp.TOOL_SPECS}, \
+        "a file tool is the role server's own, never a brain tool of the same name"
 
 
 def test_retrieval_has_its_read_tools_and_its_github_lookups_and_no_shell():
     retrieval = roles.role("retrieval")
-    assert retrieval.release.builtins == () and not retrieval.release.file_tools
+    assert retrieval.release.builtins == () and not retrieval.release.reads_files
     assert set(retrieval.tools) == set(roles.RETRIEVAL_TOOLS) | set(role_lookups.NAMES)
     names = {s["name"] for s in role_mcp.tool_specs("retrieval")}
     assert names == set(retrieval.tools), "its server offers every one of its tools, no more"
+
+
+def test_a_reading_role_s_server_offers_its_file_tools_over_its_folders(tmp_path):
+    run, evidence = tmp_path / "run", tmp_path / "evidence"
+    chat = sessions.BrainChatSession(
+        "editor", "R", run, reads=(evidence,),
+        pick=model_tiers.Pick("claude", "opus", 1, "fixed", ["opus"]))
+    entry = json.loads(chat._mcp_config().read_text())["mcpServers"][roles.SERVER_NAME]
+    args = entry["args"]
+    assert [args[i + 1] for i, a in enumerate(args) if a == "--read"] == [str(run), str(evidence)]
+    names = {s["name"] for s in role_mcp.tool_specs("editor")}
+    assert names == {"knowledge_search", *roles.FILE_READ_TOOLS}
+    judge = sessions.BrainChatSession(
+        "cares_judge", "R", tmp_path / "j",
+        pick=model_tiers.Pick("claude", "opus", 2, "fixed", ["opus"]))
+    assert judge._mcp_config() is None, "a role with no tools has no server"
+
+
+def _files(tmp_path):
+    run, evidence = tmp_path / "run", tmp_path / "evidence"
+    (run / ".jarvis-role").mkdir(parents=True)
+    (run / ".jarvis-role" / "editor-mcp.json").write_text("{}")
+    (run / "prep.md").write_text("# Prep\nThe move is ready.\n")
+    (evidence / "docs").mkdir(parents=True)
+    (evidence / "docs" / "notes.md").write_text("one\nThe MOVE waits on PR 180.\nthree\n")
+    (evidence / ".env").write_text("SECRET=1\n")
+    (tmp_path / "outside.md").write_text("The move, outside.\n")
+    (evidence / "link.md").symlink_to(tmp_path / "outside.md")
+    return run, evidence, role_files.Files([run, evidence])
+
+
+def test_the_file_tools_list_read_and_search_only_inside_the_role_s_folders(tmp_path):
+    run, evidence, files = _files(tmp_path)
+    ok, text = role_files.call(files, "list_package_files", {})
+    listed = json.loads(text)
+    assert ok and listed["folder"] == str(run)
+    assert [e["name"] for e in listed["entries"]] == ["prep.md"], "hidden files are not shown"
+    ok, text = role_files.call(files, "list_package_files", {"path": str(evidence)})
+    assert [e["name"] for e in json.loads(text)["entries"]] == ["docs", "link.md"]
+    ok, text = role_files.call(files, "read_package_file", {"path": "prep.md"})
+    assert ok and json.loads(text)["lines"] == ["1\t# Prep", "2\tThe move is ready."]
+    ok, text = role_files.call(files, "search_package_files", {"text": "the move", "path": str(evidence)})
+    assert ok and json.loads(text)["lines"] == [
+        f"{evidence / 'docs' / 'notes.md'}:2: The MOVE waits on PR 180."], "never through a link"
+    for path in (str(tmp_path / "outside.md"), "../outside.md", str(evidence / "link.md"),
+                 str(evidence / ".env"), ".jarvis-role/editor-mcp.json", "/etc/hosts"):
+        ok, text = role_files.call(files, "read_package_file", {"path": path})
+        assert not ok, path
+
+
+def test_a_role_s_server_answers_its_file_tools_and_refuses_another_s(tmp_path, monkeypatch):
+    run, evidence, files = _files(tmp_path)
+    monkeypatch.setattr(role_mcp, "FILES", files)
+    monkeypatch.setattr(role_mcp, "ROLE", "editor")
+    ok, text, _ = role_mcp.call("read_package_file", {"path": "prep.md"})
+    assert ok and "The move is ready." in text
+    monkeypatch.setattr(role_mcp, "ROLE", "cares_judge")
+    ok, text, _ = role_mcp.call("read_package_file", {"path": "prep.md"})
+    assert not ok and "no tool" in text
 
 
 def test_each_github_lookup_is_one_fixed_gh_argument_list_with_its_data():
@@ -239,14 +307,15 @@ def test_a_github_lookup_runs_in_the_role_s_server_never_forwarded(monkeypatch):
 
 def test_a_role_s_tool_server_offers_only_its_tools(monkeypatch):
     names = {s["name"] for s in role_mcp.tool_specs("editor")}
-    assert names == {"knowledge_search"}
+    assert names == {"knowledge_search", *roles.FILE_READ_TOOLS}
     monkeypatch.setattr(role_mcp, "ROLE", "editor")
     forwarded = []
     monkeypatch.setattr(jarvis_mcp, "_forward",
                         lambda tool, args, role="": forwarded.append((tool, role)) or
                         (True, "ok", None))
     listed = role_mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-    assert [t["name"] for t in listed["result"]["tools"]] == ["knowledge_search"]
+    assert ([t["name"] for t in listed["result"]["tools"]]
+            == ["knowledge_search", *roles.FILE_READ_TOOLS])
     ok, text, _ = role_mcp.call("work_status", {})
     assert not ok and "no tool" in text and not forwarded
     assert role_mcp.call("knowledge_search", {"query": "x"})[0]
@@ -265,17 +334,18 @@ def test_claude_launches_a_role_on_jarvis_s_own_settings_with_only_its_tools(tmp
                                        "THE ROLE")
     assert cmd[:4] == ["claude", "-p", "--restricted", "--strict-mcp-config"]
     assert cmd[cmd.index("--system-prompt") + 1] == "THE ROLE"
-    assert cmd[cmd.index("--tools") + 1] == "Read,Write,Edit,Grep,Glob"
+    assert cmd[cmd.index("--tools") + 1] == "Write,Edit", "no built-in Read, Grep or Glob"
     assert cmd[cmd.index("--permission-prompts") + 1] == "none"
     assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"
     assert cmd[cmd.index("--session-id") + 1] == "u-1"
-    assert cmd[cmd.index("--add-dir") + 1] == str(tmp_path / "evidence")
-    allowed = cmd[cmd.index("--allowedTools") + 1:cmd.index("--add-dir")]
+    assert "--add-dir" not in cmd, "it writes in its run folder only"
+    allowed = cmd[cmd.index("--allowedTools") + 1:cmd.index("--model")]
     assert roles.tool_name("search_history") in allowed
-    denied = cmd[cmd.index("--disallowedTools") + 1]
-    assert denied == f"Edit(/{(tmp_path / 'evidence').resolve()}/**)", "it writes in its run only"
+    assert {roles.tool_name(t) for t in roles.FILE_READ_TOOLS} <= set(allowed)
     reader = claude_provider.role_command("claude", _config(tmp_path, "editor"), "R")
-    assert "--disallowedTools" not in reader and "--permission-mode" not in reader
+    assert reader[reader.index("--tools") + 1] == "", "it reads with its file tools alone"
+    assert "--add-dir" not in reader and "--permission-mode" not in reader
+    assert roles.tool_name("read_package_file") in reader
     for never in ("--dangerously-skip-permissions", "--append-system-prompt", "--safe-mode",
                   "--bare", "--setting-sources", "--no-session-persistence"):
         assert never not in cmd
@@ -351,23 +421,25 @@ def test_codex_releases_a_role_from_the_lockdown_to_exactly_its_release(tmp_path
     run = tmp_path / "run"
     launch, _ = _codex_role(tmp_path, "editor")
     keep, config, overrides = codex_provider.role_release(launch, run)
-    assert {"code_mode_host", "shell_tool"} <= keep, "its tools and its file tools"
+    assert "code_mode_host" in keep and "shell_tool" not in keep, "its tools, never a shell"
     assert overrides == ["-c", 'mcp_servers.jarvis_role.command="py"',
                          "-c", 'mcp_servers.jarvis_role.default_tools_approval_mode="approve"',
                          "-c", 'mcp_servers.jarvis_role.args=["-m", "jarvis.role_mcp", '
                                '"--role", "editor"]']
     assert config["agents"] == {"enabled": False} and config["include_apply_patch_tool"] is False
+    assert "default_permissions" not in config, "a reader reads with its file tools alone"
+    author, _ = _codex_role(tmp_path, "author")
+    keep, config, _ = codex_provider.role_release(author, run)
+    assert "shell_tool" not in keep and config["include_apply_patch_tool"] is True
     profile = config["permissions"][config["default_permissions"]]
     assert profile["network"] == {"enabled": False}
     assert profile["filesystem"] == {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
-                                     ":tmpdir": "deny", str(tmp_path / "evidence"): "read",
-                                     str(run): "read"}
-    author, _ = _codex_role(tmp_path, "author")
-    keep, config, _ = codex_provider.role_release(author, run)
-    assert config["include_apply_patch_tool"] is True
-    assert config["permissions"][codex_provider.ROLE_PROFILE]["filesystem"][str(run)] == "write"
+                                     ":tmpdir": "deny", str(run): "write"}
+    for name in roles.ROLES:
+        released, _ = _codex_role(tmp_path, name)
+        assert "shell_tool" not in codex_provider.role_release(released, run)[0], name
     for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
-                 "classification", "extraction"):
+                 "classification", "extraction", "summarization"):
         locked, _ = _codex_role(tmp_path, name)
         keep, config, overrides = codex_provider.role_release(locked, run)
         assert keep == codex_provider.ROLE_KEEP_FEATURES and not overrides, name
@@ -395,12 +467,12 @@ async def test_codex_starts_a_tool_role_released_and_without_the_sandbox_flag(tm
     log = codex_log()
     start = next(e for e in log if "argv" in e and "app-server" in e["argv"])
     disabled = [start["argv"][i + 1] for i, a in enumerate(start["argv"]) if a == "--disable"]
-    assert "code_mode_host" not in disabled and "shell_tool" not in disabled
+    assert "code_mode_host" not in disabled
     assert "computer_use" in disabled, "everything else stays off"
     assert any(a.startswith("mcp_servers.jarvis_role.command=") for a in start["argv"])
+    assert "shell_tool" in disabled, "no role has a shell"
     thread = next(e["thread"] for e in log if "thread" in e)
-    assert "sandbox" not in thread, "the permission profile, never both"
-    assert thread["config"]["default_permissions"] == codex_provider.ROLE_PROFILE
+    assert "default_permissions" not in thread["config"]
 
 
 class _Brain:
@@ -467,7 +539,7 @@ async def test_a_sweep_with_no_model_left_is_no_model(monkeypatch, tmp_path):
         await chat.once("hello", 5)
     resumed = sessions.BrainChatSession("editor", "R", tmp_path, resume="s-1",
                                    pick=model_tiers.Pick("claude", "fable", 1, "fixed", ["fable"]))
-    monkeypatch.setattr(role_mcp, "entry", lambda role, log=None: {"command": "x"})
+    monkeypatch.setattr(role_mcp, "entry", lambda role, log=None, folders=(): {"command": "x"})
     fake.refused = set()
     await resumed.open()
     assert fake.configs[-1].resume == "s-1" and fake.configs[-1].role.session_id is None
@@ -863,8 +935,36 @@ def test_a_summary_citing_a_path_not_in_its_sources_is_rejected():
     assert [s.text for s in kept] == ["Ready.", "Odd.", "The plan."]
 
 
-def test_the_brain_summarization_says_what_it_lacks_until_the_design_gives_it(tmp_path):
-    assert sessions.SUMMARIZATION not in role_prompts.PROMPTS
+def test_a_summary_citing_another_source_s_path_is_rejected():
+    sources = [sessions.Source("q1", sessions.source_text([("/a.md", "A.")])),
+               sessions.Source("q2", sessions.source_text([("/b.md", "B.")]))]
+    said = [sessions.Summary("q1", "A.", ["/a.md"]),
+            sessions.Summary("q2", "Borrowed.", ["/a.md"]),
+            sessions.Summary("q3", "Nowhere.", ["/a.md"]),
+            sessions.Summary("q2", "Nothing bears on it.", [])]
+    kept = sessions.cited_in_sources(said, sources)
+    assert [s.text for s in kept] == ["A.", "Nothing bears on it."]
+
+
+def test_the_summarization_role_is_his_tier_effort_prompt_and_entry():
+    role = roles.ROLES[sessions.SUMMARIZATION]
+    assert (role.tier, role.effort, role.kind, role.lifetime) == (
+        3, "low", "summarization", roles.ONE_SHOT)
+    assert role.release == roles.LOCKDOWN
+    assert "summarization" in engine_choice.ROLE_KINDS
+    assert engine_choice.load()["kinds"]["summarization"] == {"pick": "requester"}
+    assert engine_choice.choose("summarization").engine == "claude"
+    prompt = role_prompts.PROMPTS[sessions.SUMMARIZATION]
+    assert prompt.system.startswith("(Answer in the schema given with this call.)\n\n"
+                                    "You summarise what a search found, for one purpose.")
+    assert prompt.placeholders() == ["{purpose}",
+                                     "{sources: each id, then its hits with their paths}"]
+
+
+def test_the_brain_summarization_says_what_it_lacks_without_its_prompt_or_role(
+        monkeypatch, tmp_path):
+    monkeypatch.delitem(role_prompts.PROMPTS, sessions.SUMMARIZATION)
+    monkeypatch.delitem(roles.ROLES, sessions.SUMMARIZATION)
     with pytest.raises(sessions.SessionFailed) as failed:
         sessions.BrainSummarizationSession(tmp_path)
     assert "approved prompt" in str(failed.value) and "effort" in str(failed.value)
@@ -872,10 +972,6 @@ def test_the_brain_summarization_says_what_it_lacks_until_the_design_gives_it(tm
 
 def test_the_brain_summarization_is_one_call_with_no_tools_and_checks_its_cites(
         monkeypatch, tmp_path):
-    monkeypatch.setitem(role_prompts.PROMPTS, sessions.SUMMARIZATION, role_prompts.Prompt(
-        system="Summarise for {purpose}.", material="{sources}"))
-    monkeypatch.setitem(roles.ROLES, sessions.SUMMARIZATION, roles.Role(
-        sessions.SUMMARIZATION, 3, "low", "retrieval", roles.ONE_SHOT))
     once = _Once({"summaries": [
         {"source_id": "q", "text": "Ready.", "cites": ["/a.md"]},
         {"source_id": "q", "text": "Invented.", "cites": ["/b.md"]}]})
@@ -885,6 +981,7 @@ def test_the_brain_summarization_is_one_call_with_no_tools_and_checks_its_cites(
     assert kept == [sessions.Summary("q", "Ready.", ["/a.md"])]
     assert len(once.seen) == 1 and once.seen[0]["role"] == "summarization"
     assert '<hit path="/a.md">It is ready.</hit>' in once.seen[0]["text"]
+    assert once.seen[0]["text"].startswith("Work item w1\n<source id=\"q\">")
 
 
 @pytest.mark.asyncio

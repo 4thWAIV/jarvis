@@ -12915,7 +12915,8 @@ _KIND_SAID = {"package_author": "The package author", "run": "Agent runs",
               "editor": "A package's editor", "judges": "A package's judges",
               "theory_of_mind_reader": "A package's Theory of Mind reader",
               "retrieval": "Retrieval", "marking": "Marking",
-              "classification": "Classification", "extraction": "Extraction"}
+              "classification": "Classification", "extraction": "Extraction",
+              "summarization": "Summarization"}
 
 
 def _engine_settings_said(view: dict) -> str:

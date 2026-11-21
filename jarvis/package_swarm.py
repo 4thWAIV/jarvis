@@ -136,7 +136,7 @@ class Run:
     def reads(self, name: str) -> tuple[Path, ...]:
         """The folders a participant with file tools reads beside its run
         folder: the evidence, and for the author the Work item's research."""
-        if not roles.role(name).release.file_tools:
+        if not roles.role(name).release.reads_files:
             return ()
         out = [self.place.folder]
         if name == AUTHOR and self.work_research is not None and self.work_research.is_dir():

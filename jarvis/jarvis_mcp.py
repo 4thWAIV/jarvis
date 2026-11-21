@@ -2285,7 +2285,7 @@ TOOL_SPECS = [
                 "kind": {"type": "string",
                          "enum": ["package_author", "run", "build", "agent_package", "editor",
                                   "judges", "theory_of_mind_reader", "retrieval", "marking",
-                                  "classification", "extraction"]},
+                                  "classification", "extraction", "summarization"]},
                 "pick": {"type": "string", "enum": ["fixed", "requester", "least_stress"],
                          "description": ("fixed: the engine and model given; requester: the "
                                          "same engine as the agent asking; least_stress: the "

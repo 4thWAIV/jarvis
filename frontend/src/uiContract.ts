@@ -3318,6 +3318,7 @@ export const UI_CONTRACT = {
         "engineMarking",
         "engineClassification",
         "engineExtraction",
+        "engineSummarization",
         "engineOverride",
         "engineJudgesOtherBrain",
         "weatherLocationLabel",

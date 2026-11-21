@@ -64,7 +64,7 @@
               "serverPort", "serverUptime", "knowledgeEnabled", "knowledgeModel", "knowledgeDetails", "knowledgeFolders",
               "enginePackageAuthor", "engineRun", "engineBuild", "engineAgentPackage", "engineEditor",
               "engineJudges", "engineTheoryOfMindReader", "engineRetrieval", "engineMarking",
-              "engineClassification", "engineExtraction", "engineOverride", "engineJudgesOtherBrain",
+              "engineClassification", "engineExtraction", "engineSummarization", "engineOverride", "engineJudgesOtherBrain",
               "weatherLocationLabel", "weatherLatitude", "weatherLongitude", "weatherUnit", "defaultBrowser",
               "muteMicDuringSpeech", "sttModelDir", "brainEffort", "brainTurnTimeout", "brainContextBudget",
               "claudePath", "codexPath", "usagePoll", "runTimeoutSec", "runIdleSec", "skipPermissions",

@@ -475,6 +475,7 @@ export const leftEn = {
   "left.brains.engines.kind.marking": "Marking",
   "left.brains.engines.kind.classification": "Classification",
   "left.brains.engines.kind.extraction": "Extraction",
+  "left.brains.engines.kind.summarization": "Summarization",
   "left.brains.engines.requester": "Same as the agent asking",
   "left.brains.engines.leastStress": "Least token stress",
   "left.brains.engines.defaultModel": "{brain}, its default model",

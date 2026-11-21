@@ -388,8 +388,10 @@ def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
     locked down: no built-in tool, no server, no command, nothing asked of
     anyone (`--permission-prompts none`), then released to exactly its
     `roles.Release` (Tim, 2026-11-20, the same definition Codex reads): its
-    built-in tools, its own tool server's tools, the folders it reads and,
-    for a writer, edits in its run folder; no shell. Never
+    own tool server's tools (a file is read with its file tools there,
+    role_files.py, never the built-in Read, Grep or Glob) and, for a
+    writer, Write and Edit in its run folder alone (no --add-dir); no
+    shell. Never
     `--safe-mode` (it drops the role's tool server) or `--bare` (it drops
     the subscription login)."""
     launch = c.role
@@ -411,15 +413,6 @@ def role_command(claude: str, c: "BrainConfig", instructions: str) -> list[str]:
         allowed = [roles.tool_name(tool) for tool in release.tools]
     if allowed:
         cmd += ["--allowedTools", *allowed]
-    for folder in launch.reads:
-        cmd += ["--add-dir", str(folder)]
-    if release.writes and launch.reads:
-        # A writer writes in its run folder only: the folders it reads are
-        # read only (measured: `acceptEdits` writes in every --add-dir).
-        # An Edit rule covers every file-editing tool; `//` is an absolute
-        # path.
-        cmd += ["--disallowedTools",
-                *(f"Edit(/{Path(folder).resolve()}/**)" for folder in launch.reads)]
     if c.model:
         cmd += ["--model", c.model]
     if c.effort:
