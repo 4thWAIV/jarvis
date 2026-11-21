@@ -20,19 +20,41 @@ from fastapi.testclient import TestClient
 from jarvis import (make_package, model_tiers, package_deck as pd, package_deliver as pdl,
                     package_jobs as pj, package_mark, package_signature, package_swarm as ps,
                     presentation_proof, sessions)
+from jarvis.knowledge.embedder import FakeEmbedder
 from tests.test_agent_keys import keygen  # noqa: F401
 from tests.test_package_gather import checkout, gh, indexing, transcript  # noqa: F401
-from tests.test_package_swarm import Marking, Plan, _chat_factory, marked  # noqa: F401
+from tests.test_package_swarm import (Marking, Plan, _chat_factory, marked,  # noqa: F401
+                                      script_of)
 
 
 def deck_with_his_words() -> dict:
-    """The example deck, its opening quoting Tim in his style."""
+    """The example deck, its opening quoting Tim in his style and saying his
+    words in its narration."""
     deck = copy.deepcopy(make_package.EXAMPLE)
     deck["slides"][0]["objects"][0]["paragraphs"].append(
         {"id": "opening-words-his", "role": "paragraph",
          "runs": [{"id": "opening-words-his-1", "text": "Keep it in the office.",
                    "emphasis": "his-words"}]})
+    deck["slides"][0]["narration"][0]["say"] += " In your words: keep it in the office."
     return deck
+
+
+def deck_script() -> dict:
+    """The passed script the example deck is written from: one script slide
+    to each deck slide, by id, Tim's words quoted on the opening."""
+    opening, changed, where = (script_of(words, "files/situation.md", sid)["slides"][0]
+                               for words, sid in (
+                                   ("Friday's lunch is now in the office, at noon.", "opening"),
+                                   ("Food is brought in.", "what-changed"),
+                                   ("Where do we eat on Friday?", "where")))
+    opening["title"] = "Friday's lunch has moved"
+    opening["on_screen"].append({"kind": "his_words", "text": "Keep it in the office.",
+                                 "source": "jarvis/tim.md", "position": "3-25", "path": "",
+                                 "rows": []})
+    where["decision"] = {"id": "where-to-eat", "question": "Where do we eat on Friday?",
+                         "options": [{"id": "office", "name": "Office", "says": "In."},
+                                     {"id": "out", "name": "Out", "says": "Out."}]}
+    return {"version": "script/1", "slides": [opening, changed, where]}
 
 
 class DeckPlan(Plan):
@@ -40,6 +62,7 @@ class DeckPlan(Plan):
 
     def __init__(self, run_folder: Path):
         super().__init__(run_folder)
+        self.script = deck_script()
         self.decks: list[dict] = [deck_with_his_words()]
 
     def answer(self, name, text, form):
@@ -61,6 +84,9 @@ def deck_plan(marked, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ps, "PICK", lambda kind, tier, **kw: model_tiers.Pick(
         "claude", {1: "fable", 2: "opus"}.get(tier, "sonnet"), tier, "test", ["x"]))
     monkeypatch.setattr(package_mark, "MARKING", lambda doc: Marking())
+    embedder = FakeEmbedder(64)
+    monkeypatch.setattr(ps, "EMBED", lambda texts: [list(v) for v in
+                                                    embedder.embed(texts, "query")])
     Marking.calls = []
     return plan
 
@@ -83,17 +109,24 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     # for word and a complete example.
     told = deck_plan.sent["author"][-1]
     assert "Now write the deck from the passed script alone" in told
+    assert "one slide of the deck, in the same order and with the same id" in told
+    assert '<script file="script.yaml">version: script/1' in told
     assert "emphasis his-words" in told and "very bright, vibrant way" in told
     assert pd.deck_format() in told and "## A deck: one presentation.yaml" in told
     assert "<example file=\"presentation.yaml\">" in told
-    # JARVIS's own turn: the layout data beside the passed script, and the
-    # questions; no browser.
+    # JARVIS's own turn: slide by slide, each script slide beside its deck
+    # slide's layout data, and the questions; no browser. His words are the
+    # program's check: no vote is asked of them.
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM]
-    assert "<script file=\"script.md\">Slide 1. Pull request 171" in turn["text"]
     assert all(f'<question id="{q.id}">' in turn["text"] for q in pd.DECK_QUESTIONS)
-    layout = json.loads(turn["text"].split('<layout file=".jarvis/layout-proof.json">')[1]
-                        .split("</layout>")[0])
+    assert [q.id for q in pd.DECK_QUESTIONS] == ["deck-says", "deck-visual", "deck-narration",
+                                                 "deck-readable"]
+    slides = turn["text"].split('<slide id="')[1:]
+    assert [s.split('"')[0] for s in slides] == ["opening", "what-changed", "where"]
+    assert '<script file="script.yaml">id: opening' in slides[0]
+    layout = [json.loads(s.split('<layout file=".jarvis/layout-proof.json">')[1]
+                         .split("</layout>")[0]) for s in slides]
     opening = layout[0]
     assert opening["layout"] == "opening" and opening["title_px"]["smallest"] >= 13
     words = opening["objects"][0]
@@ -134,6 +167,27 @@ def test_what_does_not_build_goes_back_to_the_author(marked, deck_plan):
     assert pj.get(doc["id"])["deck"]["rounds"] == 2
 
 
+def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
+    # write_deck: one script slide to one deck slide; his_words_check: each
+    # quote of his drawn in his style and said in the narration (no vote).
+    plain = deck_with_his_words()
+    plain["slides"][0]["objects"][0]["paragraphs"][-1]["runs"][0]["emphasis"] = "normal"
+    plain["slides"][0]["narration"][0]["say"] = "This tells you where lunch is."
+    reordered = deck_with_his_words()
+    reordered["slides"][0], reordered["slides"][1] = reordered["slides"][1], \
+        reordered["slides"][0]
+    deck_plan.decks = [plain, reordered, deck_with_his_words()]
+    doc = _passed(marked)
+    assert pd.deck(doc) is None
+    review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
+    said = [m["text"] for m in review["conversation"] if m["from"] == pd.PROGRAM]
+    assert "does not draw Tim's words 'Keep it in the office.' in the his-words style" in said[0]
+    assert "narration does not say Tim's words 'Keep it in the office.'" in said[0]
+    assert "the script's are ['opening', 'what-changed', 'where']" in said[1]
+    assert pj.get(doc["id"])["deck"]["rounds"] == 3
+    assert not [v for v in review["votes"] if "his" in v["question"]]
+
+
 def test_a_deck_not_proven_in_three_rounds_sends_the_sender_the_findings(marked, deck_plan):
     deck_plan.votes = {"deck-says": ["no"] * 30}
     doc = _passed(marked)
@@ -162,16 +216,16 @@ def test_the_package_is_assembled_signed_and_sent_to_its_sender_to_check(marked,
         "it, or say what is wrong, and a new run starts with your words.")
     # The message is the program's: the opening slide and the question the
     # request gave (never the deck author's wording of it).
+    # The message is slide 1 of the passed script, then the question.
     assert check["package"]["message"] == (
-        "Friday's lunch has moved\n\nFriday's lunch is now in the office, at noon.\nThis tells "
-        "the team where Friday's lunch is now: nobody has to book a table.\nKeep it in the "
-        "office.\n\nMerge PR 171?")
+        "Friday's lunch has moved\nFriday's lunch is now in the office, at noon.\nKeep it in "
+        "the office.\n\nMerge PR 171?")
     assert "Where do we eat on Friday?" not in check["package"]["message"]
     archive = Path(check["package"]["archive"])
     signed = package_signature.read(archive)
     assert signed.by_jarvis() and signed.requested_by == f"agent:{job['session']}"
     with zipfile.ZipFile(archive) as z:
         names = set(z.namelist())
-    assert {f".jarvis/briefing/{n}" for n in ("research.md", "prep.md", "script.md",
+    assert {f".jarvis/briefing/{n}" for n in ("research.md", "prep.md", "script.yaml",
                                               "conversation.md", "votes.json")} <= names
     assert pj.to_tell_sender() == [job]

@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 
 from jarvis import (model_tiers, package_evidence as pe, package_jobs as pj, package_mark,
-                    package_swarm as ps, research_log, role_mcp, roles, sessions, text_parts)
+                    package_script, package_swarm as ps, research_log, role_mcp, roles, sessions,
+                    text_parts)
+from jarvis.knowledge.embedder import FakeEmbedder
 from tests.test_package_gather import checkout, gh, indexing, transcript  # noqa: F401
 from tests.test_package_mark import Roles, _gathered
 
@@ -87,7 +89,7 @@ class Plan:
         self.votes: dict[str, list[str]] = {}      # question id prefix -> votes in order
         self.asks: list[str] = []                   # an enough no's ask, per vote
         self.changed: dict[str, list[str]] = {}     # question id prefix -> reopen judgements
-        self.script = "Slide 1. PR 171 moves every Work item (files/situation.md)."
+        self.script = script_of("PR 171 moves every Work item.", "files/situation.md")
         self.preps: list[str] = ["Does Tim care: yes."]   # the prep each round, in order
 
     def vote(self, name, qid):
@@ -98,14 +100,14 @@ class Plan:
 
     def answer(self, name, text, form):
         self.sent.setdefault(name, []).append(text)
+        if form is not None and "script" in form["properties"]:
+            assert name == "author" and "message" in form["properties"]
+            prep = self.preps.pop(0) if len(self.preps) > 1 else self.preps[0]
+            (self.folder / ps.PREP_MD).write_text(prep)
+            return {"message": "author speaks", "call_vote": [], "script": self.script}
         if form is sessions.TURN_FORM:
-            if name == "author":
-                if "Write your research in" in text:
-                    (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")
-                else:
-                    prep = self.preps.pop(0) if len(self.preps) > 1 else self.preps[0]
-                    (self.folder / ps.PREP_MD).write_text(prep)
-                    (self.folder / ps.SCRIPT_MD).write_text(self.script)
+            if name == "author" and "Write your research in" in text:
+                (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")
             return {"message": f"{name} speaks", "call_vote": []}
         if form is sessions.REOPEN_FORM:
             qid = re.search(r'Did the change touch what it was about\?\n<question id="([^"]+)"',
@@ -122,12 +124,11 @@ class Plan:
                 out["ask_sender"] = self.asks.pop(0) if said == "no" and self.asks else ""
             return out
         assert name == "editor" and "call_vote" in form["properties"]
-        script = (self.folder / ps.SCRIPT_MD).read_text()
-        at = script.index("PR 171")
-        return {"edits": [{"start": at, "end": at + 6, "old": "PR 171", "new": "Pull request 171",
+        return {"edits": [{"slide": "opening", "field": "on_screen[0].text", "start": 0,
+                           "end": 6, "old": "PR 171", "new": "Pull request 171",
                            "reason": "unexplained-term", "source": ""},
-                          {"start": 0, "end": 3, "old": "XYZ", "new": "", "reason": "x",
-                           "source": ""}],
+                          {"slide": "opening", "field": "title", "start": 0, "end": 3,
+                           "old": "XYZ", "new": "", "reason": "x", "source": ""}],
                 "sent_back": [], "call_vote": []}
 
 
@@ -156,15 +157,27 @@ def _chat_factory(plan: Plan):
     return Chat
 
 
+def script_of(words: str, source: str, slide: str = "opening") -> dict:
+    """A one-slide script/1 whose words cite `source`."""
+    return {"version": "script/1", "slides": [{
+        "id": slide, "title": "The move", "on_screen": [
+            {"kind": "text", "text": words, "source": "", "position": "", "path": "",
+             "rows": []}],
+        "narration": "It moves every item.",
+        "facts": [{"fact": words, "source": source, "position": "1-40"}],
+        "answers": ["merge-171"], "decision": None}]}
+
+
 class Marking:
     calls: list[tuple[str, list]] = []
 
-    async def mark(self, text, labels, knowledge, timeout):
-        Marking.calls.append((text, knowledge))
-        return [{"id": s.id, "segment": s.text, "kind": s.kind,
+    async def mark_slides(self, units, context, labels, knowledge, timeout):
+        Marking.calls.append((context, knowledge))
+        return [{"id": f"{u.slide}/{u.field}/{s.id}", "segment": s.text, "kind": s.kind,
+                 "slide": u.slide, "field": u.field,
                  "position": {"start": s.start, "end": s.end}, "within": s.within,
                  "scores": {label.name: 0.0 for label in labels}}
-                for s in text_parts.split(text)]
+                for u in units for s in text_parts.split(u.text)]
 
 
 @pytest.fixture
@@ -183,6 +196,9 @@ def plan(marked, monkeypatch):
     monkeypatch.setattr(ps, "PICK", lambda kind, tier, **kw: model_tiers.Pick(
         "claude", {1: "fable", 2: "opus"}.get(tier, "sonnet"), tier, "test", ["x"]))
     monkeypatch.setattr(package_mark, "MARKING", lambda doc: Marking())
+    embedder = FakeEmbedder(64)
+    monkeypatch.setattr(ps, "EMBED", lambda texts: [list(v) for v in
+                                                    embedder.embed(texts, "query")])
     Marking.calls = []
     return plan
 
@@ -244,8 +260,9 @@ def test_a_round_passes_and_the_script_s_hits_are_recorded_used(marked, plan):
                          "background_judge", "order_judge", "theory_of_mind_reader"]
     # The editor's edit applied where its old text is exactly there; the one
     # that is not refused; the marked script is the edited one.
-    assert (folder / ps.SCRIPT_MD).read_text().startswith("Slide 1. Pull request 171 moves")
-    assert Marking.calls[-1][0].startswith("Slide 1. Pull request 171")
+    script = package_script.read(folder / ps.SCRIPT)
+    assert script["slides"][0]["on_screen"][0]["text"] == "Pull request 171 moves every Work item."
+    assert "Pull request 171" in Marking.calls[-1][0], "the edited script is marked"
     result = json.loads((folder / ps.RESULT).read_text())
     assert result["result"] == "passed" and result["rounds"] == 1
     voters = {v["participant"] for v in result["votes"] if v["question"] == "cares"}
@@ -268,59 +285,91 @@ def test_each_participant_is_given_exactly_its_share(marked, plan):
     for name in ("decision_ready_judge", "background_judge"):
         assert secret in first[name] and "Does Tim care: yes." in first[name], "with the prep"
         assert "knowledge_search under that path" in first[name]
-    assert "Slide 1." in first["theory_of_mind_reader"], "the reader reads the script"
+    assert "PR 171 moves every Work item." in first["theory_of_mind_reader"], \
+        "the reader reads the script"
     # The editor's information is everything, each with its state, and the prep.
     assert secret in first["editor"] and "<prep>Does Tim care: yes.</prep>" in first["editor"]
-    # The cares judge is told which parts are new to him: the one sentence
-    # cites a file he probably does not know.
-    assert ('<part id="s1">Slide 1. Pull request 171 moves every Work item '
-            '(files/situation.md).</part>') in first["cares_judge"]
+    # The cares judge is told which parts are new to him: its slide cites a
+    # file he probably does not know.
+    assert ('<part id="opening/on_screen[0].text/s1">Pull request 171 moves every Work '
+            'item.</part>') in first["cares_judge"]
     # The script is marked with what Tim knows, never the words of what he does not.
     knowledge = Marking.calls[0][1]
     assert all(k.text == "" for k in knowledge if k.state == pe.PROBABLY_NOT)
 
 
-def test_new_to_him_is_worked_out_from_the_knowledge_states(marked, plan):
+def test_new_to_him_is_worked_out_slide_by_slide_from_the_knowledge_states(marked, plan):
     run = ps._run(pj.get(marked["id"]), ps.SWARM)
     states = {r.stored: r.knowledge_state for r in run.rows if r.stored}
     assert states["jarvis/tim.md"] == pe.KNOWS
-    parts = [{"id": "s1", "kind": "sentence", "segment": "He asked (jarvis/tim.md)."},
-             {"id": "s2", "kind": "sentence", "segment": "CI failed (retrieved/ci_run-99881.md)."},
-             {"id": "s3", "kind": "sentence", "segment": "Nothing cited."},
-             {"id": "s3p1", "kind": "phrase", "segment": "Nothing"}]
-    assert [p["id"] for p in ps.new_to_him(run, parts)] == ["s2", "s3"]
+    script = {"version": "script/1", "slides": [
+        script_of("He asked.", "jarvis/tim.md", "asked")["slides"][0],
+        script_of("CI failed.", "retrieved/ci_run-99881.md", "failed")["slides"][0],
+        script_of("Nothing cited.", "unanswered", "nothing")["slides"][0]]}
+    package_script.write(run.script, script)
+    parts = [{"id": "a", "kind": "sentence", "slide": "asked", "segment": "He asked."},
+             {"id": "f", "kind": "sentence", "slide": "failed", "segment": "CI failed."},
+             {"id": "n", "kind": "sentence", "slide": "nothing", "segment": "Nothing cited."},
+             {"id": "np", "kind": "phrase", "slide": "nothing", "segment": "Nothing"}]
+    assert [p["id"] for p in ps.new_to_him(run, parts)] == ["f", "n"]
 
 
 def test_the_sender_is_asked_what_research_could_not_answer(marked, plan):
     plan.votes = {"enough-": ["no", "no", "yes", "no", "no", "yes", "yes"]}
-    plan.asks = ["When did CI last pass?", "When did CI last pass?", "Who reviews?"]
+    plan.asks = ["Who reviews it?", "When did CI last pass?", "When did the CI last pass?"]
     assert _research_and_swarm(marked) == pj.WAITING
     job = pj.get(marked["id"])
     assert job["state"] == pj.WAITING and pj.question_rounds(job) == 1
-    assert job["rounds"][-1]["questions"] == [
-        {"id": "enough-merge-171-1", "question": "When did CI last pass?"},
-        {"id": "enough-merge-171-2", "question": "Who reviews?"}]
+    asked = job["rounds"][-1]["questions"]
+    # Grouped by meaning into one list: the two CI questions one group, kept
+    # once, first because two voters asked it; the sender answers each once.
+    assert [(q["id"], q["voters"]) for q in asked] == [("ask-1", 2), ("ask-2", 1)]
+    assert asked[0]["question"] in ("When did CI last pass?", "When did the CI last pass?")
+    assert asked[1]["question"] == "Who reviews it?"
+    assert [a["ask"] for a in asked[0]["asked"]] == ["When did CI last pass?",
+                                                     "When did the CI last pass?"]
     kept = json.loads((Path(marked["folder"]) / ps.STATE).read_text())
     assert kept["swarm"]["rounds"] == 1, "the round that asked is one of the three"
 
-    pj.answer(marked["id"], {"enough-merge-171-1": "Tuesday, run 99880."},
-              session=job["session"])
+    pj.answer(marked["id"], {"ask-1": "Tuesday, run 99880."}, session=job["session"])
     assert (pe.place_of(marked).folder / "sender-answers/1.md").is_file()
     plan.opened.clear()
     assert ps.swarm(pj.get(marked["id"])) is None
     assert ("author", "session-author") in plan.opened, "each session resumed"
     conversation = json.loads((Path(marked["folder"]) / ps.RESULT).read_text())["conversation"]
     said = [m for m in conversation if m["from"] == "sender"]
-    assert said == [{"from": "sender", "text": '<answer id="enough-merge-171-1" question="When '
-                                               'did CI last pass?">Tuesday, run 99880.</answer>'}]
+    assert said == [{"from": "sender", "text": f'<answer id="ask-1" question="{asked[0]["question"]}">'
+                                               'Tuesday, run 99880.</answer>'}]
     assert json.loads((Path(marked["folder"]) / ps.RESULT).read_text())["rounds"] == 2
+
+
+def test_questions_are_grouped_by_meaning_one_wording_each_most_asked_first():
+    # swarm ask_sender merged (Tim 2026-11-20): grouped by the engine's
+    # embeddings, one wording kept a group, ordered by how many voters asked.
+    def unit(*xs):
+        n = sum(x * x for x in xs) ** 0.5
+        return [x / n for x in xs]
+    asks = [{"question": "enough-a", "voter": "editor", "ask": "Who reviews?"},
+            {"question": "enough-a", "voter": "author", "ask": "When did CI pass?"},
+            {"question": "enough-b", "voter": "cares_judge", "ask": "When was CI green?"},
+            {"question": "enough-b", "voter": "editor", "ask": "Last green CI run?"},
+            {"question": "enough-b", "voter": "author", "ask": "Who reviews it?"}]
+    vectors = [unit(0, 0, 1), unit(1, 0.10, 0), unit(1, 0.12, 0), unit(1, 0.30, 0.0),
+               unit(0, 0.05, 1)]
+    groups = ps.group_by_meaning(asks, vectors)
+    assert [(g["id"], g["voters"], len(g["asked"])) for g in groups] == [
+        ("ask-1", 3, 3), ("ask-2", 2, 2)]
+    assert groups[0]["question"] == "When was CI green?", "the wording nearest the rest"
+    assert groups[1]["question"] == "Who reviews?", "on a tie, the first asked"
+    apart = ps.group_by_meaning(asks[:2], [unit(1, 0), unit(0.8, 0.6)])
+    assert len(apart) == 2, f"a cosine of 0.8 is under {ps.SAME_MEANING}: two meanings"
 
 
 def test_asking_stops_once_answers_change_nothing_still_open(marked, plan):
     plan.votes = {"enough-": ["no"] * 30}
     plan.asks = ["What broke?"] * 30
     assert _research_and_swarm(marked) == pj.WAITING
-    pj.answer(marked["id"], {"enough-merge-171-1": "Nothing."},
+    pj.answer(marked["id"], {"ask-1": "Nothing."},
               session=pj.get(marked["id"])["session"])
     assert ps.swarm(pj.get(marked["id"])) == pj.WAITING
     job = pj.get(marked["id"])
@@ -336,7 +385,6 @@ def test_asking_stops_once_answers_change_nothing_still_open(marked, plan):
 def test_the_prep_the_author_revises_reaches_the_judges_given_it_each_round(marked, plan):
     plan.votes = {"order": ["no"] * 5}
     plan.preps = ["Prep one.", "Prep two.", "Prep three."]
-    plan.script = "Slide 1. PR 171 moves every Work item (files/situation.md)."
     _research_and_swarm(marked)
     for name in ("decision_ready_judge", "background_judge"):
         turns = [t for t in plan.sent[name] if "A vote is called" not in t

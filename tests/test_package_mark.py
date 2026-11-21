@@ -146,7 +146,8 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
         assert by_file[stored]["extraction"] == package_mark.NO_PROSE_FACTS
         assert not [f for f in by_file[stored]["facts"] if f["by"] == "extraction"]
 
-    # mark_prose: one call a file; every part scored against all 28 labels;
+    # mark_prose: in batches small enough to be answered whole (sessions.yaml
+    # MarkingSession batches); every part scored against all 28 labels;
     # each part's segment is the file's own characters at its position.
     situation = by_file["files/situation.md"]["parts"]
     assert situation and all(set(p["scores"]) == set(briefing_labels.NAMES) for p in situation)
@@ -156,7 +157,9 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
     # Only prose files are marked: Tim's record, the sender's words, docs,
     # a PR's description; never the prose parts of a log or a transcript.
     marked_files = [g["text"] for g in roles.given["marking"]]
-    assert len(marked_files) == sum(1 for m in by_file.values() if m["parts"])
+    assert len(marked_files) > sum(1 for m in by_file.values() if m["parts"]), \
+        "a long file goes in more than one batch"
+    assert all(g.count("<part ") <= sessions.BATCH_PARTS for g in marked_files)
     assert {s for s, m in by_file.items() if m["parts"]} == \
         {s for s, m in by_file.items() if m["prose_file"]} >= {
             "files/situation.md", "jarvis/tim.md", "handoff.json", "retrieved/pr-171.md"}

@@ -664,6 +664,76 @@ async def test_marking_scores_every_part_against_every_label(monkeypatch, tmp_pa
         await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
 
 
+def _scores_for(text, names=("background", "filler")):
+    """A marking answer scoring exactly the parts a call was given."""
+    import re as _re
+    ids = _re.findall(r'<part id="([^"]+)"', text)
+    return {"scores": [{"id": i, "scores": {n: 0.1 for n in names}} for i in ids]}
+
+
+@pytest.mark.asyncio
+async def test_marking_goes_in_batches_of_whole_sentences_each_given_the_whole_file(
+        monkeypatch, tmp_path):
+    # sessions.yaml MarkingSession batches (Tim 2026-11-20): one call per
+    # file failed on real models; each batch is given the whole file and
+    # scores only its own parts, every part against every label.
+    monkeypatch.setattr(sessions, "BATCH_PARTS", 4)
+    text = " ".join(f"Part {n} broke, so we fixed it." for n in range(1, 5))
+    labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
+    once = _Once(_scores_for)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    marked = await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
+    assert [m["id"] for m in marked] == [s.id for s in text_parts.split(text)]
+    assert len(once.seen) == 4, "three parts a sentence, at most four parts a batch"
+    for call in once.seen:
+        assert f"<text>{text}</text>" in call["text"], "each batch is given the whole file"
+        assert call["text"].count("<part ") == 3
+    once.seen.clear()
+    await sessions.BrainMarkingSession(tmp_path).mark(
+        text, labels, [sessions.Known(text, sessions.KNOWS, "notes.md")], 5)
+    assert "<text>" not in once.seen[0]["text"], "given once, among Tim's material"
+
+
+@pytest.mark.asyncio
+async def test_a_batch_not_answered_whole_is_halved_and_asked_again(monkeypatch, tmp_path):
+    monkeypatch.setattr(sessions, "BATCH_PARTS", 40)
+    text = "One broke. Two broke. Three broke. Four broke."
+    labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
+
+    def answer(sent):
+        found = _scores_for(sent)
+        return found if len(found["scores"]) <= 2 else {"scores": found["scores"][:1]}
+    once = _Once(answer)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    marked = await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
+    assert len(marked) == 4 and [c["text"].count("<part ") for c in once.seen] == [4, 2, 2]
+    once.answer = {"scores": []}
+    with pytest.raises(sessions.SessionFailed):
+        await sessions.BrainMarkingSession(tmp_path).mark("One broke.", labels, [], 5)
+
+
+@pytest.mark.asyncio
+async def test_a_script_is_marked_slide_by_slide_with_the_whole_script(monkeypatch, tmp_path):
+    from jarvis import package_script
+    script = _script(words="Fix the store.")
+    script["slides"].append({**_script()["slides"][0], "id": "second",
+                             "title": "What it costs."})
+    units = package_script.units(script)
+    labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
+    once = _Once(_scores_for)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    whole = package_script.dump(script)
+    marked = await sessions.BrainMarkingSession(tmp_path).mark_slides(units, whole, labels, [],
+                                                                      5)
+    assert len(once.seen) == 2, "one batch a slide: no batch holds two slides' words"
+    assert all(f"<text>{whole}</text>" in c["text"] for c in once.seen)
+    assert "second" not in once.seen[0]["text"].split("</text>")[1]
+    words = next(m for m in marked if m["segment"] == "Fix the store.")
+    assert words["slide"] == "opening" and words["field"] == "on_screen[1].text"
+    assert words["id"] == "opening/on_screen[1].text/s1" and words["position"] == {
+        "start": 0, "end": 14}
+
+
 @pytest.mark.asyncio
 async def test_classification_adds_background_and_takes_no_states(monkeypatch, tmp_path):
     once = _Once({"scores": [{"item": "f1", "scores": {"q1": 0.9, "background": 0.1}}]})
@@ -806,11 +876,33 @@ async def test_a_participant_calls_the_vote_when_its_discussion_settles():
         "nothing is written in a participant's name but its own words"
 
 
+def _script(title="It broke.", narration="It broke on Tuesday.", words="", question="q1"):
+    on_screen = [{"kind": "text", "text": "It broke.", "source": "", "position": "",
+                  "path": "", "rows": []}]
+    if words:
+        on_screen.append({"kind": "his_words", "text": words, "source": "tim.md",
+                          "position": "1-20", "path": "", "rows": []})
+    return {"version": "script/1", "slides": [{
+        "id": "opening", "title": title, "on_screen": on_screen, "narration": narration,
+        "facts": [{"fact": "It broke.", "source": "ci.log", "position": "lines 1-3"}],
+        "answers": [question], "decision": None}]}
+
+
 @pytest.mark.asyncio
 async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes(tmp_path):
+    from jarvis import package_script
     log = []
-    script = tmp_path / "script.md"
-    script.write_text("It broke.")
+    script = package_script.ScriptFile(tmp_path / "script.yaml", ["q1"])
+
+    class Author(_Participant):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            if answer_format is not None and "script" in answer_format["properties"]:
+                self.sent.append(text)
+                log.append("author")
+                assert answer_format["properties"]["script"] == package_script.schema(["q1"])
+                answer = {"message": "Here it is.", "call_vote": [], "script": _script()}
+                return sessions.Reply(json.dumps(answer), answer)
+            return await super().ask(text, timeout, answer_format, strict)
 
     class Editor(_Participant):
         async def ask(self, text, timeout, answer_format=None, strict=True):
@@ -819,33 +911,63 @@ async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes
             self.sent.append(text)
             log.append("editor")
             assert "call_vote" in answer_format["properties"]
-            answer = {"edits": [{"start": 0, "end": 2, "old": "It", "new": "The store",
-                                 "reason": "vague-referent", "source": "notes.md"}],
+            edit = answer_format["properties"]["edits"]["items"]["properties"]
+            assert {"slide", "field", "start", "end", "old", "new"} <= set(edit)
+            answer = {"edits": [{"slide": "opening", "field": "title", "start": 0, "end": 2,
+                                 "old": "It", "new": "The store", "reason": "vague-referent",
+                                 "source": "notes.md"}],
                       "sent_back": [], "call_vote": []}
             return sessions.Reply(json.dumps(answer), answer)
 
-    people = {"author": _Participant("author", log=log),
+    people = {"author": Author("author", log=log),
               "editor": Editor("editor", ["yes"], log=log),
               "cares_judge": _Participant("cares_judge", ["yes"], log=log),
               "theory_of_mind_reader": _Participant("theory_of_mind_reader", log=log)}
     material = [sessions.Known("He asked for it.", sessions.KNOWS),
                 sessions.Known("CI failed twice.", sessions.PROBABLY_NOT)]
     swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?")],
-                                  material=material)
+                                       material=material)
 
-    async def mark(text):
-        log.append(f"mark {text}")
-        return [{"id": "s1", "segment": text, "kind": "sentence",
-                 "position": {"start": 0, "end": len(text)}, "scores": {"x": 0.5}}]
+    async def mark(written):
+        title = written.read()["slides"][0]["title"]
+        log.append(f"mark {title}")
+        return [{"id": "opening/title/s1", "segment": title, "kind": "sentence",
+                 "slide": "opening", "field": "title",
+                 "position": {"start": 0, "end": len(title)}, "scores": {"x": 0.5}}]
     result = await swarm.round(5, script, mark)
     assert log == ["author", "mark It broke.", "editor", "mark The store broke.",
                    "cares_judge", "theory_of_mind_reader", "editor votes", "cares_judge votes"]
-    assert script.read_text() == "The store broke."
+    assert script.read()["slides"][0]["title"] == "The store broke."
     assert "CI failed twice." in people["editor"].sent[0], "the editor is given everything"
-    assert '<marked file="script.md">' in people["cares_judge"].sent[0]
-    assert '<script file="script.md">The store broke.</script>' in \
-        people["theory_of_mind_reader"].sent[0]
+    assert '<marked file="script.yaml"><slide id="opening">' in people["cares_judge"].sent[0], \
+        "the judges work from the marked script slide by slide"
+    assert 'field="title"' in people["cares_judge"].sent[0]
+    assert "title: The store broke." in people["theory_of_mind_reader"].sent[0]
     assert result["result"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_a_script_that_does_not_check_is_said_back_and_ends_the_round(tmp_path):
+    from jarvis import package_script
+    script = package_script.ScriptFile(tmp_path / "script.yaml", ["q1"])
+
+    class Author(_Participant):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            self.sent.append(text)
+            bad = _script()
+            del bad["slides"][0]["narration"]
+            answer = {"message": "Here.", "call_vote": [], "script": bad}
+            return sessions.Reply(json.dumps(answer), answer)
+    people = {"author": Author("author"), "editor": _Participant("editor")}
+    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?")])
+
+    async def mark(_):
+        raise AssertionError("nothing is marked without a script that checks")
+    assert await swarm.play_round(5, script, mark) is False
+    assert not script.path.exists(), "a script that does not check is never written"
+    said = swarm.conversation[-1]
+    assert said["from"] == sessions.PROGRAM and "has no narration" in said["text"]
+    assert swarm.end_round() is None and swarm.rounds == 1, "the round is still one of three"
 
 
 @pytest.mark.asyncio

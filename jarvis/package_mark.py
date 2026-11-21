@@ -22,11 +22,12 @@ what is marked and only waits for it to be indexed. In order:
   mark_prose          each prose file (evidence_structured.is_prose_file:
                       Tim's messages, the sender's reason and situation,
                       docs, notes, PR descriptions) to MarkingSession (tier
-                      3), one call a file: split into sentences and parts
-                      by program (text_parts), every part scored against
-                      the 28 labels (briefing_labels); with Tim's material
-                      and its knowledge states, for the labels that depend
-                      on him
+                      3), in batches small enough to be answered whole,
+                      each given the whole file: split into sentences and
+                      parts by program (text_parts), every part scored
+                      against the 28 labels (briefing_labels); with Tim's
+                      material and its knowledge states, for the labels
+                      that depend on him
   relate_to_questions every fact and marked part of a file to
                       ClassificationSession (tier 3), one call a file, scored
                       against each of the handoff's questions, plus
@@ -232,9 +233,9 @@ def tim_known(rows: list[Row], texts: dict[str, str], skip: str = ""):
 
 
 def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row]) -> None:
-    """Each prose file to MarkingSession, one call a file, every part
-    scored against every one of the 28 labels; each part's position read
-    back into the file."""
+    """Each prose file to MarkingSession, in batches each given the whole
+    file, every part scored against every one of the 28 labels; each
+    part's position read back into the file."""
     from jarvis import package_jobs
     session = MARKING(doc)
     labels = briefing_labels.for_marking()

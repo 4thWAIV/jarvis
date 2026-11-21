@@ -19,8 +19,9 @@ come later).
 - `DecisionSession`, `ClassificationSession`, `ExtractionSession`: designed
   around Jev and CDM.
 - `MarkingSession` (`BrainMarkingSession`): the text split by a program
-  (text_parts.py), then every part scored against every label, one call a
-  file.
+  (text_parts.py), then every part scored against every label, in batches
+  small enough to be answered whole, each given the whole file; a script
+  slide by slide.
 - `RetrievalSession` and `EditingSession` (`BrainRetrievalSession`,
   `BrainEditingSession`): a ChatSession with its inputs structured.
 - `SummarizationSession` (`BrainSummarizationSession`): sources summarised
@@ -56,6 +57,10 @@ log = logging.getLogger("jarvis.sessions")
 
 class SessionFailed(RuntimeError):
     """A session could not give an answer: the step goes to Error with it."""
+
+
+class NotInForm(SessionFailed):
+    """A session answered, but not in the form its call gave."""
 
 
 # ── answers in a fixed form ───────────────────────────────────────────────
@@ -337,7 +342,7 @@ class BrainChatSession:
         if form is not None and not isinstance(answer, dict):
             if not strict:
                 return Reply(text=said, answer=None)
-            raise SessionFailed(f"the {self.role.name} session's answer was not in its form")
+            raise NotInForm(f"the {self.role.name} session's answer was not in its form")
         return Reply(text=said, answer=answer)
 
     async def _close_child(self) -> None:
@@ -432,10 +437,24 @@ def share_values(role: str, material: list[Known]) -> dict[str, str]:
 
 
 def marked_parts(marked: list[dict]) -> str:
-    """The marked script (MarkingSession's output) as tagged parts."""
+    """The marked script (MarkingSession's output) as tagged parts, each at
+    its slide and field when it is a script's."""
     return "\n".join(_tag("part", m["segment"], id=m["id"], kind=m["kind"],
+                          slide=m.get("slide"), field=m.get("field"),
                           start=m["position"]["start"], end=m["position"]["end"],
                           scores=json.dumps(m["scores"], sort_keys=True)) for m in marked)
+
+
+def marked_slides(marked: list[dict]) -> str:
+    """The marked script slide by slide: each slide's parts under it, in
+    order (a text marked whole, with no slides, as its parts)."""
+    slides: dict[str, list[dict]] = {}
+    for m in marked:
+        slides.setdefault(m.get("slide") or "", []).append(m)
+    if list(slides) == [""]:
+        return marked_parts(marked)
+    return "\n".join(_tag("slide", "\n" + marked_parts(parts) + "\n", id=sid)
+                     for sid, parts in slides.items())
 
 
 # ── SwarmSession ──────────────────────────────────────────────────────────
@@ -523,14 +542,40 @@ class SwarmSession(Protocol):
 
     def reopen(self, question: str) -> None: ...
 
-    async def round(self, timeout: float, script: Path,
-                    mark: Callable[[str], Awaitable[list[dict]]], **parts) -> Optional[dict]: ...
+    async def round(self, timeout: float, script: "Script",
+                    mark: Callable[["Script"], Awaitable[list[dict]]],
+                    **parts) -> Optional[dict]: ...
 
     def result(self) -> dict: ...
 
     def saved(self) -> dict: ...
 
     def restore(self, saved: dict) -> None: ...
+
+
+# The program's own turns in the conversation (what does not check or build,
+# the deck's layout data).
+PROGRAM = "jarvis"
+
+
+class Script(Protocol):
+    """The script a swarm writes, in its structured form (package_script:
+    script.yaml, script/1)."""
+
+    name: str                       # its file's name
+    version: str                    # its format
+    form: dict                      # what the author answers beside its message
+
+    def take(self, answer: dict) -> list[str]:
+        """The script in the author's answer, checked and, when it checks,
+        written; every problem, empty when it checks."""
+
+    def text(self) -> str:
+        """The script as written now."""
+
+    def edit(self, edits: list[dict]) -> tuple[str, list[dict], list[dict]]:
+        """The editor's edits applied by the program and written: (the
+        script's text, the edits applied, the edits refused)."""
 
 
 # A participant's first message, given on its first turn: its approved
@@ -670,8 +715,16 @@ class BrainSwarmSession:
         """One participant's turn: it is sent what the others said since
         its last, and `add` (the program's own message to it); its message
         goes into the conversation, and the votes it calls are held."""
+        return (await self.answer(name, timeout, add))["message"]
+
+    async def answer(self, name: str, timeout: float, add: str = "",
+                     more: Optional[dict] = None) -> dict:
+        """A turn (`turn`) whose answer also carries `more`, the properties
+        the program asks beside the message (the author's script); the whole
+        answer, or the message alone when it was answered in words."""
         sent = "\n\n".join(t for t in (self._new_for(name), add) if t)
-        reply = await self.participants[name].ask(sent, timeout, answer_format=TURN_FORM,
+        form = TURN_FORM if not more else _object({**TURN_FORM["properties"], **more})
+        reply = await self.participants[name].ask(sent, timeout, answer_format=form,
                                                   strict=False)
         # A turn answered in words alone (a long-lived Claude session holds
         # the form only as it is asked in the message): its words are its
@@ -683,7 +736,7 @@ class BrainSwarmSession:
         self.say(name, answer["message"])
         self._heard(name)
         await self._called(name, answer.get("call_vote"), timeout)
-        return answer["message"]
+        return answer
 
     def voters(self, question: str) -> list[str]:
         q = self.questions[question]
@@ -782,53 +835,64 @@ class BrainSwarmSession:
         """What the votes from now on are cast on (its digest)."""
         self.script = script_digest(text)
 
-    async def play_round(self, timeout: float, script: Path,
-                         mark: Callable[[str], Awaitable[list[dict]]], *,
+    async def play_round(self, timeout: float, script: "Script",
+                         mark: Callable[["Script"], Awaitable[list[dict]]], *,
                          author_add: str = "", prep: Optional[Callable[[], str]] = None,
-                         add_for: Optional[RoundAdd] = None) -> None:
+                         add_for: Optional[RoundAdd] = None) -> bool:
         """One round's turns and votes (workflow.yaml swarm plan.round): the
-        author revises the script (its file, `script`; `author_add` the
-        program's words to it); the script is marked (`mark`, the
-        MarkingSession over its text, after each revision); the editor
-        edits, through its own session (EditingSession, given the prep,
-        `prep()`; the program applies the edits and writes the file); the
+        author revises the script, answering it in the script's own form
+        (`script.form`, given as the answer schema; `author_add` the
+        program's words to it), which the program checks and writes
+        (`script.take`); the script is marked slide by slide (`mark`, the
+        MarkingSession, after each revision); the editor edits, through its
+        own session (EditingSession, given the prep, `prep()`; each edit at
+        its slide and field, applied by the program, `script.edit`); the
         judges and the Theory of Mind reader respond, the judges from the
-        marked script, the reader from the script as Tim would read it, each
-        with what `add_for` gives it. Votes a participant calls are held on
-        its turn; then each closed question the change touched is reopened
-        (`reopen_changed`, its voters' judgement) and the program calls one
-        on every open question."""
-        await self.turn(self.author, timeout, add=author_add)
-        try:
-            text = script.read_text(encoding="utf-8")
-        except OSError as e:
-            raise SessionFailed(f"the author's turn left no script at {script}: {e}") from e
+        marked script slide by slide, the reader from the script as Tim
+        would read it, each with what `add_for` gives it. Votes a
+        participant calls are held on its turn; then each closed question
+        the change touched is reopened (`reopen_changed`, its voters'
+        judgement) and the program calls one on every open question.
+
+        A script that does not check is said into the conversation as the
+        program's own turn, with every problem, and the round ends there:
+        False (the round is still one of its three)."""
+        answer = await self.answer(self.author, timeout, author_add, more=script.form)
+        problems = script.take(answer)
+        if problems:
+            self.say(PROGRAM, f"The script in your answer does not check against "
+                              f"{script.version}, so this round ends without it. Answer the "
+                              f"whole script again, in its form:\n"
+                     + "\n".join(f"- {p}" for p in problems))
+            return False
+        text = script.text()
         self.script_now(text)
-        marked = await mark(text)
+        marked = await mark(script)
         editing = self.editing(self.participants[self.editor])
         out = await editing.edit(text, marked, self.share_of(self.editor), timeout,
                                  source=script.name, prep=prep() if prep else "",
-                                 conversation=self._new_for(self.editor), call_vote=True)
+                                 conversation=self._new_for(self.editor), call_vote=True,
+                                 apply=script.edit)
         self.say(self.editor, out["reply"])
         self._heard(self.editor)
         if out["applied"]:
             text = out["text"]
-            private_files.replace(script, text.encode("utf-8"))
             self.script_now(text)
-            marked = await mark(text)
+            marked = await mark(script)
         await self._called(self.editor, out["call_vote"], timeout)
         for name in self.participants:
             if name in (self.author, self.editor):
                 continue
             add = (_tag("script", text, file=script.name) if name in self.non_voters
-                   else _tag("marked", marked_parts(marked), file=script.name))
+                   else _tag("marked", marked_slides(marked), file=script.name))
             more = add_for(name, text, marked) if add_for else ""
             await self.turn(name, timeout, add="\n\n".join(t for t in (add, more) if t))
         await self.reopen_changed(timeout)
         await self.vote_open(timeout)
+        return True
 
-    async def round(self, timeout: float, script: Path,
-                    mark: Callable[[str], Awaitable[list[dict]]], **parts) -> Optional[dict]:
+    async def round(self, timeout: float, script: "Script",
+                    mark: Callable[["Script"], Awaitable[list[dict]]], **parts) -> Optional[dict]:
         """One round (`play_round`), counted: the result once the swarm has
         passed or had its rounds, else None."""
         await self.play_round(timeout, script, mark, **parts)
@@ -1012,12 +1076,12 @@ class ClassificationSession(Protocol):
 
 def _check_scores(scores: dict, names: list[str], whose: str) -> dict[str, float]:
     if not isinstance(scores, dict) or set(scores) != set(names):
-        raise SessionFailed(f"{whose} was not scored against exactly {', '.join(names)}")
+        raise NotInForm(f"{whose} was not scored against exactly {', '.join(names)}")
     out = {}
     for name in names:
         value = scores[name]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
-            raise SessionFailed(f"{whose}'s score for {name} is not between 0 and 1")
+            raise NotInForm(f"{whose}'s score for {name} is not between 0 and 1")
         out[name] = float(value)
     return out
 
@@ -1128,12 +1192,25 @@ class MarkingSession(Protocol):
     async def mark(self, text: str, labels: list[Label], knowledge: list[Known],
                    timeout: float) -> list[dict]: ...
 
+    async def mark_slides(self, units: list, context: str, labels: list[Label],
+                          knowledge: list[Known], timeout: float) -> list[dict]: ...
+
 
 class BrainMarkingSession:
-    """On the brain providers: a text's sentences and phrases (split by text_parts), each scored
-    against every label, each label on its own; one call a file. Tim's
-    material comes with its knowledge states, for the labels that depend on
-    him."""
+    """On the brain providers: a text's sentences and phrases (split by
+    text_parts), each scored against every label, each label on its own.
+    Tim's material comes with its knowledge states, for the labels that
+    depend on him.
+
+    In batches (sessions.yaml MarkingSession batches, Tim 2026-11-20: "Yes,
+    create smaller batches"): the program splits the parts into batches
+    small enough to be answered whole, a sentence never apart from its
+    phrases; each call is given the whole file as context and scores only
+    its batch, every part against every label. A batch starts at
+    `BATCH_PARTS` parts; one not answered whole (not in its form, or not
+    scoring exactly its parts) is split in two and each half asked again,
+    down to one sentence with its phrases. A script is marked slide by
+    slide (`mark_slides`): no batch holds two slides' words."""
 
     def __init__(self, folder: Path, **pick_args):
         self.folder = Path(folder)
@@ -1141,15 +1218,81 @@ class BrainMarkingSession:
 
     async def mark(self, text: str, labels: list[Label], knowledge: list[Known],
                    timeout: float) -> list[dict]:
+        """A file's prose marked. Its whole text is the context of every
+        batch: given once among Tim's material when it is there (the mark
+        step gives the file first), else as the text itself."""
         segments = text_parts.split(text)
-        if not segments:
-            return []
+        context = "" if any(k.text == text for k in knowledge) else text
+        scored = await self._batches([_sentences(segments)], context, labels, knowledge, timeout)
+        return [_part(s, scored[s.id]) for s in segments]
+
+    async def mark_slides(self, units: list, context: str, labels: list[Label],
+                          knowledge: list[Known], timeout: float) -> list[dict]:
+        """A script marked slide by slide: `units`, each piece of its words
+        with its `slide`, `field` and `text` (package_script.units); the
+        whole script, `context`, given with every batch. A part's id and
+        position are its slide's and field's: `<slide>/<field>/<part>`, its
+        offsets within that field's words."""
+        by_slide: dict[str, list[list[text_parts.Segment]]] = {}
+        placed: list[tuple[object, text_parts.Segment]] = []
+        for unit in units:
+            segments = [dataclasses.replace(
+                s, id=f"{unit.slide}/{unit.field}/{s.id}",
+                within=f"{unit.slide}/{unit.field}/{s.within}" if s.within else None)
+                for s in text_parts.split(unit.text)]
+            by_slide.setdefault(unit.slide, []).extend(_sentences(segments))
+            placed += [(unit, s) for s in segments]
+        scored = await self._batches(list(by_slide.values()), context, labels, knowledge,
+                                     timeout)
+        return [{**_part(s, scored[s.id]), "slide": unit.slide, "field": unit.field}
+                for unit, s in placed]
+
+    async def _batches(self, groups: list[list[list[text_parts.Segment]]], context: str,
+                       labels: list[Label], knowledge: list[Known],
+                       timeout: float) -> dict[str, dict]:
+        """Every part's scores: each group (a file, a slide) cut into batches
+        of whole sentences, at most `BATCH_PARTS` parts where a sentence
+        allows, each asked on its own."""
+        scored: dict[str, dict] = {}
+        for sentences in groups:
+            batch: list[list[text_parts.Segment]] = []
+            for sentence in sentences:
+                if batch and sum(map(len, batch)) + len(sentence) > BATCH_PARTS:
+                    scored.update(await self._whole(batch, context, labels, knowledge, timeout))
+                    batch = []
+                batch.append(sentence)
+            if batch:
+                scored.update(await self._whole(batch, context, labels, knowledge, timeout))
+        return scored
+
+    async def _whole(self, batch: list[list[text_parts.Segment]], context: str,
+                     labels: list[Label], knowledge: list[Known],
+                     timeout: float) -> dict[str, dict]:
+        """One batch's scores; a batch not answered whole split in two and
+        each half asked again."""
+        try:
+            return await self._score([s for sentence in batch for s in sentence], context,
+                                     labels, knowledge, timeout)
+        except NotInForm as e:
+            if len(batch) == 1:
+                raise SessionFailed(f"marking could not answer one sentence's parts whole: "
+                                    f"{e}") from e
+            half = len(batch) // 2
+            log.info("marking: a batch of %d sentences not answered whole (%s); asked again "
+                     "in two", len(batch), e)
+            return {**await self._whole(batch[:half], context, labels, knowledge, timeout),
+                    **await self._whole(batch[half:], context, labels, knowledge, timeout)}
+
+    async def _score(self, segments: list[text_parts.Segment], context: str,
+                     labels: list[Label], knowledge: list[Known],
+                     timeout: float) -> dict[str, dict]:
         names = [label.name for label in labels]
         form = _object({"scores": _array(_object({
             "id": _TEXT, "scores": _object({n: _SCORE for n in names})}))})
+        parts = "\n".join(_tag("part", s.text, id=s.id, kind=s.kind, within=s.within)
+                          for s in segments)
         system, first = role_prompt("marking", {
-            "{the parts, by id}": "\n".join(_tag("part", s.text, id=s.id, kind=s.kind,
-                                                 within=s.within) for s in segments),
+            "{the parts, by id}": (_tag("text", context) + "\n" + parts) if context else parts,
             "{each label: name, what it means, an example}":
                 "\n".join(_tag("label", f"{label.means}\nExample: {label.example}"
                                if label.example else label.means, name=label.name)
@@ -1158,15 +1301,37 @@ class BrainMarkingSession:
                 "\n".join(_tag("material", k.text, state=k.state, source=k.source or None)
                           for k in knowledge)})
         session = BrainChatSession.for_role("marking", system, self.folder, answer_format=form,
-                                       **self.pick_args)
+                                            **self.pick_args)
         answer = (await session.once(first, timeout)).answer
         by_id = {str(s.get("id")): s.get("scores") for s in answer.get("scores") or []
                  if isinstance(s, dict)}
         if set(by_id) != {s.id for s in segments}:
-            raise SessionFailed("marking did not score exactly the parts given")
-        return [{"id": s.id, "segment": s.text, "kind": s.kind,
-                 "position": {"start": s.start, "end": s.end}, "within": s.within,
-                 "scores": _check_scores(by_id[s.id], names, s.id)} for s in segments]
+            raise NotInForm(f"it scored {len(by_id)} part(s), not exactly the "
+                            f"{len(segments)} given")
+        return {s.id: _check_scores(by_id[s.id], names, s.id) for s in segments}
+
+
+# A batch of marking starts at this many parts (sessions.yaml MarkingSession
+# batches: "small enough to be answered whole"); one not answered whole is
+# halved (BrainMarkingSession).
+BATCH_PARTS = 40
+
+
+def _sentences(segments: list[text_parts.Segment]) -> list[list[text_parts.Segment]]:
+    """Each sentence with its phrases (text_parts gives a sentence, then its
+    phrases)."""
+    out: list[list[text_parts.Segment]] = []
+    for s in segments:
+        if s.kind == text_parts.SENTENCE or not out:
+            out.append([s])
+        else:
+            out[-1].append(s)
+    return out
+
+
+def _part(s: text_parts.Segment, scores: dict) -> dict:
+    return {"id": s.id, "segment": s.text, "kind": s.kind,
+            "position": {"start": s.start, "end": s.end}, "within": s.within, "scores": scores}
 
 
 # ── RetrievalSession ──────────────────────────────────────────────────────
@@ -1394,7 +1559,9 @@ class EditingSession(Protocol):
 
     async def edit(self, text: str, marked: list[dict], information: list[Known],
                    timeout: float, source: str = "", conversation: str = "",
-                   call_vote: bool = False, prep: str = "") -> dict: ...
+                   call_vote: bool = False, prep: str = "",
+                   apply: Optional[Callable[[list[dict]], tuple[str, list, list]]] = None
+                   ) -> dict: ...
 
 
 class BrainEditingSession:
@@ -1410,25 +1577,43 @@ class BrainEditingSession:
 
     async def edit(self, text: str, marked: list[dict], information: list[Known],
                    timeout: float, source: str = "", conversation: str = "",
-                   call_vote: bool = False, prep: str = "") -> dict:
+                   call_vote: bool = False, prep: str = "",
+                   apply: Optional[Callable[[list[dict]], tuple[str, list, list]]] = None
+                   ) -> dict:
         """`conversation`: what the others said since the editor's last turn,
         in a swarm; `call_vote`: its answer may call votes, as any
         participant's may; `prep`: the author's prep (sessions.yaml
         EditingSession information: "the package's evidence search and the
-        prep")."""
+        prep"); `apply`: a structured script's own application of the edits
+        (package_script.apply_edits), each edit then naming its slide and
+        field beside its offsets within that field's words, and the marked
+        parts given slide by slide."""
         material = "\n\n".join(t for t in (
             conversation,
             _tag("script", text, file=source or None),
-            marked_parts(marked),
+            marked_slides(marked) if apply else marked_parts(marked),
             _tag("prep", prep) if prep else "",
             "\n".join(_tag("information", k.text, state=k.state, source=k.source or None)
                       for k in information)) if t)
-        form = EDIT_FORM if not call_vote else _object(
-            {**EDIT_FORM["properties"], "call_vote": CALL_VOTE})
+        form = located_form(EDIT_FORM) if apply else EDIT_FORM
+        if call_vote:
+            form = _object({**form["properties"], "call_vote": CALL_VOTE})
         reply = await self.chat.ask(material, timeout, answer_format=form)
         answer = reply.answer or {}
         edits = [e for e in answer.get("edits") or [] if isinstance(e, dict)]
-        new_text, applied, refused = apply_edits(text, edits)
+        new_text, applied, refused = (apply or (lambda e: apply_edits(text, e)))(edits)
         return {"text": new_text, "applied": applied, "refused": refused,
                 "sent_back": [s for s in answer.get("sent_back") or [] if isinstance(s, dict)],
                 "call_vote": answer.get("call_vote") or [], "reply": reply.text}
+
+
+def located_form(form: dict) -> dict:
+    """The editor's form for a structured script: each edit and each part
+    sent back also names its slide and its field, its offsets within that
+    field's words."""
+    where = {"slide": {"type": "string", "description": "The slide's id."},
+             "field": {"type": "string",
+                       "description": "The field within the slide, as the marked part names "
+                                      "it (title, on_screen[0].text, narration, ...)."}}
+    return _object({key: _array(_object({**where, **value["items"]["properties"]}))
+                    for key, value in form["properties"].items()})

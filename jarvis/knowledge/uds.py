@@ -418,6 +418,12 @@ class EngineUDS:
             body["under"] = under
         return self._call("changes", body)[1]
 
+    def embed(self, texts: list[str], deadline: Optional[float] = None) -> list[list[float]]:
+        """Each text's vector by the engine's own embedding model (L2
+        normalised, so a dot product is the cosine). EngineUnavailable
+        while it has no model."""
+        return self._call("embed", {"texts": list(texts)}, deadline)[1]["vectors"]
+
     def links(self, caller: Caller, path: Path, kind: Optional[str] = None, *,
               direction: str = "both", origins: Optional[list[str]] = None, limit: int = 100) -> list[Link]:
         body: dict = {"caller": caller.by(), "path": path, "direction": direction, "limit": limit}

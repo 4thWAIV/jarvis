@@ -7,12 +7,10 @@ process after the deck passed (package_jobs.PRODUCERS):
                  conversation and its votes (BRIEFING); who asked
                  (`requested_by`) is in JARVIS's signature.
   write_message  the message that carries it to Tim, written by the program
-                 (no sender text): an opening (the passed deck's opening
-                 slide, its title and its words in reading order) and the
+                 (no sender text): slide 1 of the passed script (its title
+                 and what is on screen, package_script.opening), then the
                  question the request gave, each of its questions' text in
-                 order. The design's opening is the passed script's opening
-                 slide; script.md has no slide format a program can read,
-                 so the deck's opening slide stands until one is decided.
+                 order.
   sign           with JARVIS's own key, naming who asked
                  (package_jobs.sign).
   sender_check   the finished package goes back to the sender with the
@@ -30,9 +28,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
-from jarvis import package_jobs, package_signature, package_swarm as ps
+from jarvis import package_jobs, package_script, package_signature, package_swarm as ps
 
 DELIVER = "deliver"
 FOLDER = "package"                       # the signed package, in the run's folder
@@ -53,7 +49,7 @@ def briefing_files(run: ps.Run, review: Path) -> dict[str, bytes]:
     the prep, the passed script, the whole conversation and every vote
     (the script's and the deck's, with each question's state and the
     judgements whether a change reopened one). A Blocked names any missing."""
-    named = {ps.RESEARCH_MD: run.research, ps.PREP_MD: run.prep, ps.SCRIPT_MD: run.script,
+    named = {ps.RESEARCH_MD: run.research, ps.PREP_MD: run.prep, ps.SCRIPT: run.script,
              ps.CONVERSATION: run.folder / ps.CONVERSATION}
     missing = [name for name, path in named.items() if not path.is_file()]
     try:
@@ -72,22 +68,11 @@ def briefing_files(run: ps.Run, review: Path) -> dict[str, bytes]:
     return files
 
 
-def _words(obj: dict) -> list[str]:
-    return ["".join(r["text"] for r in p.get("runs") or []) for p in obj.get("paragraphs") or []]
-
-
-def message_of(source: Path, request: dict) -> str:
+def message_of(script: dict, request: dict) -> str:
     """The message that carries the package to Tim (workflow.yaml deliver
-    write_message): the opening (the passed deck's opening slide, its title
-    and its words in reading order), then the question the request gave,
-    each of its questions' text in order; nothing else."""
-    deck = yaml.safe_load(source.read_text(encoding="utf-8"))
-    opening = next(s for s in deck["slides"] if s.get("type") == "content")
-    objects = {o["id"]: o for o in opening.get("objects") or []}
-    lines = [opening["title"], ""]
-    for ident in opening.get("readingOrder") or []:
-        if objects.get(ident, {}).get("type") == "text":
-            lines += _words(objects[ident])
+    write_message): slide 1 of the passed script, then the question the
+    request gave, each of its questions' text in order; nothing else."""
+    lines = package_script.opening(script)
     asked = [q["text"] for q in request.get("questions") or []]
     if asked:
         lines += [""] + asked
@@ -111,7 +96,7 @@ def deliver(doc: dict) -> Optional[str]:
     signed = folder / built.name
     package_jobs.sign(doc, unsigned, signed)
     unsigned.unlink()
-    message = message_of(Path(noted["source"]), doc.get("request") or {})
+    message = message_of(package_script.read(run.script) or {}, doc.get("request") or {})
     package_jobs.noted(doc["id"], DELIVER, {"archive": str(signed), "message": message})
     package_jobs.ask_check(doc["id"], {"archive": str(signed), "folder": noted["folder"],
                                        "message": message})

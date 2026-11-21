@@ -489,14 +489,6 @@ EXEMPT = {
         "it reads each swarm question's state, one of JARVIS's own words (open, proven, failed), "
         "and keeps what the votes said to ask the sender as data on the job record, which the "
         "sender reads as its own job's questions; never a brain header, never said"),
-    "package_swarm.go": (
-        "the swarm step's own coroutine: the only field it reads is the job's id, JARVIS's own, "
-        "to ask the sender; what it writes into the conversation is the program's fixed words with "
-        "the run's own file paths; never a brain header, never said"),
-    "package_swarm.swarm": (
-        "the swarm step: the only field it reads is the job's id, JARVIS's own, to keep its outcome "
-        "on the job record and send a failed swarm's findings to the sender as data; never a brain "
-        "header, never said"),
     "server._package_swarm_failed": (
         "a failed swarm's findings (the swarm's own votes and reasons) go on the Work item as "
         "JARVIS's message (read by the brain walled, as every message is) and to the asking "
@@ -509,15 +501,32 @@ EXEMPT = {
         "the sender as data; what it writes into the swarm's conversation is the program's fixed "
         "words, the run's own paths and the deck's layout data, a turn between role sessions, "
         "never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.review_turn": (
+        "the deck review's program turn in the package swarm's own conversation between role "
+        "sessions: each script slide and its deck slide's layout data inside its own <slide>, "
+        "<script> and <layout> elements, kept word for word as the design says; never a brain "
+        "header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.script_problems": (
+        "it checks the deck against the passed script (slide ids, Tim's quoted words) and names "
+        "what does not check, each value quoted; said into the package swarm's own conversation "
+        "as the program's turn to the author, never a brain header, never said. Driven by "
+        "tests/test_package_deck.py"),
+    "package_script.problems": (
+        "it checks the author's script against script/1 and names what does not check, each "
+        "value quoted; said into the package swarm's own conversation as the program's turn to "
+        "the author, never a brain header, never said. Driven by tests/test_package_script.py"),
+    "package_script.units": (
+        "it returns the script's words with their slide and field, which marking scores inside "
+        "<part> elements and the editor edits; never a brain header, never said. Driven by "
+        "tests/test_package_script.py"),
+    "package_script.opening": (
+        "slide 1 of the passed script's words, which open the message that carries the package "
+        "and reach Tim as a message in his Inbox, read by the brain walled as every message is; "
+        "never a brain header, never said. Driven by tests/test_package_script.py"),
     "package_deliver.deliver": (
         "the deliver step: the only field it reads is the job's id, JARVIS's own, to keep where "
         "the signed package is and its message on the job record for its own sender; never a "
         "brain header, never said. Driven by tests/test_package_deck.py"),
-    "package_deliver.message_of": (
-        "it writes the message that carries a package from the passed deck's opening slide and "
-        "the request's questions, which "
-        "reaches Tim as a message in his Inbox, read by the brain walled as every message is; "
-        "never a brain header, never said. Driven by tests/test_package_deck.py"),
     "server._deliver_package_run": (
         "it delivers a package through _send_message, the one way an agent's package reaches him; "
         "the message is recorded as the asking agent's and read by the brain walled, and the log "
@@ -3456,6 +3465,7 @@ ROLE_PROMPT_DRIVERS = {
     "sessions._material": _drive_material,
     "sessions.marked_parts": _drive_marked_parts,
     "sessions.mark": _drive_mark,
+    "sessions._score": _drive_mark,
     "sessions.resolve": _drive_resolve,
     "sessions.edit": _drive_edit,
 }

@@ -19,12 +19,17 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
   swarm      the author, the one editor, the four judges and the Theory of
              Mind reader in one conversation (sessions.BrainSwarmSession),
              logged word for word. A round: the author writes or revises
-             `prep.md` and `script.md`; the script is marked (MarkingSession,
-             the 28 labels, with Tim's material); the editor edits it (the
-             program applies only edits whose old text is exactly there);
-             the judges and the reader respond; a closed question reopens when
-             its voters judge the script's change touched what it was about.
-             Votes on every open question
+             `prep.md`, and gives the script in its answer in script/1
+             (package_script: the answer schema of its turn), which the
+             program checks and writes to script.yaml (one that does not
+             check is said back, and the round ends there); the script is
+             marked slide by slide (MarkingSession, the 28 labels, with
+             Tim's material); the editor edits it, each edit at its slide
+             and field (the program applies only edits whose old text is
+             exactly there); the judges, from the marked script slide by
+             slide, and the reader respond; a closed question reopens when
+             its voters judge the script's change touched what it was
+             about. Votes on every open question
              end each round (one a participant calls is held at once), each
              a turn in that participant's own session with a reason; a
              majority closes a question, a tie fails it; the author never
@@ -40,10 +45,14 @@ had access to, kept apart; the cares judge also the script's parts new to
 him (`new_to_him`).
 
 Asking the sender (swarm ask_sender): when an enough question fails, what
-its no votes said to ask goes to the sender (package_jobs.ask; the job
-waits on it, at most 2 hours, then Error). The swarm round that asked is
-one of its three, as every round played is; the round of questions is
-counted apart, toward its own five. Its answers are kept in the
+its no votes said to ask, across every failed one, is grouped by meaning
+with the engine's embeddings into one list (`group_by_meaning`: one wording
+a group, the groups ordered by how many voters asked; merged, Tim
+2026-11-20) and goes to the sender, which answers each group once
+(package_jobs.ask; the job waits on it, at most 2 hours, then Error). The
+swarm round that asked is one of its three, as every round played is; the
+round of questions is counted apart, toward its own five. Its answers are
+kept in the
 evidence (sender-answers/) and said into the conversation as the sender's,
 word for word; the enough questions reopen. At most five rounds of
 questions; asking stops once a round of answers changes nothing still
@@ -67,11 +76,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from jarvis import (briefing_labels, model_tiers, package_evidence as pe, package_jobs,
-                    package_mark, research_log, role_prompts, roles, sessions, work_research)
+                    package_mark, package_script, records, research_log, role_prompts, roles,
+                    sessions, work_research)
 from jarvis.package_evidence import HAD_ACCESS, KNOWS, PROBABLY_NOT
 
 RESEARCH, SWARM = "research", "swarm"
-RESEARCH_MD, PREP_MD, SCRIPT_MD = "research.md", "prep.md", "script.md"
+RESEARCH_MD, PREP_MD = "research.md", "prep.md"
+SCRIPT = package_script.FILE            # script.yaml, script/1
 STATE = "swarm.json"
 RESULT = "swarm-result.json"
 CONVERSATION = "conversation.md"
@@ -126,7 +137,12 @@ class Run:
 
     @property
     def script(self) -> Path:
-        return self.folder / SCRIPT_MD
+        return self.folder / SCRIPT
+
+    def script_file(self) -> package_script.ScriptFile:
+        """The script in its structured form, checked against the handoff's
+        questions."""
+        return package_script.ScriptFile(self.script, question_ids(self.doc))
 
     @property
     def work_research(self) -> Optional[Path]:
@@ -236,17 +252,20 @@ def material_of(name: str, values: dict[str, str]) -> str:
 
 def new_to_him(run: Run, marked: list[dict]) -> list[dict]:
     """The script's sentences new to Tim, by program from the knowledge
-    states (tim_knowledge): a sentence is new to him unless every evidence
-    item it cites (its stored path or item path in its words) is one he
-    knows or had access to; a sentence citing none is one whose state could
-    not be determined, which the design counts as probably does not know."""
+    states (tim_knowledge), slide by slide: a sentence is new to him unless
+    every evidence item its slide cites (the source paths of its facts and
+    of its quotes of him, package_script.slide_sources) is one he knows or
+    had access to; a slide citing none is one whose state could not be
+    determined, which the design counts as probably does not know."""
+    script = package_script.read(run.script) or {}
+    cites = {s.get("id"): package_script.slide_sources(s) for s in script.get("slides") or []}
     out = []
     for part in marked:
         if part.get("kind") != "sentence":
             continue
-        words = part["segment"]
-        states = {r.knowledge_state for r in run.rows if r.stored and (
-            run.place.item(r.stored) in words or r.stored in words)}
+        sources = cites.get(part.get("slide"), [])
+        states = {r.knowledge_state for r in run.rows if r.stored and any(
+            run.place.item(r.stored) in source or r.stored in source for source in sources)}
         if not states or not states <= {KNOWS, HAD_ACCESS}:
             out.append(part)
     return out
@@ -267,6 +286,11 @@ def judge_asks(role: str) -> str:
     """A judge's question, in its approved prompt's own words."""
     found = re.search(r"Your question: \*\*(.+?)\*\*", role_prompts.PROMPTS[role].system)
     return found.group(1)
+
+
+def question_ids(doc: dict) -> list[str]:
+    """The handoff's questions' ids: the ones a script slide may answer."""
+    return [q["id"] for q in (doc.get("request") or {}).get("questions") or []]
 
 
 def questions(doc: dict) -> list[sessions.Question]:
@@ -470,14 +494,75 @@ def _take_answers(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> No
     asking["answers_said"] = said
 
 
+# Two questions to the sender mean the same when the engine's embeddings of
+# their words are at least this close (cosine). Measured on the engine's
+# model (multilingual-e5-small) on 2026-11-20: rewordings of one question
+# 0.86 to 0.95, different questions at most 0.82.
+SAME_MEANING = 0.85
+EMBED_DEADLINE = 90.0
+
+
+def _engine_embed(texts: list[str]) -> list[list[float]]:
+    """Each text's vector by the knowledge engine's own model."""
+    return records.uds().embed(texts, EMBED_DEADLINE)
+
+
+# How the questions to the sender are embedded (tests give their own).
+EMBED: Callable[[list[str]], list[list[float]]] = _engine_embed
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def group_by_meaning(asks: list[dict], vectors: list[list[float]]) -> list[dict]:
+    """The asks grouped by meaning (swarm ask_sender merged): an ask joins
+    the first group every member of which it is SAME_MEANING to, else
+    starts one; each group keeps one wording, its member nearest in
+    meaning to the rest (the first on a tie), and the groups are ordered by
+    how many voters asked, then by which was asked first. Each ask is
+    {"question" (the enough question), "voter", "ask"}; `vectors` is each
+    ask's embedding, in order."""
+    groups: list[list[int]] = []
+    for i in range(len(asks)):
+        for group in groups:
+            if all(_cosine(vectors[i], vectors[j]) >= SAME_MEANING for j in group):
+                group.append(i)
+                break
+        else:
+            groups.append([i])
+
+    def kept(group: list[int]) -> int:
+        return max(group, key=lambda i: (sum(_cosine(vectors[i], vectors[j])
+                                             for j in group if j != i), -i))
+    ordered = sorted(groups, key=lambda g: (-len({asks[i]["voter"] for i in g}), g[0]))
+    return [{"id": f"ask-{n}", "question": asks[kept(g)]["ask"],
+             "voters": len({asks[i]["voter"] for i in g}),
+             "asked": [asks[i] for i in g]} for n, g in enumerate(ordered, 1)]
+
+
 def _to_ask(swarm: sessions.BrainSwarmSession) -> list[dict]:
-    """What the failed enough questions' no votes said to ask the sender."""
-    out = []
-    for qid, q in swarm.questions.items():
-        if q.enough and swarm.state[qid] == sessions.FAILED:
-            for n, ask in enumerate(swarm.asks(qid), 1):
-                out.append({"id": f"{qid}-{n}", "question": ask})
-    return out
+    """The failed enough questions' no-voters' questions, grouped by meaning
+    with the engine's embeddings into one list (swarm ask_sender merged,
+    Tim 2026-11-20): the sender answers each group once."""
+    asks = [{"question": qid, "voter": v.participant, "ask": v.ask}
+            for qid, q in swarm.questions.items()
+            if q.enough and swarm.state[qid] == sessions.FAILED
+            for v in swarm.closed_by.get(qid, []) if v.vote == sessions.NO and v.ask]
+    if not asks:
+        return []
+    from jarvis.knowledge_client import EngineUnavailable
+    try:
+        vectors = EMBED([a["ask"] for a in asks])
+    except EngineUnavailable as e:
+        raise package_jobs.Blocked(
+            SWARM, f"The engine could not embed the questions to the sender to group them by "
+                   f"meaning: {e}",
+            "JARVIS asked the knowledge engine for the embeddings of the swarm's questions to "
+            "the sender.",
+            "Install the embedding model (Settings, Knowledge) and keep the knowledge engine "
+            "up, then a new run.") from None
+    return group_by_meaning(asks, vectors)
 
 
 def _round_add(run: Run, swarm: sessions.BrainSwarmSession, firsts: _Firsts):
@@ -497,6 +582,25 @@ def _round_add(run: Run, swarm: sessions.BrainSwarmSession, firsts: _Firsts):
             out.append(_parts_text(new_to_him(run, marked)))
         return "\n\n".join(t for t in out if t)
     return add
+
+
+def author_note(run: Run) -> str:
+    """The program's words to the author each round: where the prep goes,
+    and that the script is its answer, in script/1."""
+    return (f"Write the prep in {run.prep}, or revise it. Give the script in your answer, as "
+            f"`script` in the schema given with this call ({package_script.VERSION}), the "
+            f"whole script each time, revised or as it stands: JARVIS checks it and writes "
+            f"it to {run.script}.")
+
+
+def _findings_of_script(problems: list[str]) -> dict:
+    """A swarm whose last script did not check: the finding the sender is
+    sent beside the questions not proven."""
+    return {"question": "script-checked",
+            "asks": f"Does the script check against {package_script.VERSION}?",
+            "state": sessions.FAILED,
+            "against": [{"participant": sessions.PROGRAM, "reason": " ".join(problems),
+                         "ask": ""}]}
 
 
 def conversation_md(result: dict) -> str:
@@ -539,23 +643,26 @@ def swarm(doc: dict) -> Optional[str]:
     knowledge = package_mark.tim_known(run.rows, run.texts)
     outcome: dict = {}
 
+    script = run.script_file()
+
     async def go():
         swarm_, firsts = build(run, kept)
         marking = package_mark.MARKING(doc)
 
-        async def mark(text: str) -> list[dict]:
-            firsts.marked = await marking.mark(text, labels, knowledge, TIMEOUT)
+        async def mark(written: package_script.ScriptFile) -> list[dict]:
+            firsts.marked = await marking.mark_slides(
+                package_script.units(written.read()), written.text(), labels, knowledge,
+                TIMEOUT)
             return firsts.marked
         try:
             await swarm_.open()
             _take_answers(run, swarm_, kept)
             asking = kept.setdefault("asking", {})
             while True:
-                await swarm_.play_round(
-                    TIMEOUT, run.script, mark,
-                    author_add=f"Write the prep in {run.prep} and the script in {run.script}, "
-                               f"or revise them.",
+                checked = await swarm_.play_round(
+                    TIMEOUT, script, mark, author_add=author_note(run),
                     prep=lambda: _read(run.prep), add_for=_round_add(run, swarm_, firsts))
+                kept["script_problems"] = [] if checked else script.problems
                 if "compare" in asking:
                     # A round of answers that changed nothing still open: no
                     # more asking (decided "questions to the sender").
@@ -581,10 +688,11 @@ def swarm(doc: dict) -> Optional[str]:
     if outcome.get("waiting"):
         return package_jobs.WAITING
     result = outcome["result"]
+    if kept.get("script_problems"):
+        result["findings"].append(_findings_of_script(kept["script_problems"]))
     _write_result(run, result)
     if result["result"] == "passed":
-        script = _read(run.script)
-        used = research_log.mark_used(run.log, script, roots=(
+        used = research_log.mark_used(run.log, package_script.sources(script.read()), roots=(
             run.place.path, str(run.place.folder), str(run.folder)))
         package_jobs.noted(doc["id"], "swarm", {
             "result": "passed", "rounds": result["rounds"], "script": str(run.script),

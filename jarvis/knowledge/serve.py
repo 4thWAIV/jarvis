@@ -434,6 +434,31 @@ def _items_answer(engine: Engine, request: Request) -> Answer:
     return Answer(200, engine.items.answer_proposal(request.body or {}))
 
 
+# How long a text's embedding is waited for at /v1/items/embed: the
+# embedding thread's queue puts it ahead of every waiting ingest batch.
+EMBED_SEC = 60.0
+
+
+@route("POST", "/v1/items/embed")
+@_guard
+def _items_embed(engine: Engine, request: Request) -> Answer:
+    """Texts embedded by the engine's own model, for a program that groups
+    words by meaning (package_swarm's questions to the sender): each text's
+    vector in the item space's model, or 503 while there is no model."""
+    texts = (request.body or {}).get("texts")
+    if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
+        raise BadRequest("texts is a list of words")
+    vectors = engine.vectors
+    if vectors is None or vectors.queue is None:
+        return Answer(503, {"error": "no_model", "detail": "no embedding model is attached"})
+    if not texts:
+        return Answer(200, {"space": vectors.space_id, "vectors": []})
+    found = vectors.queue.embed_now(texts, EMBED_SEC, purpose="query")
+    if found is None:
+        return Answer(503, {"error": "busy", "detail": "the embedding did not finish in time"})
+    return Answer(200, {"space": vectors.space_id, "vectors": [list(v) for v in found]})
+
+
 class _HTTPHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "jarvis-knowledge"

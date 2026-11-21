@@ -1418,7 +1418,11 @@ SVG's size read from its width and height, else its viewBox) and a story of
 about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
-`work_packages.recognise`) is for a working tool. A deck for Tim is a
+`work_packages.recognise`) is not policed: nothing refuses a hand-made
+page, which stays usable as a tool, labelled "Layout not checked", and
+docs/making-a-package.md and the talk-to-jarvis skill steer agents to send
+a request for anything Tim reads or decides (workflow.yaml deliver
+`only_way_in`, Tim 2026-11-20). A deck for Tim is a
 briefing, and only the package workflow makes one, from a request (see
 "Package requests"; workflow.yaml deliver `only_way_in`): the old fresh
 author (`make_package --handoff` without `--start`) writes a hand-made
@@ -1640,8 +1644,13 @@ no facts for one, and its marks say so (`extraction`,
 `package_mark.NO_PROSE_FACTS`), waiting on Tim. `mark_prose`: each prose
 file (`evidence_structured.is_prose_file`: a prose-typed file, the sender's
 words in `handoff.json`, a retrieved pull request's description; never the
-prose parts of a log or a transcript) to MarkingSession (tier 3), one call
-a file, every part scored against the 28 labels (`briefing_labels.py`, the one list: name,
+prose parts of a log or a transcript) to MarkingSession (tier 3), in
+batches small enough to be answered whole (`sessions.BrainMarkingSession`:
+whole sentences with their phrases, at most `sessions.BATCH_PARTS` parts
+where a sentence allows, a batch not answered whole halved and asked again;
+each given the whole file, among Tim's material or as the text itself;
+sessions.yaml MarkingSession batches, Tim 2026-11-20), every part scored
+against the 28 labels (`briefing_labels.py`, the one list: name,
 meaning, action, kind keep, fix or remove, origin and example), with Tim's
 material: the file itself and every item he knows or had access to, whole,
 each with its state, and every item he probably does not know named by its
@@ -1707,11 +1716,31 @@ the author picked first, each participant on its role, or resumed on the
 session it had; `CHAT`, `PICK`), its questions the handoff's (is there
 enough to answer each, `enough-<id>`, `Question.enough`: the author votes,
 and a no says what to ask the sender, `ENOUGH_FORM`) and the four judges'
-(their approved words, `judge_asks`). A round (`play_round`): the author
-writes or revises `prep.md` and `script.md`; the script is marked
-(MarkingSession, the 28 labels, Tim's material by `package_mark.tim_known`);
-the editor edits it, given the prep (`EditingSession.edit`'s `prep`); the
-judges and the reader respond; for each closed question cast on a script
+(their approved words, `judge_asks`). The script is structured YAML,
+`script.yaml` (`package_script.py`, script/1; Tim 2026-11-20): a list of
+slides in order, each with an id (its deck slide's), a title, what is on
+screen (an ordered list of pieces: `text`, `his_words` with its source, a
+`picture` by path, a `table`), what JARVIS says over it (`narration`), the
+source path and position of every fact (`facts`), the questions it
+answers and the decision it asks if any. A round (`play_round`, over a
+`sessions.Script`, `package_script.ScriptFile`): the author writes or
+revises `prep.md` and gives the whole script in its answer, `script` in
+the schema of its turn (`package_script.schema`, the approved prompt's
+words unchanged, `author_note` the program's words), which the program
+checks (`package_script.problems`) and writes; one that does not check is
+said back as JARVIS's own turn with every problem and the round ends there,
+still one of the three (a last one's problems are a `script-checked`
+finding). The script is marked slide by slide (`mark_slides`: one batch
+never two slides' words, the whole script with each, every part at its
+slide and field, `package_script.units`; the 28 labels, Tim's material by
+`package_mark.tim_known`); the editor edits it, given the prep
+(`EditingSession.edit`'s `prep`) and the marked parts slide by slide, each
+edit naming its slide and field beside its offsets in that field's words
+(`sessions.located_form`), applied by the program
+(`package_script.apply_edits`: never Tim's own words; edits that would
+leave a script that does not check are not applied); the judges, from the
+marked script slide by slide (`sessions.marked_slides`), and the reader
+respond; for each closed question cast on a script
 that is no longer the script (`Vote.script`), its voters each judge in
 their own session whether the change touched what it was about
 (`REOPEN_FORM`, yes or no with a reason, kept in `reopenings`), and a
@@ -1723,11 +1752,18 @@ the decision ready and background judges (and the prep as the author last
 wrote it each round after, `_round_add`, to every role whose approved
 material holds it), the script for the reader, and
 for the cares judge the script's sentences new to him (`new_to_him`, by
-program: a sentence is new unless every evidence file it cites is one he
-knows or had access to; one citing none could not be determined), again
-each round; where the evidence is for one that searches it
+program, slide by slide: a sentence is new unless every evidence file its
+slide cites, `package_script.slide_sources`, is one he knows or had access
+to; a slide citing none could not be determined), again each round; where the evidence is for one that searches it
 (`evidence_note`). An enough question that fails asks the sender what its
-no votes said (`_to_ask`, `package_jobs.ask`); the swarm round that asked is one of
+no votes said, every failed one's asks grouped by meaning into one list
+(`_to_ask`, `group_by_meaning`; Tim 2026-11-20): embedded by the engine's
+own model (`EngineUDS.embed`, `POST /v1/items/embed`, `EMBED`), an ask
+joins the first group it is `SAME_MEANING` (cosine 0.85, measured on
+multilingual-e5-small) to every member of, each group keeps its wording
+nearest the rest, the groups ordered by how many voters asked, each
+`ask-<n>` with the asks it holds; no model is the step's Error
+(`package_jobs.ask`); the swarm round that asked is one of
 its three like every round played (`end_round` first: a third round
 without passing fails the swarm, its asks in the findings), and the round
 of questions counts toward its own five; the
@@ -1735,7 +1771,8 @@ answers are said into the conversation as the sender's, each in its own
 element, and the enough questions reopen (`_take_answers`); once a round
 of answers leaves the same questions unproven, asking stops (`asking`'s
 `stopped`). Passed: the result and the conversation word for word
-(`swarm-result.json`, `conversation.md`), the hits used, and the job's
+(`swarm-result.json`, `conversation.md`), the hits used (matched against
+the script's sources, `package_script.sources`), and the job's
 `swarm`. After three rounds without passing: the findings
 (`findings_questions`) to the sender (`package_jobs.failed_swarm`). What
 the swarm holds is kept in `swarm.json` (`BrainSwarmSession.saved`,
@@ -1745,25 +1782,30 @@ answered a turn; what was sent is taken as given only once it answers,
 The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
 workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
 `DECK_QUESTIONS`). A round: the author writes `deck/presentation.yaml`
-(presentation/1) from the passed script alone, in JARVIS's named layouts,
-told so by the program (`write_note`, carrying docs/making-a-package.md's
-"A deck" section word for word and `make_package.EXAMPLE`; later rounds
-`revise_note`); where the script gives Tim's own words they are runs of
-emphasis `his-words` (`presentation_schema.HIS_WORDS`), drawn highlighted
-bright and vibrant (presentation.css `mark.his-words`), and narrated. The
-program builds and proves it with the existing pipeline
-(`build_and_prove`: `make_package.fill_assets`, `make_presentation`, the
-standard vote in its package.json); what does not build is said into the
+(presentation/1) from the passed script alone, one script slide to one
+deck slide, in order and with the same id, in JARVIS's named layouts,
+told so by the program (`write_note`, carrying the script,
+docs/making-a-package.md's "A deck" section word for word and
+`make_package.EXAMPLE`; later rounds `revise_note`); where the script gives
+Tim's own words (a `his_words` piece) they are runs of emphasis
+`his-words` (`presentation_schema.HIS_WORDS`), drawn highlighted bright and
+vibrant (presentation.css `mark.his-words`), and narrated. The program
+builds and proves it with the existing pipeline (`build_and_prove`:
+`make_package.fill_assets`, `make_presentation`, the standard vote in its
+package.json) and checks it against the script (`script_problems`: its
+slides the script's, by id, in order; every piece of his words on its
+slide in the `his-words` style and said in its narration, word for word,
+`spoken_words.folded_words`: the his-words check, a program's, no vote;
+Tim 2026-11-20); what does not build or check is said into the
 conversation as JARVIS's own turn (`PROGRAM`, `jarvis`). Built, the
-program posts as its own turn each slide's layout data
-(`presentation_proof.layout_data`, in the proof as `slides`: the title,
-each object in reading order with its slot, box and size in px at the
-smallest and largest frame, `sizes`, each word with its style and size,
-each picture's drawn size, the narration) beside the passed script, and
+program posts as its own turn, slide by slide, each script slide beside
+its deck slide's layout data (`presentation_proof.layout_data`, in the
+proof as `slides`: the title, each object in reading order with its slot,
+box and size in px at the smallest and largest frame, `sizes`, each word
+with its style and size, each picture's drawn size, the narration), and
 the questions (`review_turn`: does each slide say what the script says
 for it, is it visual where the script calls for it, does the narration say
-the substance, is every word readable at its size, does every quote of
-Tim's use `his-words`); the editor and the four judges answer
+the substance, is every word readable at its size); the editor and the four judges answer
 (`REVIEWERS`), a question closed on an earlier deck reopens by its voters'
 judgement (`reopen_changed`'s `only` and `what`), and the program votes on
 every open one: the editor and the judges vote, never the author. Passed
@@ -1773,12 +1815,11 @@ its findings go to the sender as a failed swarm's do. The proof also holds
 every text style at least the text floor at both sizes (`prove_text`).
 The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
 design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
-(`briefing_files`: research.md, prep.md, script.md, conversation.md and
-votes.json), writes the message that carries it from the passed deck's
-opening slide (its title and words in reading order) and the question the
-request gave, its questions' text in order (`message_of`, no sender text;
-the design's opening is the passed script's, which has no slide format a
-program reads yet), signs it with JARVIS's own key
+(`briefing_files`: research.md, prep.md, script.yaml, conversation.md and
+votes.json), writes the message that carries it from slide 1 of the passed
+script (its title and what is on screen, `package_script.opening`) and the
+question the request gave, its questions' text in order (`message_of`, no
+sender text), signs it with JARVIS's own key
 (`package_jobs.sign`) in the run's `package/` and sends it back to its
 sender to check (`package_jobs.ask_check`: a round of kind `check`, its one
 question `check` with `SENDER_CHECK` word for word; the server's look
