@@ -34,10 +34,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import layout_spec, picture_proof
+from jarvis import data_paths, layout_spec, picture_proof
 from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, TableObject,
                                         TextObject, VectorObject)
 
@@ -189,14 +190,48 @@ def _object_layout(obj, box, pictures: dict) -> dict:
     return out
 
 
-def layout_data(source) -> list[dict]:
+# Where the shared deck draws a decision slide's words, and the rule in its
+# deck.css that sizes each: the question its heading, the option names
+# their own, every other word the deck's body size.
+DECK_CSS = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "deck.css"
+DECISION_WORDS = {"question": "h2", "option_name": ".option h3", "context": "--body",
+                  "reason": "--body", "says": "--body"}
+_CLAMP = r"\s*clamp\(([\d.]+)px,\s*calc\(([\d.]+) \* var\(--u\)\),\s*([\d.]+)px\)"
+
+
+def deck_words_px(rule: str) -> dict[str, float]:
+    """The px size at the smallest and the largest frame of the words a
+    deck.css rule sizes (a selector's font-size, or a custom property), as
+    the shared deck draws them: clamp(min, units x the deck unit, max)."""
+    css = DECK_CSS.read_text(encoding="utf-8")
+    found = (re.search(re.escape(rule) + r":" + _CLAMP, css) if rule.startswith("--") else
+             re.search(r"(?m)^" + re.escape(rule) + r"\s*\{[^}]*?font-size:" + _CLAMP, css))
+    if found is None:
+        raise ValueError(f"deck.css sizes no words by {rule!r}")
+    low, units, high = (float(g) for g in found.groups())
+    return {name: round(min(max(units * layout_spec.unit(frame), low), high), 1)
+            for name, frame in sizes().items()}
+
+
+def _story_of(story: dict | None, decision: str) -> list[dict]:
+    """What JARVIS says on a decision's slide: the story's beats on the
+    slide that waits for it."""
+    for slide in (story or {}).get("slides") or []:
+        if slide.get("waits") == decision:
+            return [{"say": b.get("say", "")} for b in slide.get("beats") or []]
+    return []
+
+
+def layout_data(source, story: dict | None = None) -> list[dict]:
     """Each slide as JARVIS lays it out (layout_spec), worked out from the
     source, its pictures and the spec alone: a content slide's title with
     its size, its layout, its objects in reading order (each with its slot,
     its box in deck units and its size in px at both sizes; a text's words
     with their style and size; a picture's own and drawn size; a table's
     cells; a bar's values) and its narration; a decision's question,
-    options and recommendation."""
+    options and recommendation, the size of each of its words as the shared
+    deck draws them (`deck_words_px`) and, given the deck's `story`, what
+    JARVIS says on its slide."""
     decisions = {d.id: d for d in source.document.decisions}
     out = []
     for n, slide in enumerate(source.document.slides, 1):
@@ -206,7 +241,10 @@ def layout_data(source) -> list[dict]:
                         "question": d.question, "context": d.context,
                         "options": [{"id": o.id, "name": o.name, "says": o.says,
                                      "picture": o.picture} for o in d.options],
-                        "recommended": d.recommended, "reason": d.reason})
+                        "recommended": d.recommended, "reason": d.reason, "say": d.say,
+                        "text_px": {k: deck_words_px(rule)
+                                    for k, rule in DECISION_WORDS.items()},
+                        "narration": _story_of(story, d.id)})
             continue
         boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
         out.append({"slide": n, "id": slide.id, "type": "content", "title": slide.title,
@@ -221,13 +259,13 @@ def layout_data(source) -> list[dict]:
     return out
 
 
-def record(source, failures: list[Failure]) -> dict:
+def record(source, failures: list[Failure], story: dict | None = None) -> dict:
     return {"version": VERSION, "source_sha256": source.digest,
             "spec_sha256": hashlib.sha256(layout_spec.PATH.read_bytes()).hexdigest(),
             "frames": [list(f) for f in layout_spec.frames()], "templates": template_hashes(),
             "language": source.language, "proven": not failures,
             "sizes": {name: list(frame) for name, frame in sizes().items()},
-            "slides": layout_data(source)}
+            "slides": layout_data(source, story)}
 
 
 def write(folder: Path, proof: dict) -> None:

@@ -1783,7 +1783,9 @@ The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
 workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
 `DECK_QUESTIONS`). A round: the author writes `deck/presentation.yaml`
 (presentation/1) from the passed script alone, one script slide to one
-deck slide, in order and with the same id, in JARVIS's named layouts,
+deck slide, in order and with the same id (a script slide that asks a
+decision is the deck's decision slide asking it, its words the decision's
+context and what JARVIS says over it its `say`), in JARVIS's named layouts,
 told so by the program (`write_note`, carrying the script,
 docs/making-a-package.md's "A deck" section word for word and
 `make_package.EXAMPLE`; later rounds `revise_note`); where the script gives
@@ -1795,6 +1797,7 @@ builds and proves it with the existing pipeline (`build_and_prove`:
 package.json) and checks it against the script (`script_problems`: its
 slides the script's, by id, in order; every piece of his words on its
 slide in the `his-words` style and said in its narration, word for word,
+a slide asking a decision a decision slide and every other a content slide,
 `spoken_words.folded_words`: the his-words check, a program's, no vote;
 Tim 2026-11-20); what does not build or check is said into the
 conversation as JARVIS's own turn (`PROGRAM`, `jarvis`). Built, the
@@ -1802,7 +1805,10 @@ program posts as its own turn, slide by slide, each script slide beside
 its deck slide's layout data (`presentation_proof.layout_data`, in the
 proof as `slides`: the title, each object in reading order with its slot,
 box and size in px at the smallest and largest frame, `sizes`, each word
-with its style and size, each picture's drawn size, the narration), and
+with its style and size, each picture's drawn size, the narration; a
+decision slide's question, context, options, reason and `say`, each word's
+size as the shared deck draws it, `presentation_proof.deck_words_px` read
+from its deck.css, and what JARVIS says on it from the story), and
 the questions (`review_turn`: does each slide say what the script says
 for it, is it visual where the script calls for it, does the narration say
 the substance, is every word readable at its size); the editor and the four judges answer

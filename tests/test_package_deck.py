@@ -138,6 +138,11 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     assert opening["narration"][0]["say"].startswith("This tells you")
     assert layout[-1]["type"] == "decision" and layout[-1]["question"] == \
         "Where do we eat on Friday?"
+    # A decision slide's words are sized as the shared deck draws them, and
+    # what JARVIS says on it is there too (deck_review needs both).
+    assert layout[-1]["text_px"]["question"] == {"smallest": 19.6, "largest": 25.0}
+    assert layout[-1]["text_px"]["says"]["smallest"] >= 13
+    assert layout[-1]["narration"][0]["say"] == "Decision 1 of 1: Where do we eat on Friday?"
     # The editor and the four judges answered it, then voted; the author
     # never on its own deck, the reader never.
     after = [m["from"] for m in review["conversation"][review["conversation"].index(turn) + 1:]]
@@ -186,6 +191,22 @@ def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
     assert "the script's are ['opening', 'what-changed', 'where']" in said[1]
     assert pj.get(doc["id"])["deck"]["rounds"] == 3
     assert not [v for v in review["votes"] if "his" in v["question"]]
+
+
+def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
+    # presentation/1 asks a decision on a slide of its own, so the one deck
+    # slide of a script slide that asks one is that decision slide.
+    script, deck = deck_script(), deck_with_his_words()
+    assert pd.script_problems(script, deck) == []
+    content = copy.deepcopy(deck)
+    content["slides"][2] = {**deck["slides"][1], "id": "where"}
+    assert pd.script_problems(script, content) == [
+        "Script slide where asks the decision where-to-eat: its deck slide is a decision slide "
+        "(type decision, id where) asking where-to-eat, its words in the decision's context and "
+        "what JARVIS says over it in the decision's say."]
+    script["slides"][2]["decision"] = None
+    assert pd.script_problems(script, deck) == [
+        "Script slide where asks no decision: its deck slide is a content slide."]
 
 
 def test_a_deck_not_proven_in_three_rounds_sends_the_sender_the_findings(marked, deck_plan):

@@ -10,7 +10,9 @@ in the run's folder. A round:
                    `deck/presentation.yaml` (presentation/1) from the passed
                    script (script.yaml) alone, choosing JARVIS's named
                    layouts: one script slide to one deck slide, in order,
-                   with the same id; where the script gives Tim's own words
+                   with the same id (a script slide that asks a decision the
+                   deck's decision slide asking it, presentation/1's one
+                   slide for a decision); where the script gives Tim's own words
                    (a his_words piece), they are runs in the `his-words`
                    style (presentation_schema.HIS_WORDS), drawn highlighted
                    in a very bright, vibrant way, and narrated. The
@@ -129,8 +131,10 @@ def write_note(run: ps.Run) -> str:
         f"presentation/1 source, in {source_of(run)}, with any pictures beside it as files, by "
         f"path. Choose one of JARVIS's named layouts for each slide; write no HTML or CSS. Each "
         f"slide of the script is one slide of the deck, in the same order and with the same "
-        f"id: its words on the slide, what JARVIS says over it as its narration; a slide that "
-        f"asks a decision asks it with the options you wrote.",
+        f"id: its words on the slide, what JARVIS says over it as its narration. A script slide "
+        f"that asks a decision is the deck's decision slide (type decision, the same id), "
+        f"asking that decision with the options you wrote: its words in the decision's context "
+        f"and what JARVIS says over it in the decision's say.",
         f"Where the script gives Tim's own words (a his_words piece), show them on that slide as "
         f"runs with emphasis {HIS_WORDS}, which JARVIS draws highlighted in a very bright, "
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
@@ -179,8 +183,22 @@ def script_problems(script: dict, deck: dict) -> list[str]:
     have = [s.get("id") for s in deck.get("slides") or [] if isinstance(s, dict)]
     if want != have:
         out.append(f"The deck's slides are {have}; the script's are {want}. Write one deck "
-                   f"slide for each script slide, in the same order, with the same id.")
+                   f"slide for each script slide, in the same order, with the same id; a "
+                   f"script slide that asks a decision is the deck's decision slide.")
     slides = {s.get("id"): s for s in deck.get("slides") or [] if isinstance(s, dict)}
+    for wanted in script.get("slides") or []:
+        slide = slides.get(wanted["id"])
+        if slide is None:
+            continue
+        asked = (wanted.get("decision") or {}).get("id")
+        if asked and (slide.get("type") != "decision" or slide.get("decision") != asked):
+            out.append(f"Script slide {wanted['id']} asks the decision {asked}: its deck slide "
+                       f"is a decision slide (type decision, id {wanted['id']}) asking "
+                       f"{asked}, its words in the decision's context and what JARVIS says "
+                       f"over it in the decision's say.")
+        elif not asked and slide.get("type") != "content":
+            out.append(f"Script slide {wanted['id']} asks no decision: its deck slide is a "
+                       f"content slide.")
     for quote in package_script.his_words(script):
         slide = slides.get(quote["slide"]) or {}
         drawn = " ".join(run.get("text", "") for obj in slide.get("objects") or []

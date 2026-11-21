@@ -107,7 +107,8 @@ def schema(question_ids: list[str]) -> dict:
                           "The ids of the questions it answers.") if question_ids
         else _array(_TEXT, "The ids of the questions it answers."),
         "decision": {"anyOf": [DECISION, {"type": "null"}],
-                     "description": "The decision it asks, or null."},
+                     "description": "The decision it asks, or null. A slide that asks a "
+                                    "decision is the deck's slide for that decision."},
     })
     return _object({"version": {"type": "string", "enum": [VERSION]},
                     "slides": _array(slide, "The slides, in order.", least=1)},

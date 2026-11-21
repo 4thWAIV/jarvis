@@ -124,7 +124,7 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
             "layout", failure.message, member=failure.member if failure.member in parsed.nodes else None,
             profile=f"{failure.frame[0]:.0f}x{failure.frame[1]:.0f}" if failure.frame else None)
             for failure in failures))
-    presentation_proof.write(folder, presentation_proof.record(parsed, failures))
+    presentation_proof.write(folder, presentation_proof.record(parsed, failures, story))
 
 
 def compile_deck(source: Path, output: Path) -> CompiledDeck:
