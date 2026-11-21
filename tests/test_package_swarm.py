@@ -332,6 +332,8 @@ def test_each_participant_is_given_exactly_its_share(marked, plan):
         assert "knowledge_search under that path" in first[name]
     assert secret in first["editor"] and 'state="probably_does_not_know"' in first["editor"]
     assert '<marked file="script.yaml">' in first["editor"], "the editor works from the marks"
+    assert "Does Tim care: yes." in first["editor"], "the editor is given the prep it names"
+    assert "Does Tim care: yes." not in first["tims_reader"]
     # The script is marked with what Tim knows, never the words of what he does not.
     knowledge = Marking.calls[0][1]
     assert all(k.text == "" for k in knowledge if k.state == pe.PROBABLY_NOT)
@@ -398,7 +400,7 @@ def test_the_sender_is_asked_once_the_outline_is_signed_off_grouped_by_meaning(m
     job = pj.get(marked["id"])
     assert job["state"] == pj.WAITING and pj.question_rounds(job) == 1
     asked = job["rounds"][-1]["questions"]
-    assert [(q["id"], q["voters"]) for q in asked] == [("ask-1", 2), ("ask-2", 1)]
+    assert [(q["id"], q["askers"]) for q in asked] == [("ask-1", 2), ("ask-2", 1)]
     assert asked[0]["question"] in ("When did CI last pass?", "When did the CI last pass?")
     assert asked[1]["question"] == "Who reviews it?"
     folder = Path(marked["folder"])
@@ -423,15 +425,15 @@ def test_questions_are_grouped_by_meaning_one_wording_each_most_asked_first():
     def unit(*xs):
         n = sum(x * x for x in xs) ** 0.5
         return [x / n for x in xs]
-    asks = [{"question": "outline", "voter": "editor", "ask": "Who reviews?"},
-            {"question": "outline", "voter": "author", "ask": "When did CI pass?"},
-            {"question": "pass-1", "voter": "tims_reader", "ask": "When was CI green?"},
-            {"question": "pass-1", "voter": "editor", "ask": "Last green CI run?"},
-            {"question": "pass-1", "voter": "author", "ask": "Who reviews it?"}]
+    asks = [{"stage": "outline", "from": "editor", "ask": "Who reviews?"},
+            {"stage": "outline", "from": "author", "ask": "When did CI pass?"},
+            {"stage": "pass-1", "from": "tims_reader", "ask": "When was CI green?"},
+            {"stage": "pass-1", "from": "editor", "ask": "Last green CI run?"},
+            {"stage": "pass-1", "from": "author", "ask": "Who reviews it?"}]
     vectors = [unit(0, 0, 1), unit(1, 0.10, 0), unit(1, 0.12, 0), unit(1, 0.30, 0.0),
                unit(0, 0.05, 1)]
     groups = ps.group_by_meaning(asks, vectors)
-    assert [(g["id"], g["voters"], len(g["asked"])) for g in groups] == [
+    assert [(g["id"], g["askers"], len(g["asked"])) for g in groups] == [
         ("ask-1", 3, 3), ("ask-2", 2, 2)]
     assert groups[0]["question"] == "When was CI green?", "the wording nearest the rest"
     assert groups[1]["question"] == "Who reviews?", "on a tie, the first asked"

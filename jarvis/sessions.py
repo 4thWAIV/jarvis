@@ -1378,7 +1378,8 @@ class BrainSummarizationSession:
 # slide and field, the exact old text and the new text, and its reason"):
 # where in the words it is (offsets), the exact old text, the new, its
 # reason and the source of any fact it adds. The program applies only edits
-# whose old text is exactly there (`apply_edits`).
+# whose old text is exactly there (`apply_edits`): at the offsets, or the
+# one place the words hold it when the offsets miss.
 EDIT = _object({"start": _OFFSET, "end": _OFFSET, "old": _TEXT, "new": _TEXT,
                 "reason": _TEXT, "source": _TEXT})
 
@@ -1399,17 +1400,39 @@ def editor_prompt(labels: list[EditLabel]) -> str:
     return system
 
 
+def _where(text: str, edit: dict) -> Optional[tuple[int, int]]:
+    """Where an edit's old text is exactly there: at its offsets, else, when
+    they do not hold it, the one place the text holds it (owner-prompts.md:
+    an edit names its old text, and the program applies only edits whose
+    old text is exactly there). None: not there, or there more than once
+    with no offsets saying which."""
+    start, end, old = edit.get("start"), edit.get("end"), edit.get("old")
+    if not isinstance(old, str):
+        return None
+    if (isinstance(start, int) and isinstance(end, int) and 0 <= start <= end <= len(text)
+            and text[start:end] == old):
+        return start, end
+    if old and text.count(old) == 1:
+        at = text.find(old)
+        return at, at + len(old)
+    return None
+
+
 def apply_edits(text: str, edits: list[dict]) -> tuple[str, list[dict], list[dict]]:
-    """The edits applied by the program, latest offset first: (the text,
-    the edits applied, the edits refused because their old text is not at
-    their offsets or they overlap one applied)."""
+    """The edits applied by the program, latest place first: (the text,
+    the edits applied, the edits refused because their old text is not
+    exactly there (`_where`) or they overlap one applied)."""
     applied, refused = [], []
     taken: list[tuple[int, int]] = []
-    for edit in sorted(edits, key=lambda e: e.get("start", -1), reverse=True):
-        start, end, old = edit.get("start"), edit.get("end"), edit.get("old")
-        if (not isinstance(start, int) or not isinstance(end, int) or not isinstance(old, str)
-                or not 0 <= start <= end <= len(text) or text[start:end] != old
-                or any(start < b and end > a for a, b in taken)):
+    placed = []
+    for edit in edits:
+        where = _where(text, edit)
+        if where is None:
+            refused.append(edit)
+        else:
+            placed.append((where, edit))
+    for (start, end), edit in sorted(placed, key=lambda p: p[0][0], reverse=True):
+        if any(start < b and end > a for a, b in taken):
             refused.append(edit)
             continue
         # Applied from the end back, so every offset still to come is the

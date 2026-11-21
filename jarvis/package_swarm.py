@@ -364,8 +364,11 @@ class _Firsts:
         said = material_of(name, values)
         if name == EDITOR:
             # The editor's approved prompt closes on no material: it is
-            # given its share of the evidence, each item marked, here.
-            said = sessions._material(sessions.share(EDITOR, self.material), marked=True)
+            # given its share of the evidence, each item marked, and the
+            # prep it names ("You are given the script, ..., the prep"),
+            # here.
+            said = "\n".join([sessions._material(sessions.share(EDITOR, self.material),
+                                                 marked=True), values["{the prep}"]])
         if roles.role(name).release.tools:
             said = f"{said}\n\n{evidence_note(run)}" if said else evidence_note(run)
         return said
@@ -557,10 +560,11 @@ def meaning_groups(vectors: list[list[float]], who: list[str]) -> list[tuple[lis
 
 def group_by_meaning(asks: list[dict], vectors: list[list[float]]) -> list[dict]:
     """The questions to the sender grouped by meaning (swarm ask_sender
-    merged, Tim 2026-11-20): each ask is {"question" (where it was asked),
-    "voter" (who asked), "ask"}; one wording a group."""
-    who = [a["voter"] for a in asks]
-    return [{"id": f"ask-{n}", "question": asks[k]["ask"], "voters": len({who[i] for i in g}),
+    merged, Tim 2026-11-20): each ask is {"stage" (where it was asked),
+    "from" (who asked), "ask"}; one wording a group, with how many asked
+    it (`askers`)."""
+    who = [a["from"] for a in asks]
+    return [{"id": f"ask-{n}", "question": asks[k]["ask"], "askers": len({who[i] for i in g}),
              "asked": [asks[i] for i in g]}
             for n, (g, k) in enumerate(meaning_groups(vectors, who), 1)]
 
@@ -657,7 +661,7 @@ def _ask_sender(run: Run, swarm: sessions.BrainSwarmSession, kept: dict, among) 
     if not asks or asking.get("stopped"):
         return False
     grouped = group_by_meaning(
-        [{"question": a["stage"], "voter": a["from"], "ask": a["ask"]} for a in asks],
+        [{"stage": a["stage"], "from": a["from"], "ask": a["ask"]} for a in asks],
         _embedded([a["ask"] for a in asks], "the swarm's questions to the sender"))
     if not package_jobs.ask(run.doc["id"], grouped):
         return False
@@ -758,19 +762,26 @@ def close_note(run: Run, items: list[dict]) -> str:
 
 def _work_text(name: str, run: Run, work, marked: list[dict], kept: dict) -> str:
     """What one owner is given beside its instructions: the outline or
-    script as it is now; the editor the script marked part by part; the
-    owners whose approved material holds the prep, the prep again when it
-    changed since they were given it."""
+    script as it is now; the editor the script marked part by part; those
+    given the prep (`gets_prep`), the prep again when it changed since they
+    were given it."""
     out = [sessions._tag(work.key, work.text(), file=work.name)]
     if name == EDITOR and marked:
         out.append(sessions._tag("marked", sessions.marked_slides(marked), file=SCRIPT))
-    if "{the prep}" in role_prompts.PROMPTS[name].material:
+    if gets_prep(name):
         given = kept.setdefault("prep_given", {})
         digest = hashlib.sha256(_read(run.prep).encode("utf-8")).hexdigest()
         if given.get(name) not in (None, digest):
             out.append(sessions._tag("prep", _read(run.prep), file=PREP_MD))
         given[name] = digest
     return "\n\n".join(out)
+
+
+def gets_prep(name: str) -> bool:
+    """A participant whose approved prompt gives it the prep: the context
+    and structure owners' material holds it, and the editor's prompt names
+    it among what it is given."""
+    return "{the prep}" in role_prompts.PROMPTS[name].material or name == EDITOR
 
 
 def _mine(items: list[dict], name: str) -> list[dict]:

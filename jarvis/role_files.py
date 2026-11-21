@@ -2,8 +2,8 @@
 
 Tim, 2026-11-20: roles get only the MCP tools they need, written by us,
 never exec or a shell, and the same on both brains. A role that reads files
-(roles.FILE_READ_TOOLS: the author, the editor, the decision ready and the
-background judges) reads them here, on Claude in place of the built-in
+(roles.FILE_READ_TOOLS: the author, the editor, the context owner and the
+structure and decision owner) reads them here, on Claude in place of the built-in
 Read, Grep and Glob and on Codex in place of its shell:
 
     list_package_files    one page of a folder

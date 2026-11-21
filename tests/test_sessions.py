@@ -908,6 +908,18 @@ def test_the_program_applies_edits_only_where_their_old_text_is():
     assert new == "A beta ." and len(applied) == 2 and refused[0]["old"] == "BETA"
 
 
+def test_an_edit_whose_offsets_miss_applies_where_its_old_text_is_once():
+    # owner-prompts.md: an edit names its old text; the program applies it
+    # only where that text is exactly there.
+    text = "Alpha beta gamma beta."
+    new, applied, refused = sessions.apply_edits(text, [
+        {"start": 0, "end": 4, "old": "gamma", "new": "G"},     # offsets miss, there once
+        {"start": 0, "end": 4, "old": "beta", "new": "B"},      # there twice: which?
+        {"start": 17, "end": 21, "old": "beta", "new": "b"}])   # at its offsets
+    assert new == "Alpha beta G b." and [e["new"] for e in applied] == ["b", "G"]
+    assert [e["new"] for e in refused] == ["B"]
+
+
 # ── the swarm ─────────────────────────────────────────────────────────────
 
 class _Participant:

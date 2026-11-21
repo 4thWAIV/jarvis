@@ -1725,7 +1725,8 @@ pre-approved first round), and its concerns are `package_swarm.concerns`
 editor's language). Nobody votes: each owner fixes its concern by editing
 what it touches (each edit at its slide and field with its offsets, its
 reason and source, applied by the program only where its old text is
-exactly there, `package_script.apply_edits`, never Tim's own words, never
+exactly there: at its offsets, else the one place its field holds it,
+`sessions.apply_edits`, `package_script.apply_edits`; never Tim's own words, never
 leaving it not checking; what was applied and refused said as JARVIS's
 own turn), asks the sender only what only the sender knows
 (`ask_sender`), and signs its concerns off in the same turn
@@ -1767,9 +1768,9 @@ labels, Tim's material by `package_mark.tim_known`). Each participant's
 first message is made at its first turn (`_Firsts`): its share of the
 evidence (`evidence`, `sessions.share_values`: Tim's reader what he knows
 and had access to, kept apart; everyone else everything, marked), the
-prep for the context and structure owners (and again in a later turn
-when it changed, `_work_text`), the editor its share marked and the script
-marked part by part, and where the evidence is for one that searches it
+prep for the context and structure owners and the editor (`gets_prep`;
+again in a later turn when it changed, `_work_text`), the editor its share
+marked and the script marked part by part, and where the evidence is for one that searches it
 (`evidence_note`). What the participants ask the sender, every ask since
 it was last asked, is grouped by meaning into one list (`group_by_meaning`;
 Tim 2026-11-20): embedded by the engine's own model (`EngineUDS.embed`,
@@ -1793,7 +1794,7 @@ sent is taken as given only once it answers, `_heard`) between the run's
 processes.
 The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
 workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
-`DECK_QUESTIONS`). A round: the author writes `deck/presentation.yaml`
+`DECK_CONCERNS`, each of `DECK_QUESTIONS` for each owner and the editor). A round: the author writes `deck/presentation.yaml`
 (presentation/1) from the passed script alone, one script slide to one
 deck slide, in order and with the same id (a script slide that asks a
 decision is the deck's decision slide asking it, its words the decision's
@@ -3648,8 +3649,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   structured facts, its prose), and the 28 labels a briefing is marked with
   (see "A package's evidence")
 - `package_swarm.py` / `research_log.py` — The research and swarm steps:
-  the author's research turn, the swarm's rounds, votes, questions to the
-  sender and findings, kept between the run's processes; every search a
+  the author's research turn, the cooperative swarm's outline, fill and
+  fix passes, its sign-offs, questions to the sender and what is left,
+  kept between the run's processes; every search a
   role makes logged, and the hits the passed script used (see "A package's
   evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
