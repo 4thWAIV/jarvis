@@ -293,12 +293,51 @@ def test_two_failed_pings_restart_a_hung_engine_at_once(no_previous):
     alive = {"ok": True}
     sup, spawned = _supervisor(clock, healthy=lambda: alive["ok"])
     sup.start()
+    assert sup.tick() == "running"                        # it answered once: it is open
     alive["ok"] = False
     assert sup.tick() == "running"
     sup.tick()
     assert spawned[0].returncode is not None
     assert "health" in sup.last_reason
     assert len(spawned) == 2 and sup.state == "running"   # the first restart is at once
+
+
+def test_an_engine_still_opening_is_never_pinged_to_death(no_previous):
+    """A restarted engine takes about 40 s to open a full data folder; the
+    server's loop pings it every PING_EVERY_SEC meanwhile. Until it has
+    answered once, a missed ping is it opening, not a hang: it is waited for
+    up to OPEN_BOUND_SEC, and only then restarted."""
+    clock = Clock()
+    alive = {"ok": True}
+    sup, spawned = _supervisor(clock, healthy=lambda: alive["ok"])
+    sup.start()
+    assert sup.tick() == "running"
+    spawned[0].returncode = -6                            # killed: the restart opens again
+    sup.tick()
+    assert len(spawned) == 2
+    alive["ok"] = False
+    for _ in range(int(60 / kc.PING_EVERY_SEC)):
+        clock.t += kc.PING_EVERY_SEC
+        assert sup.tick() == "running"
+    assert spawned[1].returncode is None and len(spawned) == 2
+    alive["ok"] = True
+    assert sup.tick() == "running" and sup.ready()
+    alive["ok"] = False                                   # open now: a hang is a hang
+    sup.tick()
+    sup.tick()
+    assert spawned[1].returncode is not None and len(spawned) == 3
+
+
+def test_an_engine_that_never_answers_is_restarted_at_the_open_bound(no_previous):
+    clock = Clock()
+    sup, spawned = _supervisor(clock, healthy=lambda: False)
+    sup.start()
+    clock.t += kc.OPEN_BOUND_SEC - 1
+    assert sup.tick() == "running" and len(spawned) == 1
+    clock.t += 1
+    sup.tick()
+    assert spawned[0].returncode is not None
+    assert "had not answered" in sup.last_reason and len(spawned) == 2
 
 
 def test_the_footprint_is_reported_never_acted_on(no_previous):
