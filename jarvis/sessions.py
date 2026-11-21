@@ -41,6 +41,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -49,7 +50,7 @@ from typing import Awaitable, Callable, Optional, Protocol
 from xml.sax.saxutils import quoteattr, unescape
 
 from jarvis import (brain_provider, evidence_types, model_tiers, private_files, role_mcp,
-                    role_prompts, roles, settings_service, text_parts)
+                    role_prompts, roles, run_executor, settings_service, text_parts)
 from jarvis.brain import BrainConfig
 
 log = logging.getLogger("jarvis.sessions")
@@ -267,8 +268,13 @@ class BrainChatSession:
     async def _open_one(self, model: str) -> None:
         provider = brain_provider.provider(brain_provider.ENGINES[self.pick.engine])
         self._child = provider.session(self._config(model), self._event, self._exited)
+        wall, _ = run_executor.bounds()
         try:
-            await self._child.open(self.prompt)
+            async with asyncio.timeout(wall):
+                await self._child.open(self.prompt)
+        except TimeoutError as e:
+            raise SessionFailed(f"the {self.role.name} session did not start within "
+                                f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
         except OSError as e:
             raise SessionFailed(str(e)) from e
         self.model = model
@@ -300,16 +306,35 @@ class BrainChatSession:
         """Started on the first model of the sweep the brain accepts."""
         await self._open_next()
 
-    async def _turn(self, text: str, timeout: float, answer_format: Optional[dict]) -> str:
+    async def _turn(self, text: str, timeout: Optional[float],
+                    answer_format: Optional[dict]) -> str:
+        """One turn, held to the run's bounds (run_executor.bounds): it
+        fails once it has not answered within the wall clock (`timeout`
+        where the caller names one, else Settings' run_timeout_sec), or
+        once its brain has written nothing for run_idle_sec. A run always
+        reaches a terminal state: a turn past its bound is SessionFailed,
+        the step's Error, and its process is ended by the caller's close."""
+        wall, idle = run_executor.bounds(timeout)
         self._parts = []
         self._done = asyncio.get_running_loop().create_future()
+        started = time.monotonic()
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(wall):
                 await self._child.send(text, answer_format=answer_format)
-                return await self._done
+                while True:
+                    heard = max(started, getattr(self._child, "heard_at", started))
+                    left = idle - (time.monotonic() - heard)
+                    if left <= 0:
+                        raise SessionFailed(
+                            f"the {self.role.name} session's brain wrote nothing for "
+                            f"{idle:.0f} s (Settings, Agents: run_idle_sec)")
+                    try:
+                        return await asyncio.wait_for(asyncio.shield(self._done), left)
+                    except TimeoutError:
+                        continue        # heard since? measured again
         except TimeoutError as e:
             raise SessionFailed(f"the {self.role.name} session did not answer within "
-                                f"{timeout:.0f} s") from e
+                                f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
         except OSError as e:
             raise SessionFailed(str(e)) from e
 

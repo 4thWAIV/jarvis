@@ -470,6 +470,16 @@ EXEMPT = {
         "it builds a package role's `claude -p` argument list; the only field it reads is the "
         "session id JARVIS made for that role's own session (`--session-id`), and the role's "
         "prompt is one argument, never a header the brain reads or words said"),
+    "sessions._open_one": (
+        "the field it reads is the brain provider of the role's own pick (claude or codex), "
+        "JARVIS's own word; the text it builds is a role session's failure to start within "
+        "Settings' run_timeout_sec, raised as SessionFailed into the package job's Error reason "
+        "with the role's own name, never a brain header, never said"),
+    "codex_role_probe.judge": (
+        "the field it reads is the id of an item in the Codex app server's own messages to the "
+        "probe, used only to pair each tool listing's start with its end; the text it builds is "
+        "a server and tool name in the probe's verdict, printed to the probe's own terminal, "
+        "never a brain header, never said"),
     "sessions.vote": (
         "the field it reads is the question's state in the swarm, one of JARVIS's own words "
         "(open, proven, failed); the call and each vote it writes are turns of the package "

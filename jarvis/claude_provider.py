@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -446,6 +447,9 @@ class ClaudeSession:
         self._killed = False
         self._reader: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
+        # When it last wrote a line (time.monotonic()): what a role
+        # session's idle bound is measured from (sessions.BrainChatSession).
+        self.heard_at = time.monotonic()
         # Text blocks of the turn in flight: an API error arrives as one.
         self._assistant_text: list[str] = []
 
@@ -564,6 +568,7 @@ class ClaudeSession:
                     continue
                 if not raw:
                     break
+                self.heard_at = time.monotonic()
                 try:
                     # decode() FIRST, and with errors="replace".
                     #

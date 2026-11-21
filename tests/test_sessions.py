@@ -565,6 +565,84 @@ async def test_a_sweep_with_no_model_left_is_no_model(monkeypatch, tmp_path):
     assert fake.configs[-1].resume == "s-1" and fake.configs[-1].role.session_id is None
 
 
+class _Silent:
+    """A brain whose sessions take a turn and never answer: silent, or
+    writing lines (`chatty`) without ever ending the turn."""
+
+    def __init__(self, chatty=False):
+        self.chatty, self.closed = chatty, []
+        brain_ = self
+
+        class Session:
+            def __init__(self, config, on_event, on_exit):
+                import time
+                self.heard_at = time.monotonic()
+                self._writing = None
+
+            async def open(self, instructions):
+                pass
+
+            async def send(self, text, answer_format=None):
+                import asyncio
+                import time
+                if brain_.chatty:
+                    async def write():
+                        while True:
+                            self.heard_at = time.monotonic()
+                            await asyncio.sleep(0.05)
+                    self._writing = asyncio.create_task(write())
+
+            async def close(self, timeout=5):
+                if self._writing:
+                    self._writing.cancel()
+                brain_.closed.append(self)
+        self.Session = Session
+
+    def session(self, config, on_event, on_exit):
+        return self.Session(config, on_event, on_exit)
+
+
+@pytest.mark.asyncio
+async def test_a_call_whose_brain_writes_nothing_fails_at_the_idle_bound(monkeypatch, tmp_path):
+    """The hung marking call of a real run (2026-11-20): every role session
+    call ends; one whose brain writes nothing for run_idle_sec fails, and its
+    process is closed."""
+    from jarvis import brain_provider, run_executor
+    fake = _Silent()
+    monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
+    monkeypatch.setattr(run_executor, "bounds", lambda timeout=None: (30.0, 0.3))
+    chat = sessions.BrainChatSession("marking", "R", tmp_path,
+                                     pick=model_tiers.Pick("claude", "sonnet", 3, "fixed",
+                                                           ["sonnet"]))
+    with pytest.raises(sessions.SessionFailed, match="run_idle_sec"):
+        await asyncio.wait_for(chat.once("hello", None), 5)
+    assert len(fake.closed) == 1, "the call's process is ended"
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_writes_but_never_answers_fails_at_the_wall_clock(monkeypatch,
+                                                                            tmp_path):
+    from jarvis import brain_provider, run_executor
+    fake = _Silent(chatty=True)
+    monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
+    monkeypatch.setattr(run_executor, "bounds", lambda timeout=None: (0.6, 0.2))
+    chat = sessions.BrainChatSession("marking", "R", tmp_path,
+                                     pick=model_tiers.Pick("claude", "sonnet", 3, "fixed",
+                                                           ["sonnet"]))
+    with pytest.raises(sessions.SessionFailed, match="run_timeout_sec"):
+        await asyncio.wait_for(chat.once("hello", None), 5)
+    assert len(fake.closed) == 1
+
+
+def test_a_calls_bounds_are_the_runs_own_settings():
+    from jarvis import run_executor
+    from tests.settings_fixtures import hold_setting
+    hold_setting("run_timeout_sec", 120.0)
+    hold_setting("run_idle_sec", 45.0)
+    assert run_executor.bounds() == (120.0, 45.0)
+    assert run_executor.bounds(77.0) == (77.0, 45.0), "a caller's own wall clock wins"
+
+
 def test_model_refused_reads_both_brains_wording():
     assert sessions.model_refused("There's an issue with the selected model (fable). It may "
                                   "not exist or you may not have access to it.")

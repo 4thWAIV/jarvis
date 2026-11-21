@@ -3500,13 +3500,23 @@ not found empty and its context the sentence around it;
 sentence rule, `speech.sentence_end`, extended for headings, list items
 and paragraphs, and phrases cut at commas, semicolons, colons, dashes,
 brackets and the joining words) and scores every part against every label
-in one call, Tim's material with its knowledge states; `BrainRetrievalSession`
+in batches small enough to be answered whole (`BATCH_PARTS`, a sentence
+never apart from its phrases, each call given the whole file; one not
+answered whole halved and asked again; a script slide by slide,
+`mark_slides`), Tim's material with its knowledge states; `BrainRetrievalSession`
 answers each free-text reference as typed entries of
 `evidence_types.NAMED_BY_LABEL` or not found; `BrainEditingSession` gives the
 editor the script, its marked parts and the information, and the program
 applies only edits whose old text is at their offsets (`apply_edits`).
 A session that cannot answer raises
-`SessionFailed`, the step's Error.
+`SessionFailed`, the step's Error. Every call of a role session ends: its
+start and each turn are held to the run's own bounds
+(`run_executor.bounds`: Settings' `run_timeout_sec` as the wall clock,
+unless the caller names one, and `run_idle_sec` measured from the last line
+its brain wrote, `heard_at` on the provider session), and a call past
+either is `SessionFailed` naming the setting, its process closed, so a
+package run always reaches a terminal state (a marking call of a real run
+once waited all night on an open connection).
 Each role (`roles.py`) has its tier, effort, engines.json kind, lifetime
 and its `Release`: every role on either brain starts locked down (no tool,
 no server, no shell, no file) and is released for its run to exactly

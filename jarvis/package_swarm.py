@@ -95,7 +95,9 @@ NAMES = (AUTHOR, EDITOR, "cares_judge", "decision_ready_judge", "background_judg
 JUDGE_QUESTION = {"cares_judge": "cares", "decision_ready_judge": "decision_ready",
                   "background_judge": "background", "order_judge": "order"}
 ENOUGH = "enough-"
-# No turn is cut off by a clock the design does not give.
+# Every role session call is held to the run's own bounds, Settings'
+# run_timeout_sec and run_idle_sec (run_executor.bounds, applied by
+# sessions.BrainChatSession): None names no other wall clock.
 TIMEOUT: Optional[float] = None
 
 # How a participant's ChatSession is made and its model picked (tests give

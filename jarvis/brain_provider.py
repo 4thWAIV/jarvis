@@ -84,6 +84,10 @@ class ProviderSession(Protocol):
     was made with, from the moment it opens; when it ends, for any reason,
     it calls its `ExitSink` once."""
 
+    # When it last wrote anything, by time.monotonic(): the idle bound of a
+    # role session's call is measured from it (sessions.BrainChatSession).
+    heard_at: float
+
     @property
     def alive(self) -> bool: ...
 

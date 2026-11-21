@@ -449,6 +449,9 @@ class CodexSession:
         self._last_usage: dict = {}
         self._reply: Optional[str] = None
         self.disabled: list[str] = []
+        # When it last wrote a line (time.monotonic()): what a role
+        # session's idle bound is measured from (sessions.BrainChatSession).
+        self.heard_at = time.monotonic()
 
     @property
     def alive(self) -> bool:
@@ -671,6 +674,7 @@ class CodexSession:
                     continue
                 if not raw:
                     break
+                self.heard_at = time.monotonic()
                 try:
                     msg = json.loads(raw.decode(errors="replace"))
                 except ValueError:

@@ -199,6 +199,15 @@ def _resolve_idle(explicit: float | None) -> float:
                           _IDLE_OUTPUT_SEC, "a silent run")
 
 
+def bounds(timeout: float | None = None) -> tuple[float, float]:
+    """A run's two bounds, (wall clock, idle): Settings' run_timeout_sec and
+    run_idle_sec, resolved as every run's are (`timeout` in place of the
+    first where a caller names one). A package run's role session calls are
+    held to the same two (sessions.BrainChatSession): a run always reaches
+    a terminal state, so no call of it waits without end."""
+    return _resolve_default_timeout(timeout), _resolve_idle(None)
+
+
 class _IdleTimeout(Exception):
     """The child held stdout open and said nothing for too long.
 
