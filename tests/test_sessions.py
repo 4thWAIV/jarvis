@@ -910,6 +910,12 @@ class _Participant:
         self.calls, self.log = list(calls or []), log if log is not None else []
         self.changed = list(changed or [])
 
+    async def open(self):
+        pass
+
+    async def close(self):
+        pass
+
     async def ask(self, text, timeout, answer_format=None, strict=True):
         self.sent.append(text)
         if answer_format is sessions.REOPEN_FORM:
@@ -967,11 +973,60 @@ async def test_a_participant_calls_the_vote_when_its_discussion_settles():
               "order_judge": _Participant("order_judge", ["yes"])}
     swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
                                            sessions.Question("order", "First?")])
+    await swarm.open()
     await swarm.turn("cares_judge", 5)
     assert swarm.state == {"cares": sessions.PROVEN, "order": sessions.OPEN}
     assert {v.called_by for v in swarm.votes} == {"cares_judge"}
     assert [m["text"] for m in swarm.conversation][0] == "cares_judge speaks", \
         "nothing is written in a participant's name but its own words"
+
+
+@pytest.mark.asyncio
+async def test_a_vote_called_before_the_swarm_opens_is_held_for_its_round(tmp_path):
+    """A real run on Codex (2026-11-21): the author called a vote on its
+    research turn, when no other voter's session was open, and the run
+    failed ("the editor session is not open"). The call is held, kept
+    between the run's processes, and called on the first round once every
+    participant has spoken."""
+    from jarvis import package_script
+    log = []
+    script = package_script.ScriptFile(tmp_path / "script.yaml", ["q1"])
+
+    class Author(_Participant):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            if answer_format is not None and "script" in answer_format["properties"]:
+                answer = {"message": "Here it is.", "call_vote": [], "script": _script()}
+                return sessions.Reply(json.dumps(answer), answer)
+            return await super().ask(text, timeout, answer_format, strict)
+
+    class Editor(_Participant):
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            if answer_format is sessions.VOTE_FORM:
+                return await super().ask(text, timeout, answer_format, strict)
+            answer = {"edits": [], "sent_back": [], "call_vote": []}
+            return sessions.Reply(json.dumps(answer), answer)
+
+    questions = [sessions.Question("cares", "Does Tim care?")]
+    researching = sessions.BrainSwarmSession(
+        {"author": _Participant("author", calls=[["cares"]], log=log),
+         "editor": _Participant("editor", log=log)}, questions)
+    await researching.turn("author", 5)
+    assert researching.held == [("author", ["cares"])] and researching.votes == []
+    kept = json.loads(json.dumps(researching.saved()))
+
+    people = {"author": Author("author", log=log), "editor": Editor("editor", ["yes"], log=log),
+              "cares_judge": _Participant("cares_judge", ["yes"], log=log)}
+    swarm = sessions.BrainSwarmSession(people, questions)
+    swarm.restore(kept)
+    await swarm.open()
+
+    async def mark(_written):
+        return []
+    log.clear()
+    result = await swarm.round(5, script, mark)
+    assert log == ["cares_judge", "editor votes", "cares_judge votes"]
+    assert {v.called_by for v in swarm.votes} == {"author"}
+    assert swarm.held == [] and result["result"] == "passed"
 
 
 def _script(title="It broke.", narration="It broke on Tuesday.", words="", question="q1"):

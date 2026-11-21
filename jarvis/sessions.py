@@ -663,6 +663,12 @@ class BrainSwarmSession:
         self._introduced: set[str] = set()
         self._seen = {name: 0 for name in participants}
         self.script = ""                    # the digest of the script now (script_digest)
+        # Votes called before the swarm is open (the author's research turn,
+        # when no other voter's session is), each (caller, question ids):
+        # held, and called on its first round once every participant has
+        # spoken (`play_round`).
+        self.held: list[tuple[str, list]] = []
+        self._opened = False
 
     @classmethod
     def for_roles(cls, names: list[str], questions: list[Question], folder: Path, *,
@@ -692,6 +698,7 @@ class BrainSwarmSession:
     async def open(self) -> None:
         for chat in self.participants.values():
             await chat.open()
+        self._opened = True
 
     async def close(self) -> None:
         for chat in self.participants.values():
@@ -731,7 +738,12 @@ class BrainSwarmSession:
 
     async def _called(self, name: str, ids, timeout: float) -> None:
         """The votes a participant called on its turn, each on a question
-        still open."""
+        still open. Called before the swarm is open, they are held
+        (`held`) until its round."""
+        if not self._opened:
+            if isinstance(ids, list) and ids:
+                self.held.append((name, list(ids)))
+            return
         for qid in ids if isinstance(ids, list) else []:
             if self.state.get(str(qid)) == OPEN:
                 await self.vote(str(qid), timeout, called_by=name)
@@ -912,6 +924,9 @@ class BrainSwarmSession:
                    else _tag("marked", marked_slides(marked), file=script.name))
             more = add_for(name, text, marked) if add_for else ""
             await self.turn(name, timeout, add="\n\n".join(t for t in (add, more) if t))
+        held, self.held = self.held, []
+        for caller, ids in held:
+            await self._called(caller, ids, timeout)
         await self.reopen_changed(timeout)
         await self.vote_open(timeout)
         return True
@@ -967,7 +982,7 @@ class BrainSwarmSession:
                 "reopenings": list(self.reopenings),
                 "conversation": list(self.conversation), "rounds": self.rounds,
                 "seen": dict(self._seen), "introduced": sorted(self._introduced),
-                "script": self.script}
+                "script": self.script, "held": [list(h) for h in self.held]}
 
     def restore(self, saved: dict) -> None:
         """The swarm as `saved` kept it."""
@@ -983,6 +998,8 @@ class BrainSwarmSession:
                            if n in self._seen})
         self._introduced = set(saved.get("introduced") or [])
         self.script = str(saved.get("script") or "")
+        self.held = [(str(h[0]), list(h[1])) for h in saved.get("held") or []
+                     if isinstance(h, (list, tuple)) and len(h) == 2]
 
 
 # ── DecisionSession ───────────────────────────────────────────────────────

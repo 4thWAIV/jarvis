@@ -3476,7 +3476,10 @@ judges every item with its state). Every turn's answer is `TURN_FORM`,
 its message and the votes it calls (`call_vote`; a turn answered in words
 alone, which a long-lived Claude session may give, is its message word for
 word and calls no vote: `ask`'s `strict` off): any participant calls
-the vote on a question whose discussion has settled, held at once; a vote
+the vote on a question whose discussion has settled, held at once (one
+called before the swarm is open, on the author's research turn, is kept,
+`held`, between the run's processes and called on its first round once
+every participant has spoken); a vote
 a turn in each voter's own session (`vote`, `VOTE_FORM`, `Vote.called_by`),
 a majority of yes proving a question and anything else failing it, the
 Theory of Mind reader never voting and the author only where
