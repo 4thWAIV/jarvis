@@ -1671,11 +1671,14 @@ looked up is written to `data/work/<id>/research/` (`queries.json`,
 `queries.md`) with a SummarizationSession's summaries of it
 (`summaries.md`, `sessions.SummarizationSession`: `summarize(sources,
 purpose)`, each `Summary` citing the hit paths it rests on, one citing a
-path not in its sources rejected by `sessions.cited_in_sources`), and read
-into the engine at once (`package_evidence.index_folder`). The brain's
-(`BrainSummarizationSession`: tier 3, one call, no tools) has no approved
-prompt, effort or engines.json entry yet, so it cannot start and says so:
-what was looked up is written and the summaries wait.
+path not in its own source rejected by `sessions.cited_in_sources`), and
+read into the engine at once (`package_evidence.index_folder`). The brain's
+(`BrainSummarizationSession`, Tim 2026-11-20: its prompt role-prompts.md
+Summarization word for word, the role `summarization`, tier 3, effort low,
+one call, no tools, its own Settings, Brains entry `summarization`
+defaulting as the other roles do) writes them; one that cannot be made
+leaves what was looked up written, logged, and the next change tries
+again.
 The research step (`package_swarm.research`, `PRODUCERS["research"]`;
 design: workflow.yaml research) is the author's first turn in its own
 long-lived ChatSession (tier 1, high effort, the research tools), in the
@@ -2868,7 +2871,13 @@ listing the versions. It finds the server by the one reader,
 port and pid to `data_paths.server_address_path()` (`server-address.json`
 in its data folder; the same address the brain's tool channel dials,
 `server_address.own()`) and removes it on a clean shutdown; a record whose
-pid is dead is stale and ignored. With a live record the command asks that
+pid is dead is stale and ignored. The same record keeps a second JARVIS off
+one data folder (Tim, 2026-11-20): a start refuses, before anything
+starts, while it names a live pid that is neither its own (the restart's
+`os.execv` keeps it) nor its parent's (Windows' execv), saying which
+process and address (`server_address.refusal`,
+`server._refuse_second_start`, from `main()` and `lifespan` alike), so a
+second start never ends the first one's knowledge engine. With a live record the command asks that
 address with the tool token, and a refused connection there stops it
 without updating. With none it looks at `JARVIS_URL`, else
 `JARVIS_TOOL_URL`'s address, else 127.0.0.1:8340; only a refused connection
@@ -3364,8 +3373,8 @@ to the least stressed one. Token stress is the brain board's plus/minus,
 window): stressed below 0, least stressed the highest; a brain not measured
 is neither. Each role of a package's making is a kind too
 (`engine_choice.ROLE_KINDS`: editor, judges, Theory of Mind reader,
-retrieval, marking, classification, extraction; the author is
-`package_author`), each on the requester's engine by default, its model
+retrieval, marking, classification, extraction, summarization; the author
+is `package_author`), each on the requester's engine by default, its model
 its tier's (model_tiers.pick); and "Run the judges on the other brain from
 the author's" (`judges_other_brain`, `other_brain_for_judges`) moves the
 judges off the author's brain, ignored while there is only one brain. An engine he names for one agent (the tools' `engine`, or a model
@@ -3455,15 +3464,20 @@ Each role (`roles.py`) has its tier, effort, engines.json kind, lifetime
 and its `Release`: every role on either brain starts locked down (no tool,
 no server, no shell, no file) and is released for its run to exactly
 its release, the one definition both brains read (Tim, 2026-11-20; no role
-is exclusive to one brain, and no role has a shell on either): its
-built-in tools, its own tool server's tools and, for a writer, writes in
-its run folder;
-the folders it reads are its run's (`Launch.reads`). The author has the
-research tools (`roles.RESEARCH_TOOLS`, the research right's with
-`search_history` and `read_history`) and Read, Write, Edit, Grep and Glob;
-the editor the evidence search (`knowledge_search`) and Read, Grep and
-Glob; the decision ready and background judges the research tools and
-Read, Grep and Glob; the Theory of Mind reader and the cares and order
+is exclusive to one brain, and no role has exec or a shell on either): its
+own tool server's tools and, for a writer, Write and Edit in its run
+folder (`roles.WRITE_TOOLS`); no role reads a file with a built-in tool.
+A role that reads files reads them with its file tools
+(`roles.FILE_READ_TOOLS`, `role_files.py`: `list_package_files`,
+`read_package_file`, `search_package_files`), read only, on its own tool
+server, through folder_readers (no link followed, every page and window
+bounded), inside its run folder and the folders it reads (`Launch.reads`,
+given to the server as `--read`), hidden, credential and key files never
+shown. The author has the research tools (`roles.RESEARCH_TOOLS`, the
+research right's with `search_history` and `read_history`), the file tools
+and Write and Edit; the editor the evidence search (`knowledge_search`) and
+the file tools; the decision ready and background judges the research
+tools and the file tools; the Theory of Mind reader and the cares and order
 judges nothing (their material, only what Tim knows and had access to, is
 in their prompt); retrieval its read tools for Work items, packages,
 messages, workflows and runs and its GitHub lookups (`role_lookups.py`:
@@ -3475,19 +3489,19 @@ checked by shape, never a shell string, and no deadline of its own). They
 find what a reference names and never fetch it: a pull request's
 description and diff, a CI run's jobs and failed logs, a commit's diff and
 a branch's commits are gather's own fetch (`evidence_readers.py`, the same
-checks of shape), never a role's tool; marking, classification and
-extraction nothing. A role's tools are its own tool server (`role_mcp.py`,
-`python -m jarvis.role_mcp --role <role>`, server name `jarvis_role`),
-which offers only them: a GitHub lookup runs there, and every other call
+checks of shape), never a role's tool; marking, classification,
+extraction and summarization nothing. A role's tools are its own tool
+server (`role_mcp.py`, `python -m jarvis.role_mcp --role <role> [--read
+<folder> ...]`, server name `jarvis_role`), which offers only them: a
+GitHub lookup and a file tool run there, and every other call
 goes to `/internal/tool` with the tool token naming the role;
 the server answers a role only for its own tools and as a call that is
 never his turn (`_tool_caller` `role:<name>`). Claude launches a role on
 JARVIS's own settings (`claude_provider.role_command`: `--restricted
 --strict-mcp-config --system-prompt`, its `--tools`, `--allowedTools`,
-`--permission-prompts none`, `--add-dir` for what it may read, and for a
-writer `acceptEdits` with those folders denied to `Edit`, so it writes in
-its run folder only; never `--safe-mode`, `--bare` or skipped
-permissions). Codex runs a role in JARVIS's own Codex home
+`--permission-prompts none`, no `--add-dir`, and for a writer
+`acceptEdits`, so it writes in its run folder only; never `--safe-mode`,
+`--bare` or skipped permissions). Codex runs a role in JARVIS's own Codex home
 (`CodexSession._open_role`, `codex_provider.role_release`, measured on
 Codex 0.171.0): the lockdown is every feature off but
 `ROLE_KEEP_FEATURES` (no `code_mode_host`, so `exec` refuses to run),
@@ -3497,10 +3511,17 @@ switched off, read-only, ephemeral for one-shot; a role with tools has the
 code-mode host on and its own tool server, the only one added (with the
 shell off, `exec` runs JavaScript with no file, process or network access
 and reaches only that server's tools, Codex's clock and MCP resource
-listing beside them); a role with file tools has the shell on under the
-`ROLE_PROFILE` permission profile (reads denied everywhere but
-`:minimal`, the folders it reads and its run folder; writes in its run
-folder only, for a writer, with the file-editing tool; no network).
+listing beside them), its file tools among them; the shell
+(`shell_tool`) stays off for every role, and a writer has the file-editing
+tool under the `ROLE_PROFILE` permission profile (reads denied everywhere
+but `:minimal` and its run folder, writes in its run folder only, no
+network). Proven 2026-11-20 with a real probe turn on Codex for every
+role, asked to run a shell command, read a file outside its tools and make
+a network call through `exec`: in a role with tools `exec` has no process,
+file or network API (`Deno`, `require`, `process`, `fetch`,
+`XMLHttpRequest` all undefined), in one without it refuses to run ("code-mode
+host is disabled"), no marker of a command, the file or the page came
+back, and only its own tool server's tools were reached.
 Retrieval runs on Codex as on Claude, with the code-mode host and its own
 tool server only. On Codex
 0.171.0 the live list holds every tier's model (GPT-6.2 Astra and Sol,
