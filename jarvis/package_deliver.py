@@ -3,8 +3,8 @@
 process after the deck passed (package_jobs.PRODUCERS):
 
   assemble       the deck's zip carries, under `.jarvis/briefing/`, the
-                 research, the prep, the passed script, the swarm's
-                 conversation and its votes (BRIEFING); who asked
+                 research, the prep, the outline, the passed script, the
+                 swarm's conversation and every sign-off (BRIEFING); who asked
                  (`requested_by`) is in JARVIS's signature.
   write_message  the message that carries it to Tim, written by the program
                  (no sender text): slide 1 of the passed script (its title
@@ -33,7 +33,7 @@ from jarvis import package_jobs, package_script, package_signature, package_swar
 DELIVER = "deliver"
 FOLDER = "package"                       # the signed package, in the run's folder
 BRIEFING = ".jarvis/briefing"
-VOTES = "votes.json"
+SIGNOFFS = "signoffs.json"
 
 
 def _deck_noted(doc: dict) -> dict:
@@ -46,11 +46,11 @@ def _deck_noted(doc: dict) -> dict:
 
 def briefing_files(run: ps.Run, review: Path) -> dict[str, bytes]:
     """What the package carries under `.jarvis/briefing/`: the research,
-    the prep, the passed script, the whole conversation and every vote
-    (the script's and the deck's, with each question's state and the
-    judgements whether a change reopened one). A Blocked names any missing."""
-    named = {ps.RESEARCH_MD: run.research, ps.PREP_MD: run.prep, ps.SCRIPT: run.script,
-             ps.CONVERSATION: run.folder / ps.CONVERSATION}
+    the prep, the outline, the passed script, the whole conversation and
+    every sign-off (the script's and the deck's, each concern's state, and
+    what the sender was asked). A Blocked names any missing."""
+    named = {ps.RESEARCH_MD: run.research, ps.PREP_MD: run.prep, ps.OUTLINE: run.outline,
+             ps.SCRIPT: run.script, ps.CONVERSATION: run.folder / ps.CONVERSATION}
     missing = [name for name, path in named.items() if not path.is_file()]
     try:
         result = json.loads(review.read_text(encoding="utf-8"))
@@ -61,10 +61,10 @@ def briefing_files(run: ps.Run, review: Path) -> dict[str, bytes]:
         raise package_jobs.Blocked(DELIVER, "The run's " + ", ".join(missing) + " is missing.",
                                    "JARVIS assembled the package from the run's folder.",
                                    "A new run.")
-    votes = {k: result.get(k) for k in ("questions", "votes", "reopenings")}
+    signoffs = {k: result.get(k) for k in ("concerns", "signoffs", "asked")}
     files = {f"{BRIEFING}/{name}": path.read_bytes() for name, path in named.items()}
-    files[f"{BRIEFING}/{VOTES}"] = (json.dumps(votes, indent=2, ensure_ascii=False) + "\n"
-                                   ).encode("utf-8")
+    files[f"{BRIEFING}/{SIGNOFFS}"] = (json.dumps(signoffs, indent=2, ensure_ascii=False)
+                                      + "\n").encode("utf-8")
     return files
 
 

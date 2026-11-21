@@ -24,12 +24,15 @@ An engine he names for one agent ("on Codex") is his choice and is kept.
 
 Each role of a package's making is a kind too, by the same method (his
 word, "engines per role by the main brains' method", 2026-11-19): the
-author is `package_author`; the editor, the judges, the Theory of Mind
-reader, retrieval, marking, classification, extraction and summarization
-each have their own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
+author is `package_author`; the editor, the owners, Tim's reader,
+retrieval, marking, classification, extraction and summarization each have
+their own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
 (model_tiers.pick) unless its entry names one. One more setting, "run the
-judges on the other brain from the author's" (`judges_other_brain`, his
-word 2026-11-19), is ignored while JARVIS has only one brain.
+judges on the other brain from the author's" (his word 2026-11-19), now the
+owners, who took the judges' place in the cooperative swarm
+(`owners_other_brain`), is ignored while JARVIS has only one brain. A file
+saved before the swarm became cooperative is read with its judges' entry as
+the owners', its Theory of Mind reader's as Tim's reader's (`WAS`).
 
 Kept in `<data>/jarvis/engines.json`, beside brains.json, so the page, the
 brain's tools and make_package (another process) read the same choice. A
@@ -51,9 +54,14 @@ from jarvis import brain_provider, brains_config, data_paths, usage_store
 log = logging.getLogger("jarvis.engines")
 
 # The roles of a package's making beside its author (sessions.py).
-ROLE_KINDS = ("editor", "judges", "theory_of_mind_reader", "retrieval", "marking",
+ROLE_KINDS = ("editor", "owners", "tims_reader", "retrieval", "marking",
               "classification", "extraction", "summarization")
 KINDS = ("package_author", "run", "build", "agent_package") + ROLE_KINDS
+# The names a kind or the setting had before the cooperative swarm
+# (construction-drafts.md "Cooperative swarm", 2026-11-21), read in their
+# successors' place from a file saved then.
+WAS = {"owners": "judges", "tims_reader": "theory_of_mind_reader",
+       "owners_other_brain": "judges_other_brain"}
 PICKS = ("fixed", "requester", "least_stress")
 ENGINES = brain_provider.ENGINES
 
@@ -116,9 +124,11 @@ def load() -> dict:
     kinds = body.get("kinds") if isinstance(body, dict) else None
     kinds = kinds if isinstance(kinds, dict) else {}
     body = body if isinstance(body, dict) else {}
-    return {"kinds": {k: _setting(kinds.get(k)) or dict(DEFAULTS[k]) for k in KINDS},
+    def saved(where: dict, key: str):
+        return where[key] if key in where else where.get(WAS.get(key, key))
+    return {"kinds": {k: _setting(saved(kinds, k)) or dict(DEFAULTS[k]) for k in KINDS},
             "override_stressed": bool(body.get("override_stressed")),
-            "judges_other_brain": bool(body.get("judges_other_brain"))}
+            "owners_other_brain": bool(saved(body, "owners_other_brain"))}
 
 
 def _save(cfg: dict) -> None:
@@ -173,18 +183,18 @@ def set_override(on: bool) -> dict:
     return cfg
 
 
-def set_judges_other_brain(on: bool) -> dict:
+def set_owners_other_brain(on: bool) -> dict:
     cfg = load()
-    cfg["judges_other_brain"] = bool(on)
+    cfg["owners_other_brain"] = bool(on)
     _save(cfg)
     return cfg
 
 
-def other_brain_for_judges(kind: str, author_engine: Optional[str]) -> Optional[str]:
-    """The brain the judges run on when Settings puts them on the other
-    brain from the author's, or None: not the judges, the setting off, the
+def other_brain_for_owners(kind: str, author_engine: Optional[str]) -> Optional[str]:
+    """The brain the owners run on when Settings puts them on the other
+    brain from the author's, or None: not the owners, the setting off, the
     author's brain unknown, or only one brain."""
-    if kind != "judges" or not author_engine or not load()["judges_other_brain"]:
+    if kind != "owners" or not author_engine or not load()["owners_other_brain"]:
         return None
     others = [e for e in available() if e != author_engine]
     return others[0] if others else None

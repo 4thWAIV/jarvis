@@ -71,7 +71,7 @@ def _listed(engine):
 
 def test_a_role_s_brain_comes_from_engines_json_and_its_model_from_its_tier():
     brains_config.add("openai")
-    pick = model_tiers.pick("judges", 2, requester="codex", listed=_listed)
+    pick = model_tiers.pick("owners", 2, requester="codex", listed=_listed)
     assert (pick.engine, pick.model, pick.why) == ("codex", "gpt-6.2-sol", "requester")
     engine_choice.set_kind("marking", "fixed", "claude", None)
     assert model_tiers.pick("marking", 3, listed=_listed).model == "sonnet"
@@ -80,20 +80,20 @@ def test_a_role_s_brain_comes_from_engines_json_and_its_model_from_its_tier():
         "a model named in Settings is his choice"
 
 
-def test_the_judges_go_on_the_other_brain_only_when_set_and_two_brains_exist():
-    engine_choice.set_judges_other_brain(True)
-    one = model_tiers.pick("judges", 2, requester="claude", author_engine="claude",
+def test_the_owners_go_on_the_other_brain_only_when_set_and_two_brains_exist():
+    engine_choice.set_owners_other_brain(True)
+    one = model_tiers.pick("owners", 2, requester="claude", author_engine="claude",
                            listed=_listed)
     assert one.engine == "claude", "ignored with only one brain"
     brains_config.add("openai")
-    other = model_tiers.pick("judges", 2, requester="claude", author_engine="claude",
+    other = model_tiers.pick("owners", 2, requester="claude", author_engine="claude",
                              listed=_listed)
     assert (other.engine, other.model, other.why) == ("codex", "gpt-6.2-sol",
-                                                      "judges_other_brain")
+                                                      "owners_other_brain")
     assert model_tiers.pick("editor", 1, requester="claude", author_engine="claude",
-                            listed=_listed).engine == "claude", "the judges only"
-    engine_choice.set_judges_other_brain(False)
-    assert model_tiers.pick("judges", 2, requester="claude", author_engine="claude",
+                            listed=_listed).engine == "claude", "the owners only"
+    engine_choice.set_owners_other_brain(False)
+    assert model_tiers.pick("owners", 2, requester="claude", author_engine="claude",
                             listed=_listed).engine == "claude"
 
 
@@ -103,8 +103,20 @@ def test_every_role_is_an_entry_in_engines_json_on_the_requester_s_engine():
         assert role.kind in engine_choice.KINDS
     for kind in engine_choice.ROLE_KINDS:
         assert loaded["kinds"][kind] == {"pick": "requester"}
-    assert loaded["judges_other_brain"] is False
-    assert engine_choice.view()["judges_other_brain"] is False
+    assert loaded["owners_other_brain"] is False
+    assert engine_choice.view()["owners_other_brain"] is False
+
+
+def test_a_file_saved_with_the_judges_entry_is_read_as_the_owners():
+    path = engine_choice._path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"kinds": {"judges": {"pick": "least_stress"},
+                                          "theory_of_mind_reader": {"pick": "least_stress"}},
+                                "judges_other_brain": True}))
+    loaded = engine_choice.load()
+    assert loaded["kinds"]["owners"] == {"pick": "least_stress"}
+    assert loaded["kinds"]["tims_reader"] == {"pick": "least_stress"}
+    assert loaded["owners_other_brain"] is True
 
 
 # ── each role's tools and launch ──────────────────────────────────────────
@@ -113,23 +125,23 @@ def test_the_roles_have_his_tiers_efforts_and_tools():
     by = roles.ROLES
     assert {n: (r.tier, r.effort) for n, r in by.items()} == {
         "author": (1, "high"), "editor": (1, "medium"),
-        "decision_ready_judge": (2, "medium"), "background_judge": (2, "medium"),
-        "cares_judge": (2, "medium"), "order_judge": (2, "medium"),
-        "theory_of_mind_reader": (1, "high"), "retrieval": (3, "low"), "marking": (3, "low"),
+        "context_owner": (2, "medium"), "structure_owner": (2, "medium"),
+        "tims_reader": (1, "high"), "retrieval": (3, "low"), "marking": (3, "low"),
         "classification": (3, "low"), "extraction": (4, "low"), "summarization": (3, "low")}
     research = set(roles.RESEARCH_TOOLS)
     assert {"search_history", "read_history"} <= research
     files = set(roles.FILE_READ_TOOLS)
     assert set(by["author"].tools) == research | files and by["author"].release.writes
     assert by["author"].release.builtins == ("Write", "Edit"), "it reads with its file tools"
-    assert (set(by["decision_ready_judge"].tools) == research | files
-            == set(by["background_judge"].tools))
+    assert (set(by["context_owner"].tools) == research | files
+            == set(by["structure_owner"].tools))
+    assert by["context_owner"].kind == by["structure_owner"].kind == "owners"
+    assert by["tims_reader"].kind == "tims_reader"
     assert by["editor"].tools == ("knowledge_search", *roles.FILE_READ_TOOLS)
-    for name in ("author", "editor", "decision_ready_judge", "background_judge"):
+    for name in ("author", "editor", "context_owner", "structure_owner"):
         assert by[name].release.reads_files, name
         assert not {"Read", "Grep", "Glob", "Bash"} & set(by[name].release.builtins), name
-    for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
-                 "classification", "extraction", "summarization"):
+    for name in ("tims_reader", "marking", "classification", "extraction", "summarization"):
         assert by[name].release == roles.LOCKDOWN, name
 
 
@@ -165,7 +177,7 @@ def test_a_reading_role_s_server_offers_its_file_tools_over_its_folders(tmp_path
     names = {s["name"] for s in role_mcp.tool_specs("editor")}
     assert names == {"knowledge_search", *roles.FILE_READ_TOOLS}
     judge = sessions.BrainChatSession(
-        "cares_judge", "R", tmp_path / "j",
+        "tims_reader", "R", tmp_path / "j",
         pick=model_tiers.Pick("claude", "opus", 2, "fixed", ["opus"]))
     assert judge._mcp_config() is None, "a role with no tools has no server"
 
@@ -208,7 +220,7 @@ def test_a_role_s_server_answers_its_file_tools_and_refuses_another_s(tmp_path, 
     monkeypatch.setattr(role_mcp, "ROLE", "editor")
     ok, text, _ = role_mcp.call("read_package_file", {"path": "prep.md"})
     assert ok and "The move is ready." in text
-    monkeypatch.setattr(role_mcp, "ROLE", "cares_judge")
+    monkeypatch.setattr(role_mcp, "ROLE", "tims_reader")
     ok, text, _ = role_mcp.call("read_package_file", {"path": "prep.md"})
     assert not ok and "no tool" in text
 
@@ -441,7 +453,7 @@ def test_codex_releases_a_role_from_the_lockdown_to_exactly_its_release(tmp_path
     for name in roles.ROLES:
         released, _ = _codex_role(tmp_path, name)
         assert "shell_tool" not in codex_provider.role_release(released, run)[0], name
-    for name in ("cares_judge", "order_judge", "theory_of_mind_reader", "marking",
+    for name in ("tims_reader", "marking",
                  "classification", "extraction", "summarization"):
         locked, _ = _codex_role(tmp_path, name)
         keep, config, overrides = codex_provider.role_release(locked, run)
@@ -534,7 +546,7 @@ async def test_a_model_refused_on_the_first_turn_is_swept_past(monkeypatch, tmp_
     monkeypatch.setattr(brain_provider, "provider", lambda name=None: fake)
     lines = []
     pick = model_tiers.Pick("claude", "opus", 2, "fixed", ["opus", "fable"])
-    chat = sessions.BrainChatSession("cares_judge", "R", tmp_path, pick=pick, on_log=lines.append)
+    chat = sessions.BrainChatSession("tims_reader", "R", tmp_path, pick=pick, on_log=lines.append)
     await chat.open()
     reply = await chat.ask("hello", 5)
     assert reply.text == "on fable" and chat.model == "fable"
@@ -762,6 +774,18 @@ async def test_marking_scores_every_part_against_every_label(monkeypatch, tmp_pa
         await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
 
 
+def _script(title="It broke.", narration="It broke on Tuesday.", words="", question="q1"):
+    on_screen = [{"kind": "text", "text": "It broke.", "source": "", "position": "",
+                  "path": "", "rows": []}]
+    if words:
+        on_screen.append({"kind": "his_words", "text": words, "source": "tim.md",
+                          "position": "1-20", "path": "", "rows": []})
+    return {"version": "script/1", "slides": [{
+        "id": "opening", "title": title, "on_screen": on_screen, "narration": narration,
+        "facts": [{"fact": "It broke.", "source": "ci.log", "position": "lines 1-3"}],
+        "answers": [question], "decision": None}]}
+
+
 def _scores_for(text, names=("background", "filler")):
     """A marking answer scoring exactly the parts a call was given."""
     import re as _re
@@ -867,7 +891,7 @@ async def test_a_brain_decision_asks_each_question_apart_and_takes_the_most(monk
     once = _Once(lambda text: {"answer": next(answers)})
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     q = sessions.DecisionQuestion("ready", "Is it ready?", sessions.YES_NO)
-    out = await sessions.BrainDecisionSession("cares_judge", tmp_path).decide("text", [q], 5)
+    out = await sessions.BrainDecisionSession("tims_reader", tmp_path).decide("text", [q], 5)
     assert out == [{"id": "ready", "answer": "yes", "probability": pytest.approx(2 / 3)}]
     assert len(once.seen) == 3 and all(s["prompt"] == "Is it ready?" for s in once.seen)
     assert once.seen[0]["role_spec"].lifetime == roles.ONE_SHOT and not once.seen[0]["role_spec"].tools
@@ -884,31 +908,17 @@ def test_the_program_applies_edits_only_where_their_old_text_is():
     assert new == "A beta ." and len(applied) == 2 and refused[0]["old"] == "BETA"
 
 
-@pytest.mark.asyncio
-async def test_the_editor_s_edits_are_applied_by_the_program(tmp_path):
-    class Chat:
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            self.sent, self.form = text, answer_format
-            answer = {"edits": [{"start": 0, "end": 2, "old": "It", "new": "The store",
-                                 "reason": "vague-referent", "source": "notes.md:1"}],
-                      "sent_back": [{"start": 3, "end": 8, "old": "broke", "needs": "when"}]}
-            return sessions.Reply(json.dumps(answer), answer)
-    chat = Chat()
-    out = await sessions.BrainEditingSession(chat).edit(
-        "It broke.", [{"id": "s1", "segment": "It broke.", "kind": "sentence",
-                       "position": {"start": 0, "end": 9}, "scores": {"vague-referent": 0.9}}],
-        [sessions.Known("The store moved.", "probably_does_not_know")], 5)
-    assert out["text"] == "The store broke." and out["sent_back"][0]["needs"] == "when"
-    assert chat.form is sessions.EDIT_FORM and 'state="probably_does_not_know"' in chat.sent
-
-
 # ── the swarm ─────────────────────────────────────────────────────────────
 
 class _Participant:
-    def __init__(self, name, votes=None, calls=None, log=None, changed=None):
-        self.name, self.votes, self.sent = name, list(votes or []), []
-        self.calls, self.log = list(calls or []), log if log is not None else []
-        self.changed = list(changed or [])
+    """A participant answering each turn as told: its sign-off (state and
+    what is left) and asks; `gate` holds its answer until released."""
+
+    def __init__(self, name, state="resolved", left=None, asks=None, log=None, gate=None):
+        self.name, self.sent, self.state = name, [], state
+        self.left, self.asks = left or [], asks or []
+        self.log = log if log is not None else []
+        self.gate = gate
 
     async def open(self):
         pass
@@ -918,261 +928,120 @@ class _Participant:
 
     async def ask(self, text, timeout, answer_format=None, strict=True):
         self.sent.append(text)
-        if answer_format is sessions.REOPEN_FORM:
-            said = self.changed.pop(0)
-            self.log.append(f"{self.name} judges {said}")
-            answer = {"question": "q", "changed": said, "reason": f"{self.name} says {said}"}
-        elif answer_format is sessions.VOTE_FORM:
-            vote = self.votes.pop(0)
-            self.log.append(f"{self.name} votes")
-            answer = {"question": "q", "vote": vote, "reason": f"{self.name} says {vote}"}
-        elif answer_format is sessions.TURN_FORM:
-            self.log.append(self.name)
-            answer = {"message": f"{self.name} speaks",
-                      "call_vote": self.calls.pop(0) if self.calls else []}
-        else:
-            raise AssertionError(f"unexpected form {answer_format}")
+        self.log.append(f"{self.name} asked")
+        if self.gate is not None:
+            await self.gate.wait()
+        self.log.append(f"{self.name} answers")
+        props = answer_format["properties"]
+        answer = {"message": f"{self.name} speaks"}
+        if "signoff" in props:
+            concerns = props["signoff"]["items"]["properties"]["concern"]["enum"]
+            answer.update(edits=[], ask_sender=self.asks, signoff=[
+                {"concern": c, "state": self.state, "reason": "quoted" if self.state ==
+                 "resolved" else "", "left": self.left} for c in concerns])
         return sessions.Reply(json.dumps(answer), answer)
 
 
-@pytest.mark.asyncio
-async def test_the_swarm_relays_word_for_word_and_counts_votes():
-    people = {"author": _Participant("author", ["yes"]),
-              "editor": _Participant("editor", ["yes", "no"]),
-              "cares_judge": _Participant("cares_judge", ["no", "no"]),
-              "order_judge": _Participant("order_judge", ["yes", "yes"]),
-              "theory_of_mind_reader": _Participant("theory_of_mind_reader")}
-    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
-                                           sessions.Question("enough", "Enough?",
-                                                             author_votes=True)])
-    swarm.say("author", "The script, as written.")
-    await swarm.turn("editor", 5)
-    assert people["editor"].sent[-1].endswith("author:\nThe script, as written.")
-    assert '<question id="cares">Does Tim care?</question>' in people["editor"].sent[-1], \
-        "the questions to prove, by id, on its first turn"
-    await swarm.turn("theory_of_mind_reader", 5)
-    assert people["theory_of_mind_reader"].sent[-1].endswith(
-        "author:\nThe script, as written.\n\neditor:\neditor speaks")
-    assert swarm.voters("cares") == ["editor", "cares_judge", "order_judge"]
-    assert "author" in swarm.voters("enough")
-    assert await swarm.vote("cares", 5) == sessions.PROVEN          # 2 yes, 1 no
-    assert await swarm.vote("enough", 5) == sessions.FAILED         # 2 yes, 2 no: a tie fails
-    assert swarm.end_round() is None
-    swarm.reopen("enough")
-    assert swarm.state["enough"] == sessions.OPEN
-    swarm.end_round()
-    result = swarm.end_round()
-    assert result["result"] == "not passed" and result["rounds"] == 3
-    assert [f["question"] for f in result["findings"]] == ["enough"]
+CONCERNS = [sessions.Concern("cares", "Does Tim care about each part?", "tims_reader"),
+            sessions.Concern("order", "First?", "structure_owner"),
+            sessions.Concern("decision_ready", "Prepared?", "structure_owner")]
+
+
+def _form(swarm, name):
+    return sessions.owner_form(swarm.concerns_of(name), sessions.EDIT)
 
 
 @pytest.mark.asyncio
-async def test_a_participant_calls_the_vote_when_its_discussion_settles():
-    people = {"author": _Participant("author"),
-              "cares_judge": _Participant("cares_judge", ["yes"], calls=[["cares", "nope"]]),
-              "order_judge": _Participant("order_judge", ["yes"])}
-    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
-                                           sessions.Question("order", "First?")])
-    await swarm.open()
-    await swarm.turn("cares_judge", 5)
-    assert swarm.state == {"cares": sessions.PROVEN, "order": sessions.OPEN}
-    assert {v.called_by for v in swarm.votes} == {"cares_judge"}
-    assert [m["text"] for m in swarm.conversation][0] == "cares_judge speaks", \
-        "nothing is written in a participant's name but its own words"
+async def test_owners_take_their_turns_together_each_sent_the_conversation_as_it_stood():
+    import asyncio
+    gate = asyncio.Event()
+    log: list[str] = []
+    people = {"tims_reader": _Participant("tims_reader", log=log, gate=gate),
+              "structure_owner": _Participant("structure_owner", log=log, gate=gate)}
+    swarm = sessions.BrainSwarmSession(people, CONCERNS, first={"tims_reader": "What he knows."})
+    swarm.say("author", "The outline.")
+    turn = asyncio.ensure_future(swarm.together(
+        {n: ("Work on it.", _form(swarm, n)) for n in people}, 5))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert log == ["tims_reader asked", "structure_owner asked"], "both asked before either answered"
+    gate.set()
+    answers = await turn
+    assert set(answers) == set(people)
+    assert people["tims_reader"].sent[0] == "What he knows.\n\nauthor:\nThe outline.\n\nWork on it."
+    assert [m["from"] for m in swarm.conversation] == ["author", "tims_reader", "structure_owner"]
+    # Each hears the other's message next time, never its own.
+    assert swarm._new_for("tims_reader") == "structure_owner:\nstructure_owner speaks"
+    assert swarm._new_for("structure_owner") == "tims_reader:\ntims_reader speaks"
 
 
 @pytest.mark.asyncio
-async def test_a_vote_called_before_the_swarm_opens_is_held_for_its_round(tmp_path):
-    """A real run on Codex (2026-11-21): the author called a vote on its
-    research turn, when no other voter's session was open, and the run
-    failed ("the editor session is not open"). The call is held, kept
-    between the run's processes, and called on the first round once every
-    participant has spoken."""
-    from jarvis import package_script
-    log = []
-    script = package_script.ScriptFile(tmp_path / "script.yaml", ["q1"])
-
-    class Author(_Participant):
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            if answer_format is not None and "script" in answer_format["properties"]:
-                answer = {"message": "Here it is.", "call_vote": [], "script": _script()}
-                return sessions.Reply(json.dumps(answer), answer)
-            return await super().ask(text, timeout, answer_format, strict)
-
-    class Editor(_Participant):
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            if answer_format is sessions.VOTE_FORM:
-                return await super().ask(text, timeout, answer_format, strict)
-            answer = {"edits": [], "sent_back": [], "call_vote": []}
-            return sessions.Reply(json.dumps(answer), answer)
-
-    questions = [sessions.Question("cares", "Does Tim care?")]
-    researching = sessions.BrainSwarmSession(
-        {"author": _Participant("author", calls=[["cares"]], log=log),
-         "editor": _Participant("editor", log=log)}, questions)
-    await researching.turn("author", 5)
-    assert researching.held == [("author", ["cares"])] and researching.votes == []
-    kept = json.loads(json.dumps(researching.saved()))
-
-    people = {"author": Author("author", log=log), "editor": Editor("editor", ["yes"], log=log),
-              "cares_judge": _Participant("cares_judge", ["yes"], log=log)}
-    swarm = sessions.BrainSwarmSession(people, questions)
-    swarm.restore(kept)
-    await swarm.open()
-
-    async def mark(_written):
-        return []
-    log.clear()
-    result = await swarm.round(5, script, mark)
-    assert log == ["cares_judge", "editor votes", "cares_judge votes"]
-    assert {v.called_by for v in swarm.votes} == {"author"}
-    assert swarm.held == [] and result["result"] == "passed"
+async def test_each_owner_signs_its_own_concerns_in_its_turn_and_nobody_votes():
+    left = [{"what": "Slide 3 buries the ask.", "fix": "Move it first.", "evidence_missing": ""}]
+    people = {"tims_reader": _Participant("tims_reader", asks=["Who reviews it?"]),
+              "structure_owner": _Participant("structure_owner", "not_yet", left)}
+    swarm = sessions.BrainSwarmSession(people, CONCERNS)
+    answers = await swarm.together({n: ("x", _form(swarm, n)) for n in people}, 5)
+    for name, answer in answers.items():
+        swarm.sign(name, answer, "pass-1")
+        swarm.ask(name, answer, "pass-1")
+    assert swarm.state("cares") == sessions.RESOLVED
+    assert swarm.not_resolved() == ["order", "decision_ready"]
+    assert swarm.left() == [{"concern": c, "owner": "structure_owner", **left[0]}
+                            for c in ("order", "decision_ready")]
+    assert [a["ask"] for a in swarm.to_send()] == ["Who reviews it?"]
+    swarm.sent()
+    assert swarm.to_send() == []
+    result = swarm.result()
+    assert {c["id"]: c["state"] for c in result["concerns"]} == {
+        "cares": "resolved", "order": "not_yet", "decision_ready": "not_yet"}
+    assert "votes" not in result and len(result["turns"]) == 2
 
 
-def _script(title="It broke.", narration="It broke on Tuesday.", words="", question="q1"):
-    on_screen = [{"kind": "text", "text": "It broke.", "source": "", "position": "",
-                  "path": "", "rows": []}]
-    if words:
-        on_screen.append({"kind": "his_words", "text": words, "source": "tim.md",
-                          "position": "1-20", "path": "", "rows": []})
-    return {"version": "script/1", "slides": [{
-        "id": "opening", "title": title, "on_screen": on_screen, "narration": narration,
-        "facts": [{"fact": "It broke.", "source": "ci.log", "position": "lines 1-3"}],
-        "answers": [question], "decision": None}]}
+def test_a_sign_off_that_says_nothing_is_not_yet_and_says_why():
+    swarm = sessions.BrainSwarmSession({"structure_owner": _Participant("s")}, CONCERNS)
+    signed = swarm.sign("structure_owner", {"signoff": [
+        {"concern": "order", "state": "resolved", "reason": "", "left": []},
+        {"concern": "cares", "state": "resolved", "reason": "not its concern", "left": []}]},
+        "pass-1")
+    assert [(s.concern, s.state) for s in signed] == [("order", "not_yet"),
+                                                      ("decision_ready", "not_yet")]
+    assert "gave no sign-off on order" in signed[0].left[0]["what"]
+    assert swarm.state("cares") == sessions.OPEN, "only its own concerns"
 
 
 @pytest.mark.asyncio
-async def test_a_round_goes_author_mark_editor_then_judges_and_reader_then_votes(tmp_path):
-    from jarvis import package_script
-    log = []
-    script = package_script.ScriptFile(tmp_path / "script.yaml", ["q1"])
-
-    class Author(_Participant):
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            if answer_format is not None and "script" in answer_format["properties"]:
-                self.sent.append(text)
-                log.append("author")
-                assert answer_format["properties"]["script"] == package_script.schema(["q1"])
-                answer = {"message": "Here it is.", "call_vote": [], "script": _script()}
-                return sessions.Reply(json.dumps(answer), answer)
-            return await super().ask(text, timeout, answer_format, strict)
-
-    class Editor(_Participant):
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            if answer_format is sessions.VOTE_FORM:
-                return await super().ask(text, timeout, answer_format, strict)
-            self.sent.append(text)
-            log.append("editor")
-            assert "call_vote" in answer_format["properties"]
-            edit = answer_format["properties"]["edits"]["items"]["properties"]
-            assert {"slide", "field", "start", "end", "old", "new"} <= set(edit)
-            answer = {"edits": [{"slide": "opening", "field": "title", "start": 0, "end": 2,
-                                 "old": "It", "new": "The store", "reason": "vague-referent",
-                                 "source": "notes.md"}],
-                      "sent_back": [], "call_vote": []}
-            return sessions.Reply(json.dumps(answer), answer)
-
-    people = {"author": Author("author", log=log),
-              "editor": Editor("editor", ["yes"], log=log),
-              "cares_judge": _Participant("cares_judge", ["yes"], log=log),
-              "theory_of_mind_reader": _Participant("theory_of_mind_reader", log=log)}
-    material = [sessions.Known("He asked for it.", sessions.KNOWS),
-                sessions.Known("CI failed twice.", sessions.PROBABLY_NOT)]
-    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?")],
-                                       material=material)
-
-    async def mark(written):
-        title = written.read()["slides"][0]["title"]
-        log.append(f"mark {title}")
-        return [{"id": "opening/title/s1", "segment": title, "kind": "sentence",
-                 "slide": "opening", "field": "title",
-                 "position": {"start": 0, "end": len(title)}, "scores": {"x": 0.5}}]
-    result = await swarm.round(5, script, mark)
-    assert log == ["author", "mark It broke.", "editor", "mark The store broke.",
-                   "cares_judge", "theory_of_mind_reader", "editor votes", "cares_judge votes"]
-    assert script.read()["slides"][0]["title"] == "The store broke."
-    assert "CI failed twice." in people["editor"].sent[0], "the editor is given everything"
-    assert '<marked file="script.yaml"><slide id="opening">' in people["cares_judge"].sent[0], \
-        "the judges work from the marked script slide by slide"
-    assert 'field="title"' in people["cares_judge"].sent[0]
-    assert "title: The store broke." in people["theory_of_mind_reader"].sent[0]
-    assert result["result"] == "passed"
-
-
-@pytest.mark.asyncio
-async def test_a_script_that_does_not_check_is_said_back_and_ends_the_round(tmp_path):
-    from jarvis import package_script
-    script = package_script.ScriptFile(tmp_path / "script.yaml", ["q1"])
-
-    class Author(_Participant):
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            self.sent.append(text)
-            bad = _script()
-            del bad["slides"][0]["narration"]
-            answer = {"message": "Here.", "call_vote": [], "script": bad}
-            return sessions.Reply(json.dumps(answer), answer)
-    people = {"author": Author("author"), "editor": _Participant("editor")}
-    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?")])
-
-    async def mark(_):
-        raise AssertionError("nothing is marked without a script that checks")
-    assert await swarm.play_round(5, script, mark) is False
-    assert not script.path.exists(), "a script that does not check is never written"
-    said = swarm.conversation[-1]
-    assert said["from"] == sessions.PROGRAM and "has no narration" in said["text"]
-    assert swarm.end_round() is None and swarm.rounds == 1, "the round is still one of three"
-
-
-@pytest.mark.asyncio
-async def test_a_closed_question_reopens_only_when_its_voters_judge_the_change_touched_it():
-    people = {"author": _Participant("author", ["yes"], changed=["yes"]),
-              "editor": _Participant("editor", ["yes", "no", "yes"], changed=["no", "yes"]),
-              "cares_judge": _Participant("cares_judge", ["yes", "yes", "yes"],
-                                          changed=["no", "yes"]),
-              "order_judge": _Participant("order_judge", ["no", "no", "no"],
-                                          changed=["no", "no"])}
-    swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
-                                                sessions.Question("enough", "Enough?",
-                                                                  author_votes=True)])
-    swarm.script_now("Version one.")
-    assert await swarm.vote("cares", 5) == sessions.PROVEN
-    assert await swarm.vote("enough", 5) == sessions.FAILED          # 2 yes, 2 no
-    assert await swarm.reopen_changed(5) == [], "the script has not changed: nothing to judge"
-    assert not any(p.changed == [] for p in people.values() if p.name != "author")
-    swarm.script_now("Version two.")
-    # cares: editor no, cares judge no, order judge no: the change did not
-    # touch it. enough: author yes, editor yes, cares judge yes, order no.
-    assert await swarm.reopen_changed(5) == ["enough"]
-    assert swarm.state == {"cares": sessions.PROVEN, "enough": sessions.OPEN}
-    assert [(r["question"], r["participant"], r["changed"]) for r in swarm.reopenings] == [
-        ("cares", "editor", "no"), ("cares", "cares_judge", "no"), ("cares", "order_judge", "no"),
-        ("enough", "author", "yes"), ("enough", "editor", "yes"),
-        ("enough", "cares_judge", "yes"), ("enough", "order_judge", "no")]
-    assert "Did the change touch enough: yes. author says yes" in \
-        [m["text"] for m in swarm.conversation]
-    assert swarm.result()["reopenings"] == swarm.reopenings
-    again = sessions.BrainSwarmSession(people, list(swarm.questions.values()))
-    again.restore(swarm.saved())
-    assert again.reopenings == swarm.reopenings
+async def test_the_swarm_is_kept_and_restored_between_the_run_s_processes():
+    people = {"tims_reader": _Participant("tims_reader", "not_yet",
+                                          [{"what": "x", "fix": "y", "evidence_missing": ""}])}
+    swarm = sessions.BrainSwarmSession(people, CONCERNS)
+    answer = await swarm.answer("tims_reader", 5, "x", _form(swarm, "tims_reader"))
+    swarm.sign("tims_reader", answer, "outline")
+    swarm.ask("tims_reader", {"ask_sender": ["When?"]}, "outline")
+    again = sessions.BrainSwarmSession(people, CONCERNS)
+    again.restore(json.loads(json.dumps(swarm.saved())))
+    assert again.state("cares") == sessions.NOT_YET and again.left() == swarm.left()
+    assert again.conversation == swarm.conversation and again.spoke("tims_reader")
+    assert again.to_send() == swarm.to_send()
 
 
 def test_each_participant_is_given_exactly_its_share_of_what_tim_knows():
     material = [sessions.Known("He said ship it.", sessions.KNOWS, "chat"),
                 sessions.Known("The Work tab shows it.", sessions.HAD_ACCESS),
                 sessions.Known("CI failed twice.", sessions.PROBABLY_NOT, "ci.log")]
-    for role in ("theory_of_mind_reader", "cares_judge", "order_judge"):
+    for role in ("tims_reader",):
         values = sessions.share_values(role, material)
         assert set(values) == {"{knows}", "{had_access}"}
         assert "He said ship it." in values["{knows}"] and \
             "The Work tab" in values["{had_access}"]
         assert "CI failed" not in "".join(values.values()), "never what he does not know"
-    for role in ("author", "editor", "decision_ready_judge", "background_judge"):
+    for role in ("author", "editor", "context_owner", "structure_owner"):
         shown = sessions.share_values(role, material)[
             "{the evidence, each item with its knowledge state}"]
         assert 'state="probably_does_not_know"' in shown and 'state="knows"' in shown
-    swarm = sessions.BrainSwarmSession({"cares_judge": _Participant("c"), "editor": _Participant("e")},
-                                  [], material=material)
-    assert [k.state for k in swarm.share_of("cares_judge")] == [sessions.KNOWS,
+    swarm = sessions.BrainSwarmSession({"tims_reader": _Participant("c"),
+                                        "editor": _Participant("e")}, [], material=material)
+    assert [k.state for k in swarm.share_of("tims_reader")] == [sessions.KNOWS,
                                                                 sessions.HAD_ACCESS]
     assert len(swarm.share_of("editor")) == 3
     with pytest.raises(ValueError):
@@ -1190,9 +1059,32 @@ def test_every_role_has_its_approved_prompt_and_every_placeholder_is_filled():
     system, first = sessions.role_prompt("retrieval", {"{list}": "<reference id=\"r\">{x}</reference>"})
     assert first == "References: <reference id=\"r\">{x}</reference>"
     assert system.startswith("You work out what a free-text reference means.")
-    judge = role_prompts.PROMPTS["order_judge"].system
-    assert judge.startswith("You are one of four judges") and \
-        "Your question: **Is the most relevant information first?**" in judge
+    owner = role_prompts.PROMPTS["structure_owner"].system
+    assert owner.startswith("You are one of a small team making a briefing for Tim") and \
+        ("Your questions: **Is the most relevant information first?** and **Is the decision "
+         "properly prepared?**") in owner
+    assert role_prompts.PROMPTS["tims_reader"].material.startswith("What Tim knows:\n{knows}")
+
+
+def test_the_owner_prompts_are_owner_prompts_md_word_for_word():
+    import re
+    from jarvis import data_paths
+    md = (data_paths.SOURCE_ROOT.parent / "jarvis" / ".agents" / "in-progress" /
+          "package-quality" / "owner-prompts.md")
+    if not md.is_file():
+        pytest.skip("the design files are the owner's, outside the repository")
+    parts = {t: b.strip() for t, b in (s.split("\n", 1) for s in
+                                        re.split(r"^## ", md.read_text(), flags=re.M)[1:])}
+    shared = parts["Shared part (every owner)"]
+    for role, title in (("tims_reader", "Tim's reader"), ("context_owner", "Context owner"),
+                        ("structure_owner", "Structure and decision owner")):
+        prompt = role_prompts.PROMPTS[role]
+        assert f"{prompt.system}\n\n{prompt.material}" == f"{shared}\n\n{parts[title]}"
+    assert role_prompts.PROMPTS["editor"].system == parts["Editor (cooperative)"]
+    assert role_prompts.PROMPTS["author"].system.endswith(
+        "\n\n" + parts["Author: the outline (added to the approved Author prompt, which is "
+                         "otherwise unchanged)"])
+    assert role_prompts.AUTHOR_REVISE == parts["Author: one revision against the marks"]
 
 
 # ── SummarizationSession ──────────────────────────────────────────────────
@@ -1260,30 +1152,16 @@ def test_the_brain_summarization_is_one_call_with_no_tools_and_checks_its_cites(
 
 
 @pytest.mark.asyncio
-async def test_a_turn_answered_in_words_alone_is_its_message_and_calls_no_vote():
-    class Words:
-        async def ask(self, text, timeout, answer_format=None, strict=True):
-            assert answer_format is sessions.TURN_FORM and strict is False
-            return sessions.Reply("Cut s22: it repeats s14.", None)
-    swarm = sessions.BrainSwarmSession({"cares_judge": Words()},
-                                       [sessions.Question("cares", "Does Tim care?")])
-    assert await swarm.turn("cares_judge", 5) == "Cut s22: it repeats s14."
-    assert swarm.conversation == [{"from": "cares_judge", "text": "Cut s22: it repeats s14."}]
-    assert swarm.state["cares"] == sessions.OPEN
-
-
-@pytest.mark.asyncio
 async def test_a_turn_that_fails_leaves_its_first_message_and_the_others_words_to_give():
     class Fails:
         async def ask(self, text, timeout, answer_format=None, strict=True):
             raise sessions.SessionFailed("Connection lost")
-    swarm = sessions.BrainSwarmSession({"order_judge": Fails()},
-                                       [sessions.Question("order", "First?")],
-                                       first={"order_judge": "What Tim knows."})
+    swarm = sessions.BrainSwarmSession({"structure_owner": Fails()}, CONCERNS,
+                                       first={"structure_owner": "What Tim knows."})
     swarm.say("author", "The script.")
     with pytest.raises(sessions.SessionFailed):
-        await swarm.turn("order_judge", 5)
-    assert not swarm.spoke("order_judge")
-    assert swarm.saved()["seen"]["order_judge"] == 0 and swarm.saved()["introduced"] == []
-    again = swarm._new_for("order_judge")
+        await swarm.answer("structure_owner", 5, "", _form(swarm, "structure_owner"))
+    assert not swarm.spoke("structure_owner")
+    assert swarm.saved()["seen"]["structure_owner"] == 0 and swarm.saved()["introduced"] == []
+    again = swarm._new_for("structure_owner")
     assert again.startswith("What Tim knows.") and again.endswith("author:\nThe script.")

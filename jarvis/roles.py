@@ -97,20 +97,20 @@ class Role:
 
 
 ROLES: dict[str, Role] = {r.name: r for r in (
-    # The swarm (workflow.yaml swarm; participants.md sections 6 to 8).
+    # The swarm, cooperative (construction-drafts.md "Cooperative swarm", Tim
+    # 2026-11-21): the author, the editor and three owners. The owners take
+    # the judges' tier and effort, Tim's reader the Theory of Mind reader's.
     Role("author", 1, "high", "package_author", LONG_LIVED,
          Release(builtins=WRITE_TOOLS, tools=RESEARCH_TOOLS + FILE_READ_TOOLS, writes=True)),
     Role("editor", 1, "medium", "editor", LONG_LIVED,
          Release(tools=EVIDENCE_SEARCH + FILE_READ_TOOLS)),
-    Role("decision_ready_judge", 2, "medium", "judges", LONG_LIVED,
-         Release(tools=RESEARCH_TOOLS + FILE_READ_TOOLS)),
-    Role("background_judge", 2, "medium", "judges", LONG_LIVED,
-         Release(tools=RESEARCH_TOOLS + FILE_READ_TOOLS)),
     # Given only what Tim knows and had access to, in the prompt, and no
-    # tools (Tim, 2026-11-20).
-    Role("cares_judge", 2, "medium", "judges", LONG_LIVED),
-    Role("order_judge", 2, "medium", "judges", LONG_LIVED),
-    Role("theory_of_mind_reader", 1, "high", "theory_of_mind_reader", LONG_LIVED),
+    # tools (the cares judge's and the reader's, Tim 2026-11-20).
+    Role("tims_reader", 1, "high", "tims_reader", LONG_LIVED),
+    Role("context_owner", 2, "medium", "owners", LONG_LIVED,
+         Release(tools=RESEARCH_TOOLS + FILE_READ_TOOLS)),
+    Role("structure_owner", 2, "medium", "owners", LONG_LIVED,
+         Release(tools=RESEARCH_TOOLS + FILE_READ_TOOLS)),
     # The reading steps (participants.md sections 1 to 4).
     Role("retrieval", 3, "low", "retrieval", ONE_SHOT,
          Release(tools=RETRIEVAL_TOOLS + RETRIEVAL_LOOKUPS)),
@@ -135,7 +135,7 @@ class Launch:
     session_id: Optional[str] = None        # a new long-lived Claude session's id
 
 
-JUDGES = ("cares_judge", "decision_ready_judge", "background_judge", "order_judge")
+OWNERS = ("tims_reader", "context_owner", "structure_owner")
 
 
 def role(name: str) -> Role:

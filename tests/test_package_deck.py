@@ -1,7 +1,8 @@
 """The deck and deliver steps (package_deck.py, package_deliver.py; workflow.yaml
 deck and deliver): the author writes the deck from the passed script in the
-same swarm, JARVIS builds and proves it, the editor and the judges compare
-each slide with the script from the layout data alone and vote, the
+same swarm, JARVIS builds and proves it, the owners and the editor compare
+each slide with the script from the layout data alone, edit the deck and
+sign each of its questions off (the cooperative swarm), the
 package is assembled with its briefing, its message written by the program,
 signed with JARVIS's own key and sent back to its sender to check; its
 approval delivers it on the Work item's Messages tab, its words of what is
@@ -65,16 +66,21 @@ class DeckPlan(Plan):
         self.script = deck_script()
         self.decks: list[dict] = [deck_with_his_words()]
 
+        self.deck_edits: dict[str, list[dict]] = {}
+
     def answer(self, name, text, form):
-        if name == "author" and form is sessions.TURN_FORM and (
+        if name == "author" and set(form["properties"]) == {"message"} and (
                 "Now write the deck" in text or "Revise the deck" in text):
             self.sent.setdefault(name, []).append(text)
             deck = self.decks.pop(0) if len(self.decks) > 1 else self.decks[0]
             source = self.folder / pd.FOLDER / pd.SOURCE
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_text(yaml.safe_dump(deck, sort_keys=False))
-            return {"message": "author writes the deck", "call_vote": []}
-        return super().answer(name, text, form)
+            return {"message": "author writes the deck"}
+        answer = super().answer(name, text, form)
+        if "signoff" in form["properties"] and "deck-says:" + name in str(form):
+            answer["edits"] = self.deck_edits.pop(name, [])
+        return answer
 
 
 @pytest.fixture
@@ -97,13 +103,20 @@ def _passed(doc):
     return pj.get(doc["id"])
 
 
+def _said_on_the_deck(review: dict) -> list[str]:
+    """The program's turns since the author first wrote the deck."""
+    conversation = review["conversation"]
+    start = conversation.index({"from": "author", "text": "author writes the deck"})
+    return [m["text"] for m in conversation[start:] if m["from"] == pd.PROGRAM]
+
+
 # ── the deck ──────────────────────────────────────────────────────────────
 
 def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, deck_plan):
     doc = _passed(marked)
     assert pd.deck(doc) is None
     job = pj.get(doc["id"])
-    assert job["deck"]["result"] == "passed" and job["deck"]["rounds"] == 1
+    assert job["deck"]["result"] == "passed" and job["deck"]["passes"] == 1
     # The author was told to write it from the passed script alone, in
     # JARVIS's named layouts, his words in his style, with the format word
     # for word and a complete example.
@@ -118,10 +131,11 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     # slide's layout data, and the questions; no browser. His words are the
     # program's check: no vote is asked of them.
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
-    [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM]
-    assert all(f'<question id="{q.id}">' in turn["text"] for q in pd.DECK_QUESTIONS)
-    assert [q.id for q in pd.DECK_QUESTIONS] == ["deck-says", "deck-visual", "deck-narration",
-                                                 "deck-readable"]
+    [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM
+              and "built and proven" in m["text"]]
+    assert all(f'<question id="{qid}">' in turn["text"] for qid, _ in pd.DECK_QUESTIONS)
+    assert [qid for qid, _ in pd.DECK_QUESTIONS] == ["deck-says", "deck-visual",
+                                                     "deck-narration", "deck-readable"]
     slides = turn["text"].split('<slide id="')[1:]
     assert [s.split('"')[0] for s in slides] == ["opening", "what-changed", "where"]
     assert '<script file="script.yaml">id: opening' in slides[0]
@@ -143,14 +157,13 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     assert layout[-1]["text_px"]["question"] == {"smallest": 19.6, "largest": 25.0}
     assert layout[-1]["text_px"]["says"]["smallest"] >= 13
     assert layout[-1]["narration"][0]["say"] == "Decision 1 of 1: Where do we eat on Friday?"
-    # The editor and the four judges answered it, then voted; the author
-    # never on its own deck, the reader never.
+    # The same owners and the editor reviewed it in parallel, each signing
+    # off each of the deck's questions; the author never on its own deck.
     after = [m["from"] for m in review["conversation"][review["conversation"].index(turn) + 1:]]
-    assert after[:5] == ["editor", "cares_judge", "decision_ready_judge", "background_judge",
-                         "order_judge"]
-    voters = {v["participant"] for v in review["votes"] if v["question"] == "deck-says"}
-    assert voters == {"editor", "cares_judge", "decision_ready_judge", "background_judge",
-                      "order_judge"}
+    assert after[:4] == ["tims_reader", "context_owner", "structure_owner", "editor"]
+    signed = {(s["concern"], s["owner"]) for s in review["signoffs"]
+              if s["stage"] == "deck-pass-1"}
+    assert signed == {(f"{qid}:{o}", o) for qid, _ in pd.DECK_QUESTIONS for o in ps.FIXERS}
     # The built deck is proven, carries his vote and the layout data.
     folder = Path(job["deck"]["folder"])
     proof = json.loads((folder / presentation_proof.PROOF_FILE).read_text())
@@ -165,11 +178,11 @@ def test_what_does_not_build_goes_back_to_the_author(marked, deck_plan):
     doc = _passed(marked)
     assert pd.deck(doc) is None
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
-    said = [m["text"] for m in review["conversation"] if m["from"] == pd.PROGRAM]
+    said = _said_on_the_deck(review)
     assert said[0].startswith("The deck did not build. Revise it:") and "no-such-layout" in \
         said[0]
     assert "Revise the deck in" in deck_plan.sent["author"][-1]
-    assert pj.get(doc["id"])["deck"]["rounds"] == 2
+    assert json.loads((Path(doc["folder"]) / ps.STATE).read_text())["deck"]["builds"] == 2
 
 
 def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
@@ -185,12 +198,12 @@ def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
     doc = _passed(marked)
     assert pd.deck(doc) is None
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
-    said = [m["text"] for m in review["conversation"] if m["from"] == pd.PROGRAM]
+    said = _said_on_the_deck(review)
     assert "does not draw Tim's words 'Keep it in the office.' in the his-words style" in said[0]
     assert "narration does not say Tim's words 'Keep it in the office.'" in said[0]
     assert "the script's are ['opening', 'what-changed', 'where']" in said[1]
-    assert pj.get(doc["id"])["deck"]["rounds"] == 3
-    assert not [v for v in review["votes"] if "his" in v["question"]]
+    assert json.loads((Path(doc["folder"]) / ps.STATE).read_text())["deck"]["builds"] == 3
+    assert not [c for c in review["concerns"] if "his" in c["id"]]
 
 
 def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
@@ -209,15 +222,33 @@ def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
         "Script slide where asks no decision: its deck slide is a content slide."]
 
 
-def test_a_deck_not_proven_in_three_rounds_sends_the_sender_the_findings(marked, deck_plan):
-    deck_plan.votes = {"deck-says": ["no"] * 30}
+def test_a_deck_not_signed_off_in_two_passes_sends_the_sender_what_is_left(marked,
+                                                                          deck_plan):
+    from tests.test_package_swarm import LEFT
     doc = _passed(marked)
+    deck_plan.signoffs = {"editor": [("not_yet", LEFT)] * 4}
     assert pd.deck(doc) == pj.WAITING
     job = pj.get(doc["id"])
-    assert job["deck"]["result"] == "not passed" and job["deck"]["rounds"] == 3
+    assert job["deck"]["result"] == "not passed" and job["deck"]["passes"] == 2
     last = job["rounds"][-1]
     assert pj.kind_of(last) == pj.FINDINGS
-    assert [q["id"] for q in last["questions"]] == ["deck-says"]
+    assert [q["id"] for q in last["questions"]] == ["left-1"]
+
+
+def test_an_owner_s_edit_to_the_deck_stands_only_when_it_still_builds(marked, deck_plan):
+    doc = _passed(marked)
+    source = Path(doc["folder"]) / pd.FOLDER / pd.SOURCE
+    deck_plan.decks = [deck_with_his_words()]
+    text = yaml.safe_dump(deck_with_his_words(), sort_keys=False)
+    at = text.index("layout: opening")
+    deck_plan.deck_edits = {
+        "editor": [{"start": at, "end": at + len("layout: opening"), "old": "layout: opening",
+                    "new": "layout: no-such-layout", "reason": "x", "source": ""}]}
+    assert pd.deck(doc) is None
+    review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
+    said = [m["text"] for m in review["conversation"] if m["from"] == pd.PROGRAM]
+    assert any("editor's edits to presentation.yaml: 0 applied, 1 refused" in t for t in said)
+    assert "layout: opening" in source.read_text(), "the deck as the author wrote it"
 
 
 # ── deliver ───────────────────────────────────────────────────────────────
@@ -247,6 +278,7 @@ def test_the_package_is_assembled_signed_and_sent_to_its_sender_to_check(marked,
     assert signed.by_jarvis() and signed.requested_by == f"agent:{job['session']}"
     with zipfile.ZipFile(archive) as z:
         names = set(z.namelist())
-    assert {f".jarvis/briefing/{n}" for n in ("research.md", "prep.md", "script.yaml",
-                                              "conversation.md", "votes.json")} <= names
+    assert {f".jarvis/briefing/{n}" for n in ("research.md", "prep.md", "outline.yaml",
+                                              "script.yaml", "conversation.md",
+                                              "signoffs.json")} <= names
     assert pj.to_tell_sender() == [job]

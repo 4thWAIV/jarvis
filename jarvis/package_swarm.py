@@ -1,6 +1,7 @@
 """The research and swarm steps of a package run (workflow.yaml research,
 swarm and tim_knowledge, approved by Tim 2026-11-18 and 2026-11-19; the
-role prompts and judge prompts word for word, role_prompts.py).
+cooperative swarm, construction-drafts.md "Cooperative swarm", approved
+2026-11-21; every role's prompt word for word, role_prompts.py).
 
 Run after mark in JARVIS's own process (package_jobs.PRODUCERS), in the
 run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
@@ -15,62 +16,67 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
              run's research, copied into `earlier/`), searches only for what
              each question still lacks, and writes `research.md`. Every
              search a role makes is logged by its own tool server
-             (research_log.py, `research-log.jsonl`).
-  swarm      the author, the one editor, the four judges and the Theory of
-             Mind reader in one conversation (sessions.BrainSwarmSession),
-             logged word for word. A round: the author writes or revises
-             `prep.md`, and gives the script in its answer in script/1
-             (package_script: the answer schema of its turn), which the
-             program checks and writes to script.yaml (one that does not
-             check is said back, and the round ends there); the script is
-             marked slide by slide (MarkingSession, the 28 labels, with
-             Tim's material); the editor edits it, each edit at its slide
-             and field (the program applies only edits whose old text is
-             exactly there); the judges, from the marked script slide by
-             slide, and the reader respond; a closed question reopens when
-             its voters judge the script's change touched what it was
-             about. Votes on every open question
-             end each round (one a participant calls is held at once), each
-             a turn in that participant's own session with a reason; a
-             majority closes a question, a tie fails it; the author never
-             votes on whether its own script passes, the reader never votes.
-             The questions to prove are the handoff's (is there enough to
-             answer each; the author votes on these) and the four judges'.
+             (research_log.py, `research-log.jsonl`). Research is done once
+             a run, never again each pass: the author researches again only
+             for what a sign-off names as missing evidence.
+  swarm      the team in one conversation (sessions.BrainSwarmSession),
+             logged word for word: the author; Tim's reader (does Tim care
+             about each part, and what would he ask); the context owner (is
+             the background right); the structure and decision owner (is
+             the most relevant information first, is the decision properly
+             prepared); the editor (the language). Each owner fixes its
+             concern by editing the slides it touches (each edit applied by
+             the program only where its old text is exactly there, with its
+             reason and source), asks the sender only what only the sender
+             knows, and signs its concern off in the same turn: resolved,
+             with a quoted reason, or not yet, with what is left and the fix
+             it suggests. Nobody votes.
+
+             1 outline: the author writes the prep (`prep.md`) and the
+               outline (outline.yaml, outline/1: each slide's title, its one
+               point, the question it answers, its evidence by source path);
+               the three owners work on it in parallel; the author settles
+               conflicts, saying why; each owner signs the outline off.
+             2 fill: the author writes the script (script.yaml, script/1)
+               from the agreed outline; the program marks it in batches; the
+               author revises it once against the marks.
+             3 fix pass: the owners and the editor in parallel edit and
+               sign off; what is left is merged by the program, by meaning,
+               into one numbered list, each item with who raised it and the
+               fix suggested.
+             4 close: the author works the list; each owner re-checks only
+               its own items and signs off.
+             Done when every concern is signed off; at most two fix passes
+             (ROUNDS_MAX), then what is left goes to the sender.
 
 Each participant is given exactly its share of what Tim knows (tim_knowledge
-who_gets_what): the author and the editor everything, each item marked; the
-decision ready and background judges all the evidence, marked, and the
-prep (again each round, as the author revises it); the cares and order judges, and the reader, only what he knows and
-had access to, kept apart; the cares judge also the script's parts new to
-him (`new_to_him`).
+who_gets_what, sessions.SHARES): Tim's reader only what he knows and had
+access to, kept apart; everyone else everything, each item marked.
 
-Asking the sender (swarm ask_sender): when an enough question fails, what
-its no votes said to ask, across every failed one, is grouped by meaning
-with the engine's embeddings into one list (`group_by_meaning`: one wording
-a group, the groups ordered by how many voters asked; merged, Tim
-2026-11-20) and goes to the sender, which answers each group once
-(package_jobs.ask; the job waits on it, at most 2 hours, then Error). The
-swarm round that asked is one of its three, as every round played is; the
-round of questions is counted apart, toward its own five. Its answers are
-kept in the
-evidence (sender-answers/) and said into the conversation as the sender's,
-word for word; the enough questions reopen. At most five rounds of
+Asking the sender (swarm ask_sender): what the participants ask in their
+turns since the sender was last asked, every one of them, is grouped by
+meaning with the engine's embeddings into one list (`group_by_meaning`: one
+wording a group, the groups ordered by how many asked; merged, Tim
+2026-11-20) and goes to the sender after the outline is signed off and
+after each fix pass and re-check, which answers each group once
+(package_jobs.ask; the job waits on it, at most 2 hours, then Error). Its
+answers are kept in the evidence (sender-answers/) and said into the
+conversation as the sender's, word for word. At most five rounds of
 questions; asking stops once a round of answers changes nothing still
 open.
 
-The swarm passes when every question is proven; after three rounds without
-that it has failed: the sender is sent the findings (package_jobs.
-failed_swarm; the server tells it and puts them on the Work item) and its
-answer starts a new run from the kept research. A passed script's hits are
-recorded as used (research_log.mark_used). Everything the swarm holds is
-kept in `swarm.json` between the run's processes, each participant's
-session resumed with it.
+A passed script's hits are recorded as used (research_log.mark_used). What
+the swarm holds is kept in `swarm.json` between the run's processes, each
+participant's session resumed with it, and the flow goes on from the stage
+it reached (`flow`).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -78,23 +84,24 @@ from typing import Callable, Optional
 from jarvis import (briefing_labels, model_tiers, package_evidence as pe, package_jobs,
                     package_mark, package_script, records, research_log, role_prompts, roles,
                     sessions, work_research)
-from jarvis.package_evidence import HAD_ACCESS, KNOWS, PROBABLY_NOT
 
 RESEARCH, SWARM = "research", "swarm"
 RESEARCH_MD, PREP_MD = "research.md", "prep.md"
 SCRIPT = package_script.FILE            # script.yaml, script/1
+OUTLINE = package_script.OUTLINE_FILE   # outline.yaml, outline/1
 STATE = "swarm.json"
 RESULT = "swarm-result.json"
 CONVERSATION = "conversation.md"
 EARLIER = "earlier"
-AUTHOR, EDITOR, READER = "author", "editor", "theory_of_mind_reader"
-# The participants, in the order they speak in a round.
-NAMES = (AUTHOR, EDITOR, "cares_judge", "decision_ready_judge", "background_judge",
-         "order_judge", READER)
-# Each judge's question's id.
-JUDGE_QUESTION = {"cares_judge": "cares", "decision_ready_judge": "decision_ready",
-                  "background_judge": "background", "order_judge": "order"}
-ENOUGH = "enough-"
+PROGRAM = sessions.PROGRAM
+AUTHOR, EDITOR = "author", "editor"
+READER, CONTEXT, STRUCTURE = "tims_reader", "context_owner", "structure_owner"
+# The participants, in the order their parallel turns go into the
+# conversation.
+NAMES = (AUTHOR, READER, CONTEXT, STRUCTURE, EDITOR)
+OWNERS = (READER, CONTEXT, STRUCTURE)       # who work on the outline
+FIXERS = OWNERS + (EDITOR,)                 # who work in a fix pass
+ROUNDS_MAX = sessions.ROUNDS_MAX            # fix passes
 # Every role session call is held to the run's own bounds, Settings'
 # run_timeout_sec and run_idle_sec (run_executor.bounds, applied by
 # sessions.BrainChatSession): None names no other wall clock.
@@ -109,6 +116,36 @@ PICK: Callable[..., model_tiers.Pick] = model_tiers.pick
 def _log(line: str) -> None:
     """A line in the job's log (the run's process writes to it)."""
     print(line, flush=True)
+
+
+# ── the concerns ──────────────────────────────────────────────────────────
+
+def _asked_in(role: str) -> list[str]:
+    """An owner's sign-off questions, Tim's words in its approved prompt."""
+    return re.findall(r"\*\*(.+?)\*\*", role_prompts.PROMPTS[role].system)
+
+
+def _language() -> str:
+    """The editor's concern, in its approved prompt's words."""
+    found = re.search(r"You own (the language: .+?\.)", role_prompts.PROMPTS[EDITOR].system)
+    return found.group(1)
+
+
+def concerns() -> list[sessions.Concern]:
+    """Each concern and its owner (owner-prompts.md): Tim's four judge
+    questions word for word, and the editor's language."""
+    cares, = _asked_in(READER)
+    background, = _asked_in(CONTEXT)
+    order, decision = _asked_in(STRUCTURE)
+    return [sessions.Concern("cares", cares, READER),
+            sessions.Concern("background", background, CONTEXT),
+            sessions.Concern("order", order, STRUCTURE),
+            sessions.Concern("decision_ready", decision, STRUCTURE),
+            sessions.Concern("language", _language(), EDITOR)]
+
+
+OUTLINE_CONCERNS = ("cares", "background", "order", "decision_ready")
+SCRIPT_CONCERNS = OUTLINE_CONCERNS + ("language",)
 
 
 # ── the run ───────────────────────────────────────────────────────────────
@@ -141,10 +178,17 @@ class Run:
     def script(self) -> Path:
         return self.folder / SCRIPT
 
+    @property
+    def outline(self) -> Path:
+        return self.folder / OUTLINE
+
     def script_file(self) -> package_script.ScriptFile:
         """The script in its structured form, checked against the handoff's
         questions."""
         return package_script.ScriptFile(self.script, question_ids(self.doc))
+
+    def outline_file(self) -> package_script.OutlineFile:
+        return package_script.OutlineFile(self.outline, question_ids(self.doc))
 
     @property
     def work_research(self) -> Optional[Path]:
@@ -252,31 +296,6 @@ def material_of(name: str, values: dict[str, str]) -> str:
     return role_prompts.fill(prompt.material, {p: values[p] for p in wanted})
 
 
-def new_to_him(run: Run, marked: list[dict]) -> list[dict]:
-    """The script's sentences new to Tim, by program from the knowledge
-    states (tim_knowledge), slide by slide: a sentence is new to him unless
-    every evidence item its slide cites (the source paths of its facts and
-    of its quotes of him, package_script.slide_sources) is one he knows or
-    had access to; a slide citing none is one whose state could not be
-    determined, which the design counts as probably does not know."""
-    script = package_script.read(run.script) or {}
-    cites = {s.get("id"): package_script.slide_sources(s) for s in script.get("slides") or []}
-    out = []
-    for part in marked:
-        if part.get("kind") != "sentence":
-            continue
-        sources = cites.get(part.get("slide"), [])
-        states = {r.knowledge_state for r in run.rows if r.stored and any(
-            run.place.item(r.stored) in source or r.stored in source for source in sources)}
-        if not states or not states <= {KNOWS, HAD_ACCESS}:
-            out.append(part)
-    return out
-
-
-def _parts_text(parts: list[dict]) -> str:
-    return "\n".join(sessions._tag("part", p["segment"], id=p["id"]) for p in parts)
-
-
 def evidence_note(run: Run) -> str:
     """Where the package's evidence is, for a participant that searches it
     (gather scoped_search: the path is given in the agents' instructions)."""
@@ -284,27 +303,10 @@ def evidence_note(run: Run) -> str:
             f"with knowledge_search under that path. On disk it is in {run.place.folder}.")
 
 
-def judge_asks(role: str) -> str:
-    """A judge's question, in its approved prompt's own words."""
-    found = re.search(r"Your question: \*\*(.+?)\*\*", role_prompts.PROMPTS[role].system)
-    return found.group(1)
-
-
 def question_ids(doc: dict) -> list[str]:
     """The handoff's questions' ids: the ones a script slide may answer."""
     return [q["id"] for q in (doc.get("request") or {}).get("questions") or []]
 
-
-def questions(doc: dict) -> list[sessions.Question]:
-    """What the swarm proves: whether there is enough to answer each of the
-    handoff's questions (the author votes; a no says what to ask the
-    sender), and the four judges' questions."""
-    out = [sessions.Question(f"{ENOUGH}{q['id']}",
-                             f"Is there enough to answer this question? {q['text']}",
-                             author_votes=True, enough=True)
-           for q in (doc.get("request") or {}).get("questions") or []]
-    return out + [sessions.Question(qid, judge_asks(role))
-                  for role, qid in JUDGE_QUESTION.items()]
 
 
 # ── the swarm, made and kept ──────────────────────────────────────────────
@@ -316,6 +318,11 @@ def _kept(run: Run) -> dict:
         return {}
 
 
+def _save(run: Run, kept: dict) -> None:
+    pe.write_file(run.folder / STATE, json.dumps(kept, indent=2, ensure_ascii=False)
+                  .encode("utf-8"))
+
+
 def _keep(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> None:
     """The swarm's state, and the session of each participant that has
     answered a turn (one never answered holds nothing to resume)."""
@@ -324,8 +331,14 @@ def _keep(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> None:
             kept.setdefault("participants", {})[name] = {
                 "session": chat.session, "engine": chat.pick.engine, "model": chat.model}
     kept["swarm"] = swarm.saved()
-    pe.write_file(run.folder / STATE, json.dumps(kept, indent=2, ensure_ascii=False)
-                  .encode("utf-8"))
+    _save(run, kept)
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 class _Firsts:
@@ -336,7 +349,6 @@ class _Firsts:
     def __init__(self, run: Run, material: list[sessions.Known]):
         self.run = run
         self.material = material
-        self.marked: list[dict] = []        # the script's latest marks
 
     def __call__(self, name: str) -> str:
         run = self.run
@@ -348,30 +360,24 @@ class _Firsts:
                       "{the gathered and marked material, with its knowledge state}":
                           sessions._material(sessions.share(AUTHOR, author_material(run)),
                                              marked=True)}
-        values["{the prep}"] = _read(run.prep)
-        values["{script}"] = _read(run.script)
-        values["{the script parts new to him}"] = _parts_text(new_to_him(run, self.marked))
+        values["{the prep}"] = sessions._tag("prep", _read(run.prep), file=PREP_MD)
         said = material_of(name, values)
+        if name == EDITOR:
+            # The editor's approved prompt closes on no material: it is
+            # given its share of the evidence, each item marked, here.
+            said = sessions._material(sessions.share(EDITOR, self.material), marked=True)
         if roles.role(name).release.tools:
             said = f"{said}\n\n{evidence_note(run)}" if said else evidence_note(run)
         return said
 
 
-def _read(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
-
-def build(run: Run, kept: dict, more: tuple[sessions.Question, ...] = ()
-          ) -> tuple[sessions.BrainSwarmSession, _Firsts]:
+def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = ()
+          ) -> sessions.BrainSwarmSession:
     """The swarm: each participant on its role, its model picked (the
-    author first, the judges then on the other brain when Settings says
-    so), or resumed on the session it had; `more`, the questions the deck
-    review adds (package_deck). Raises NoModel."""
+    author first, the owners then on the other brain from it when Settings
+    says so), or resumed on the session it had; `more`, the concerns the
+    deck review adds (package_deck). Raises NoModel."""
     material = evidence(run)
-    firsts = _Firsts(run, material)
     participants: dict[str, sessions.ChatSession] = {}
     author_engine = None
     for name in NAMES:
@@ -390,13 +396,46 @@ def build(run: Run, kept: dict, more: tuple[sessions.Question, ...] = ()
         if name == AUTHOR:
             author_engine = pick.engine
         participants[name] = chat
-    swarm = sessions.BrainSwarmSession(participants, questions(run.doc) + list(more),
-                                       author=AUTHOR,
-                                       editor=EDITOR, non_voters=(READER,), material=material,
-                                       first=firsts)
+    swarm = sessions.BrainSwarmSession(participants, concerns() + list(more), author=AUTHOR,
+                                       material=material, first=_Firsts(run, material))
     if kept.get("swarm"):
         swarm.restore(kept["swarm"])
-    return swarm, firsts
+    return swarm
+
+
+TALK = sessions._object({"message": {"type": "string",
+                                     "description": "What you say in the conversation."}})
+
+
+def author_form(work: sessions.Script) -> dict:
+    """The author's turn: what it says, what it writes (`work.form`), and
+    what only the sender can answer (the approved author prompt: it says,
+    for each question, whether there is enough and if not what to ask)."""
+    return sessions._object({**TALK["properties"], **work.form,
+                             "ask_sender": sessions.ASK_SENDER})
+
+
+# ── the stages' times ─────────────────────────────────────────────────────
+
+class Clock:
+    """When each stage of the swarm began and ended, kept with its state
+    (`times`), so a run's report says what took how long."""
+
+    def __init__(self, kept: dict):
+        self.times = kept.setdefault("times", [])
+
+    def __call__(self, stage: str):
+        clock = self
+
+        class _At:
+            def __enter__(self):
+                self.entry = {"stage": stage, "began": time.time(), "ended": None}
+                clock.times.append(self.entry)
+
+            def __exit__(self, *_):
+                self.entry["ended"] = time.time()
+                self.entry["seconds"] = round(self.entry["ended"] - self.entry["began"], 1)
+        return _At()
 
 
 # ── research ──────────────────────────────────────────────────────────────
@@ -451,11 +490,12 @@ def research(doc: dict) -> None:
     earlier = _carry_earlier(run)
 
     async def go():
-        swarm, _ = build(run, kept)
+        swarm = build(run, kept)
         author = swarm.participants[AUTHOR]
         try:
             await author.open()
-            await swarm.turn(AUTHOR, TIMEOUT, add=research_note(run, earlier))
+            with Clock(kept)(RESEARCH):
+                await swarm.answer(AUTHOR, TIMEOUT, research_note(run, earlier), TALK)
         finally:
             _keep(run, swarm, kept)
             await author.close()
@@ -467,17 +507,128 @@ def research(doc: dict) -> None:
                                    "its source path, for each question.",
                                    "Read the run's conversation and log for why; a new run.")
     kept["researched"] = True
-    pe.write_file(run.folder / STATE, json.dumps(kept, indent=2, ensure_ascii=False)
-                  .encode("utf-8"))
+    _save(run, kept)
 
 
-# ── the swarm ─────────────────────────────────────────────────────────────
+# ── grouping by meaning ───────────────────────────────────────────────────
+
+# Two texts mean the same when the engine's embeddings of their words are at
+# least this close (cosine). Measured on the engine's model
+# (multilingual-e5-small) on 2026-11-20: rewordings of one question 0.86 to
+# 0.95, different questions at most 0.82.
+SAME_MEANING = 0.85
+EMBED_DEADLINE = 90.0
+
+
+def _engine_embed(texts: list[str]) -> list[list[float]]:
+    """Each text's vector by the knowledge engine's own model."""
+    return records.uds().embed(texts, EMBED_DEADLINE)
+
+
+# How texts are embedded to be grouped (tests give their own).
+EMBED: Callable[[list[str]], list[list[float]]] = _engine_embed
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def meaning_groups(vectors: list[list[float]], who: list[str]) -> list[tuple[list[int], int]]:
+    """The texts grouped by meaning: a text joins the first group every
+    member of which it is SAME_MEANING to, else starts one; each group
+    keeps one wording, its member nearest in meaning to the rest (the first
+    on a tie); the groups ordered by how many (`who`, each text's) said it,
+    then by which came first. Each (its members, the one kept)."""
+    groups: list[list[int]] = []
+    for i in range(len(vectors)):
+        for group in groups:
+            if all(_cosine(vectors[i], vectors[j]) >= SAME_MEANING for j in group):
+                group.append(i)
+                break
+        else:
+            groups.append([i])
+
+    def kept(group: list[int]) -> int:
+        return max(group, key=lambda i: (sum(_cosine(vectors[i], vectors[j])
+                                             for j in group if j != i), -i))
+    ordered = sorted(groups, key=lambda g: (-len({who[i] for i in g}), g[0]))
+    return [(g, kept(g)) for g in ordered]
+
+
+def group_by_meaning(asks: list[dict], vectors: list[list[float]]) -> list[dict]:
+    """The questions to the sender grouped by meaning (swarm ask_sender
+    merged, Tim 2026-11-20): each ask is {"question" (where it was asked),
+    "voter" (who asked), "ask"}; one wording a group."""
+    who = [a["voter"] for a in asks]
+    return [{"id": f"ask-{n}", "question": asks[k]["ask"], "voters": len({who[i] for i in g}),
+             "asked": [asks[i] for i in g]}
+            for n, (g, k) in enumerate(meaning_groups(vectors, who), 1)]
+
+
+def _embedded(texts: list[str], what: str) -> list[list[float]]:
+    from jarvis.knowledge_client import EngineUnavailable
+    try:
+        return EMBED(texts)
+    except EngineUnavailable as e:
+        raise package_jobs.Blocked(
+            SWARM, f"The engine could not embed {what} to group them by meaning: {e}",
+            f"JARVIS asked the knowledge engine for the embeddings of {what}.",
+            "Install the embedding model (Settings, Knowledge) and keep the knowledge engine "
+            "up, then a new run.") from None
+
+
+def _once(items: list[dict]) -> list[dict]:
+    """Each the first time it is said (an owner's one fix for two of its
+    concerns is one fix)."""
+    seen, out = set(), []
+    for item in items:
+        key = tuple(sorted(item.items()))
+        if key not in seen:
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def merged_left(swarm: sessions.BrainSwarmSession, among) -> list[dict]:
+    """What the concerns not signed off have left, merged by meaning into
+    one numbered list (construction-drafts.md "Cooperative swarm" flow 3):
+    each item one wording of what is left, who raised it, each one's
+    suggested fix and any evidence named as missing."""
+    items = swarm.left(among)
+    if not items:
+        return []
+    vectors = _embedded([i["what"] for i in items], "what the owners left")
+    out = []
+    for n, (g, k) in enumerate(meaning_groups(vectors, [i["owner"] for i in items]), 1):
+        members = [items[i] for i in g]
+        out.append({"id": n, "what": items[k]["what"],
+                    "raised_by": list(dict.fromkeys(m["owner"] for m in members)),
+                    "concerns": list(dict.fromkeys(m["concern"] for m in members)),
+                    "fixes": _once([{"by": m["owner"], "fix": m["fix"]}
+                                    for m in members if m["fix"]]),
+                    "evidence_missing": _once([{"by": m["owner"], "needs": m["evidence_missing"]}
+                                               for m in members if m["evidence_missing"]])})
+    return out
+
+
+def list_text(items: list[dict]) -> str:
+    """The merged list as the program says it into the conversation."""
+    lines = []
+    for item in items:
+        lines.append(f"{item['id']}. {item['what']} (raised by {', '.join(item['raised_by'])}; "
+                     f"{', '.join(item['concerns'])})")
+        lines += [f"   Suggested fix ({f['by']}): {f['fix']}" for f in item["fixes"]]
+        lines += [f"   Evidence missing ({e['by']}): {e['needs']}"
+                  for e in item["evidence_missing"]]
+    return "\n".join(lines)
+
+
+# ── the sender's answers ──────────────────────────────────────────────────
 
 def _take_answers(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> None:
     """The sender's answers since the swarm last asked, said into the
-    conversation as the sender's, word for word; every enough question
-    reopens, and the next round is compared with what was open when it
-    asked."""
+    conversation as the sender's, word for word; the next checkpoint is
+    compared with what was open when it asked."""
     rounds = [r for r in package_jobs.get(run.doc["id"])["rounds"]
               if package_jobs.kind_of(r) == package_jobs.QUESTIONS]
     asking = kept.setdefault("asking", {})
@@ -489,121 +640,144 @@ def _take_answers(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> No
         swarm.say("sender", "\n".join(sessions._tag("answer", v, id=k, question=asked.get(k, ""))
                                       for k, v in r["answers"].items()))
         said += 1
-        for qid, q in swarm.questions.items():
-            if q.enough and swarm.state[qid] != sessions.OPEN:
-                swarm.reopen(qid)
         asking["compare"] = asking.get("open_when_asked") or []
     asking["answers_said"] = said
 
 
-# Two questions to the sender mean the same when the engine's embeddings of
-# their words are at least this close (cosine). Measured on the engine's
-# model (multilingual-e5-small) on 2026-11-20: rewordings of one question
-# 0.86 to 0.95, different questions at most 0.82.
-SAME_MEANING = 0.85
-EMBED_DEADLINE = 90.0
+def _ask_sender(run: Run, swarm: sessions.BrainSwarmSession, kept: dict, among) -> bool:
+    """At a checkpoint, what the participants asked since the sender was
+    last asked, grouped by meaning, goes to the sender: True when the job
+    now waits on it. A round of answers that changed nothing still open
+    stops the asking (decided "questions to the sender")."""
+    asking = kept.setdefault("asking", {})
+    still = sorted(swarm.not_resolved(among))
+    if "compare" in asking and still == sorted(asking.pop("compare")):
+        asking["stopped"] = True
+    asks = swarm.to_send()
+    if not asks or asking.get("stopped"):
+        return False
+    grouped = group_by_meaning(
+        [{"question": a["stage"], "voter": a["from"], "ask": a["ask"]} for a in asks],
+        _embedded([a["ask"] for a in asks], "the swarm's questions to the sender"))
+    if not package_jobs.ask(run.doc["id"], grouped):
+        return False
+    swarm.sent()
+    asking["open_when_asked"] = still
+    return True
 
 
-def _engine_embed(texts: list[str]) -> list[list[float]]:
-    """Each text's vector by the knowledge engine's own model."""
-    return records.uds().embed(texts, EMBED_DEADLINE)
+# ── one turn of the owners, and the author's ──────────────────────────────
+
+async def owners_turn(swarm: sessions.BrainSwarmSession, names, among, work, stage: str,
+                      add_of: Callable[[str], str]) -> None:
+    """Owners in parallel (each that owns one of `among`): each edits
+    `work` (its edits applied by the program, in the order the owners are
+    given, only where the old text is exactly there), asks the sender what
+    only the sender knows, and signs its concerns off, in the one turn.
+    What was applied and refused is said into the conversation."""
+    turns = {}
+    for name in names:
+        mine = swarm.concerns_of(name, among)
+        if not mine:
+            continue
+        sign = "\n".join(sessions._tag("concern", swarm.concerns[c].asks, id=c) for c in mine)
+        turns[name] = (f"{add_of(name)}\n\nSign off, by id:\n{sign}",
+                       sessions.owner_form(mine, work.edit_form))
+    answers = await swarm.together(turns, TIMEOUT)
+    said = []
+    for name, answer in answers.items():
+        edits = [e for e in answer.get("edits") or [] if isinstance(e, dict)]
+        if edits:
+            _, applied, refused = work.edit(edits)
+            said.append(f"{name}'s edits to {work.name}: {len(applied)} applied, "
+                        f"{len(refused)} refused (old text not exactly there, or it would "
+                        f"not check)." + "".join(f"\n- refused: {json.dumps(e, ensure_ascii=False)}"
+                                                 for e in refused))
+        swarm.sign(name, answer, stage, among)
+        swarm.ask(name, answer, stage)
+    if said:
+        swarm.say(PROGRAM, "\n".join(said))
 
 
-# How the questions to the sender are embedded (tests give their own).
-EMBED: Callable[[list[str]], list[list[float]]] = _engine_embed
+async def author_writes(swarm: sessions.BrainSwarmSession, work, stage: str, add: str) -> bool:
+    """The author's turn writing `work` (the outline, the script): what it
+    answers is checked by the program and written; one that does not check
+    is said back with every problem and asked again, at most ROUNDS_MAX
+    times. False when it never checked."""
+    form = author_form(work)
+    for attempt in range(ROUNDS_MAX + 1):
+        answer = await swarm.answer(swarm.author, TIMEOUT, add if attempt == 0 else "", form)
+        swarm.ask(swarm.author, answer, stage)
+        problems = work.take(answer)
+        if not problems:
+            return True
+        swarm.say(PROGRAM, f"The {work.key} in your answer does not check against "
+                           f"{work.version}. Answer the whole {work.key} again, in its form:\n"
+                  + "\n".join(f"- {p}" for p in problems))
+    return False
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
+# ── the program's words to each ───────────────────────────────────────────
+
+def outline_note(run: Run) -> str:
+    return (f"Write the prep in {run.prep}. Then give the outline in your answer, as "
+            f"`outline` in the schema given with this call ({package_script.OUTLINE_VERSION}): "
+            f"JARVIS checks it and writes it to {run.outline}.")
 
 
-def group_by_meaning(asks: list[dict], vectors: list[list[float]]) -> list[dict]:
-    """The asks grouped by meaning (swarm ask_sender merged): an ask joins
-    the first group every member of which it is SAME_MEANING to, else
-    starts one; each group keeps one wording, its member nearest in
-    meaning to the rest (the first on a tie), and the groups are ordered by
-    how many voters asked, then by which was asked first. Each ask is
-    {"question" (the enough question), "voter", "ask"}; `vectors` is each
-    ask's embedding, in order."""
-    groups: list[list[int]] = []
-    for i in range(len(asks)):
-        for group in groups:
-            if all(_cosine(vectors[i], vectors[j]) >= SAME_MEANING for j in group):
-                group.append(i)
-                break
-        else:
-            groups.append([i])
-
-    def kept(group: list[int]) -> int:
-        return max(group, key=lambda i: (sum(_cosine(vectors[i], vectors[j])
-                                             for j in group if j != i), -i))
-    ordered = sorted(groups, key=lambda g: (-len({asks[i]["voter"] for i in g}), g[0]))
-    return [{"id": f"ask-{n}", "question": asks[kept(g)]["ask"],
-             "voters": len({asks[i]["voter"] for i in g}),
-             "asked": [asks[i] for i in g]} for n, g in enumerate(ordered, 1)]
+def settle_note(run: Run) -> str:
+    return ("The owners have worked on the outline, above. Settle any conflict between them, "
+            "saying why, and give the whole outline, revised or as it stands.\n"
+            + sessions._tag("outline", _read(run.outline), file=OUTLINE))
 
 
-def _to_ask(swarm: sessions.BrainSwarmSession) -> list[dict]:
-    """The failed enough questions' no-voters' questions, grouped by meaning
-    with the engine's embeddings into one list (swarm ask_sender merged,
-    Tim 2026-11-20): the sender answers each group once."""
-    asks = [{"question": qid, "voter": v.participant, "ask": v.ask}
-            for qid, q in swarm.questions.items()
-            if q.enough and swarm.state[qid] == sessions.FAILED
-            for v in swarm.closed_by.get(qid, []) if v.vote == sessions.NO and v.ask]
-    if not asks:
-        return []
-    from jarvis.knowledge_client import EngineUnavailable
-    try:
-        vectors = EMBED([a["ask"] for a in asks])
-    except EngineUnavailable as e:
-        raise package_jobs.Blocked(
-            SWARM, f"The engine could not embed the questions to the sender to group them by "
-                   f"meaning: {e}",
-            "JARVIS asked the knowledge engine for the embeddings of the swarm's questions to "
-            "the sender.",
-            "Install the embedding model (Settings, Knowledge) and keep the knowledge engine "
-            "up, then a new run.") from None
-    return group_by_meaning(asks, vectors)
-
-
-def _round_add(run: Run, swarm: sessions.BrainSwarmSession, firsts: _Firsts):
-    """What a participant is given each round after its first, beside the
-    script: the prep as the author last wrote it, to every role whose
-    approved material holds it, and to the cares judge the script's parts
-    new to him."""
-    def add(name: str, _text: str, marked: list) -> str:
-        firsts.marked = marked
-        if not swarm.spoke(name):
-            return ""               # its first message holds them (_Firsts)
-        out = []
-        if "{the prep}" in role_prompts.PLACEHOLDER.findall(
-                role_prompts.PROMPTS[name].material):
-            out.append(sessions._tag("prep", _read(run.prep), file=PREP_MD))
-        if name == "cares_judge":
-            out.append(_parts_text(new_to_him(run, marked)))
-        return "\n\n".join(t for t in out if t)
-    return add
-
-
-def author_note(run: Run) -> str:
-    """The program's words to the author each round: where the prep goes,
-    and that the script is its answer, in script/1."""
-    return (f"Write the prep in {run.prep}, or revise it. Give the script in your answer, as "
+def fill_note(run: Run) -> str:
+    return (f"Write the script from the agreed outline, below. Give it in your answer as "
             f"`script` in the schema given with this call ({package_script.VERSION}), the "
-            f"whole script each time, revised or as it stands: JARVIS checks it and writes "
-            f"it to {run.script}.")
+            f"whole script: JARVIS checks it and writes it to {run.script}.\n"
+            + sessions._tag("outline", _read(run.outline), file=OUTLINE))
 
 
-def _findings_of_script(problems: list[str]) -> dict:
-    """A swarm whose last script did not check: the finding the sender is
-    sent beside the questions not proven."""
-    return {"question": "script-checked",
-            "asks": f"Does the script check against {package_script.VERSION}?",
-            "state": sessions.FAILED,
-            "against": [{"participant": sessions.PROGRAM, "reason": " ".join(problems),
-                         "ask": ""}]}
+def revise_note(marked: list[dict]) -> str:
+    return (f"{role_prompts.AUTHOR_REVISE}\n"
+            + sessions._tag("marked", sessions.marked_slides(marked), file=SCRIPT)
+            + "\nGive the whole script again in your answer, revised.")
 
+
+def close_note(run: Run, items: list[dict]) -> str:
+    """The author's words for the close: the list is in the conversation;
+    where an item names missing evidence, the author researches it."""
+    out = ["Work through the list above, item by item: change the script or say why not. "
+           "Give the whole script in your answer."]
+    if any(item["evidence_missing"] for item in items):
+        out.append(f"Some items name evidence that is not in the material: research it with "
+                   f"your tools, add what you find to {run.research}, each finding with its "
+                   f"source path, and use it.")
+    return "\n".join(out)
+
+
+def _work_text(name: str, run: Run, work, marked: list[dict], kept: dict) -> str:
+    """What one owner is given beside its instructions: the outline or
+    script as it is now; the editor the script marked part by part; the
+    owners whose approved material holds the prep, the prep again when it
+    changed since they were given it."""
+    out = [sessions._tag(work.key, work.text(), file=work.name)]
+    if name == EDITOR and marked:
+        out.append(sessions._tag("marked", sessions.marked_slides(marked), file=SCRIPT))
+    if "{the prep}" in role_prompts.PROMPTS[name].material:
+        given = kept.setdefault("prep_given", {})
+        digest = hashlib.sha256(_read(run.prep).encode("utf-8")).hexdigest()
+        if given.get(name) not in (None, digest):
+            out.append(sessions._tag("prep", _read(run.prep), file=PREP_MD))
+        given[name] = digest
+    return "\n\n".join(out)
+
+
+def _mine(items: list[dict], name: str) -> list[dict]:
+    return [i for i in items if name in i["raised_by"]]
+
+
+# ── results ───────────────────────────────────────────────────────────────
 
 def conversation_md(result: dict) -> str:
     """The whole conversation, word for word, each message with who said it."""
@@ -619,22 +793,91 @@ def _write_result(run: Run, result: dict) -> None:
     pe.write_file(run.folder / CONVERSATION, conversation_md(result).encode("utf-8"))
 
 
-def findings_questions(result: dict) -> list[dict]:
-    """A failed swarm's findings as the questions its sender answers: each
-    question not proven, with every vote against it and what it said was
-    missing."""
+def findings_questions(findings: list[dict]) -> list[dict]:
+    """A swarm's findings as the questions its sender answers: each item
+    left, who raised it and the fixes suggested."""
     out = []
-    for f in result["findings"]:
-        said = "; ".join(f"{v['participant']}: {v['reason']}"
-                         + (f" Missing: {v['ask']}" if v.get("ask") else "")
-                         for v in f["against"]) or "no vote closed it"
-        out.append({"id": f["question"], "question": f"{f['asks']} Not proven. {said}"})
+    for f in findings:
+        fixes = "; ".join(f"{x['by']}: {x['fix']}" for x in f.get("fixes") or [])
+        out.append({"id": f"left-{f['id']}",
+                    "question": f"Not signed off: {f['what']} (raised by "
+                                f"{', '.join(f['raised_by'])})"
+                                + (f" Suggested: {fixes}" if fixes else "")})
     return out
+
+
+def _unchecked(work, problems: list[str]) -> list[dict]:
+    """What did not check, as the one finding the sender is sent."""
+    return [{"id": 1, "what": f"The {work.key} never checked against {work.version}: "
+                              + " ".join(problems),
+             "raised_by": [PROGRAM], "concerns": [], "fixes": [], "evidence_missing": []}]
+
+
+# ── the swarm ─────────────────────────────────────────────────────────────
+
+async def fix_passes(run: Run, swarm: sessions.BrainSwarmSession, kept: dict, flow: dict,
+                     among, work, *, mark: Callable[[], object], revise: Callable[[list], object],
+                     given: Callable[[str], str], clock: Clock, prefix: str = ""
+                     ) -> Optional[str]:
+    """Fix passes and closes (construction-drafts.md "Cooperative swarm"
+    flow 3 and 4, and the deck review the same way), from the stage `flow`
+    holds: "waiting" when the sender is asked, "passed", "not passed", or
+    "unchecked" when the author's revision never checked. `mark()` marks
+    the work again (the script; nothing for the deck); `revise(items)` is
+    the author's close, True once what it wrote checks; `given(name)` what
+    each owner is given."""
+    while True:
+        n, stage = flow["pass"], flow["stage"]
+        if stage == f"{prefix}pass":
+            with clock(f"{prefix}pass-{n}"):
+                await owners_turn(swarm, FIXERS, among, work, f"{prefix}pass-{n}",
+                                  lambda name: given(name))
+            flow["left"] = merged_left(swarm, among)
+            flow["stage"] = f"{prefix}asked-after-pass"
+            if not flow["left"]:
+                return "passed"
+            swarm.say(PROGRAM, "What is left, merged from every owner and the editor:\n"
+                      + list_text(flow["left"]))
+            _keep(run, swarm, kept)
+            if _ask_sender(run, swarm, kept, among):
+                return "waiting"
+        elif stage == f"{prefix}asked-after-pass":
+            with clock(f"{prefix}close-{n}"):
+                if not await revise(flow["left"]):
+                    return "unchecked"
+                await mark()
+            flow["stage"] = f"{prefix}recheck"
+            _keep(run, swarm, kept)
+        elif stage == f"{prefix}recheck":
+            items = flow["left"]
+            with clock(f"{prefix}recheck-{n}"):
+                names = [o for o in FIXERS if _mine(items, o)]
+                await owners_turn(swarm, names, swarm.not_resolved(among), work,
+                                  f"{prefix}recheck-{n}", lambda name: (
+                                      "Re-check only your own items of the list, below, against "
+                                      "the work as it is now, and sign off.\n"
+                                      + list_text(_mine(items, name)) + "\n\n" + given(name)))
+            if swarm.resolved(among):
+                return "passed"
+            flow["stage"] = f"{prefix}asked-after-recheck"
+            _keep(run, swarm, kept)
+            if _ask_sender(run, swarm, kept, among):
+                return "waiting"
+        elif stage == f"{prefix}asked-after-recheck":
+            if flow["pass"] >= ROUNDS_MAX:
+                flow["left"] = merged_left(swarm, among)
+                return "not passed"
+            flow["pass"] += 1
+            flow["stage"] = f"{prefix}pass"
+            _keep(run, swarm, kept)
+        else:
+            raise ValueError(f"no stage {stage!r}")
 
 
 def swarm(doc: dict) -> Optional[str]:
     """The swarm step of one run (package_jobs.PRODUCERS["swarm"]): WAITING
-    when it waits on the sender (questions, or a failed swarm's findings)."""
+    when it waits on the sender (questions, or what is left after its fix
+    passes)."""
     run = _run(doc, SWARM)
     kept = _kept(run)
     if not kept.get("researched"):
@@ -643,65 +886,121 @@ def swarm(doc: dict) -> Optional[str]:
     pe.wait_indexed(run.place, SWARM)       # the sender's answers, indexed as written
     labels = briefing_labels.for_marking()
     knowledge = package_mark.tim_known(run.rows, run.texts)
+    flow = kept.setdefault("flow", {"stage": "outline", "pass": 1})
+    outline, script = run.outline_file(), run.script_file()
+    clock = Clock(kept)
     outcome: dict = {}
-
-    script = run.script_file()
+    marked: list[dict] = list(kept.get("marked") or [])
 
     async def go():
-        swarm_, firsts = build(run, kept)
+        swarm_ = build(run, kept)
         marking = package_mark.MARKING(doc)
 
-        async def mark(written: package_script.ScriptFile) -> list[dict]:
-            firsts.marked = await marking.mark_slides(
-                package_script.units(written.read()), written.text(), labels, knowledge,
-                TIMEOUT)
-            return firsts.marked
+        async def mark() -> None:
+            with clock("mark"):
+                marked[:] = await marking.mark_slides(
+                    package_script.units(script.read()), script.text(), labels, knowledge,
+                    TIMEOUT)
+            kept["marked"] = list(marked)
+
+        def given(name: str) -> str:
+            return _work_text(name, run, script, marked, kept)
+
+        async def revise(items: list[dict]) -> bool:
+            return await author_writes(swarm_, script, f"close-{flow['pass']}",
+                                       close_note(run, items))
         try:
             await swarm_.open()
             _take_answers(run, swarm_, kept)
-            asking = kept.setdefault("asking", {})
             while True:
-                checked = await swarm_.play_round(
-                    TIMEOUT, script, mark, author_add=author_note(run),
-                    prep=lambda: _read(run.prep), add_for=_round_add(run, swarm_, firsts))
-                kept["script_problems"] = [] if checked else script.problems
-                if "compare" in asking:
-                    # A round of answers that changed nothing still open: no
-                    # more asking (decided "questions to the sender").
-                    if sorted(swarm_.not_proven()) == sorted(asking.pop("compare")):
-                        asking["stopped"] = True
-                # Every round played is one of the three (plan.ends).
-                result = swarm_.end_round()
-                if result is not None:
-                    outcome["result"] = result
-                    return
-                ask = [] if asking.get("stopped") else _to_ask(swarm_)
-                if ask and package_jobs.ask(doc["id"], ask):
-                    asking["open_when_asked"] = sorted(swarm_.not_proven())
-                    outcome["waiting"] = True
+                stage = flow["stage"]
+                if stage == "outline":
+                    with clock("outline"):
+                        if not await author_writes(swarm_, outline, "outline", outline_note(run)):
+                            outcome.update(result="not passed",
+                                           findings=_unchecked(outline, outline.problems))
+                            return
+                    flow["stage"] = "outline-owners"
+                elif stage == "outline-owners":
+                    with clock("outline-owners"):
+                        await owners_turn(swarm_, OWNERS, OUTLINE_CONCERNS, outline,
+                                          "outline", lambda name: (
+                                              "Work on the outline for your concerns.\n"
+                                              + _work_text(name, run, outline, [], kept)))
+                    flow["stage"] = "outline-settle"
+                elif stage == "outline-settle":
+                    with clock("outline-settle"):
+                        if not await author_writes(swarm_, outline, "outline-settle",
+                                                   settle_note(run)):
+                            outcome.update(result="not passed",
+                                           findings=_unchecked(outline, outline.problems))
+                            return
+                    flow["stage"] = "outline-signoff"
+                elif stage == "outline-signoff":
+                    with clock("outline-signoff"):
+                        await owners_turn(swarm_, OWNERS, OUTLINE_CONCERNS, outline,
+                                          "outline-signoff", lambda name: (
+                                              "The author has settled the outline, above. "
+                                              "Sign the outline off for your concerns.\n"
+                                              + _work_text(name, run, outline, [], kept)))
+                    flow["stage"] = "fill"
+                    _keep(run, swarm_, kept)
+                    if _ask_sender(run, swarm_, kept, OUTLINE_CONCERNS):
+                        outcome["waiting"] = True
+                        return
+                elif stage == "fill":
+                    with clock("fill"):
+                        if not await author_writes(swarm_, script, "fill", fill_note(run)):
+                            outcome.update(result="not passed",
+                                           findings=_unchecked(script, script.problems))
+                            return
+                        await mark()
+                    flow["stage"] = "revise"
+                elif stage == "revise":
+                    with clock("revise"):
+                        if not await author_writes(swarm_, script, "revise",
+                                                   revise_note(marked)):
+                            outcome.update(result="not passed",
+                                           findings=_unchecked(script, script.problems))
+                            return
+                        await mark()
+                    flow["stage"] = "pass"
+                else:
+                    end = await fix_passes(run, swarm_, kept, flow, SCRIPT_CONCERNS, script,
+                                           mark=mark, revise=revise, given=given, clock=clock)
+                    if end == "waiting":
+                        outcome["waiting"] = True
+                    elif end == "unchecked":
+                        outcome.update(result="not passed",
+                                       findings=_unchecked(script, script.problems))
+                    else:
+                        outcome.update(result=end, findings=flow.get("left") or [])
                     return
                 _keep(run, swarm_, kept)
         finally:
             _keep(run, swarm_, kept)
+            outcome["swarm"] = swarm_.result()
             await swarm_.close()
     package_jobs.asked(SWARM, "the swarm",
-                       "JARVIS ran the swarm: the author, the editor, the four judges and the "
-                       "Theory of Mind reader.", go())
+                       "JARVIS ran the swarm: the author, Tim's reader, the context owner, the "
+                       "structure and decision owner and the editor.", go())
     if outcome.get("waiting"):
         return package_jobs.WAITING
-    result = outcome["result"]
-    if kept.get("script_problems"):
-        result["findings"].append(_findings_of_script(kept["script_problems"]))
+    result = {**outcome["swarm"], "result": outcome["result"],
+              "findings": outcome["findings"] if outcome["result"] != "passed" else [],
+              "passes": flow["pass"], "times": kept.get("times") or []}
     _write_result(run, result)
     if result["result"] == "passed":
         used = research_log.mark_used(run.log, package_script.sources(script.read()), roots=(
             run.place.path, str(run.place.folder), str(run.folder)))
         package_jobs.noted(doc["id"], "swarm", {
-            "result": "passed", "rounds": result["rounds"], "script": str(run.script),
-            "prep": str(run.prep), "conversation": str(run.folder / CONVERSATION),
+            "result": "passed", "passes": flow["pass"], "script": str(run.script),
+            "outline": str(run.outline), "prep": str(run.prep),
+            "conversation": str(run.folder / CONVERSATION),
             "hits_used": sum(len(u["used"]) for u in used["used"])})
         return None
-    package_jobs.noted(doc["id"], "swarm", {"result": "not passed", "rounds": result["rounds"],
+    package_jobs.noted(doc["id"], "swarm", {"result": "not passed", "passes": flow["pass"],
                                             "conversation": str(run.folder / CONVERSATION)})
-    package_jobs.failed_swarm(doc["id"], findings_questions(result), result["findings"])
+    package_jobs.failed_swarm(doc["id"], findings_questions(result["findings"]),
+                              result["findings"])
     return package_jobs.WAITING

@@ -146,3 +146,26 @@ def test_the_engine_embeds_texts_with_its_own_model(tmp_path, monkeypatch):
     with in_process(tmp_path / "bare") as (_, uds):
         with pytest.raises(EngineUnavailable):
             uds.embed(["anything"])
+
+
+def test_the_outline_checks_and_its_owners_edits_are_applied_where_their_old_text_is(tmp_path):
+    outline = {"version": "outline/1", "slides": [
+        {"id": "ask", "title": "The ask", "point": "Approve 0.85.", "answers": "q1",
+         "background": False, "evidence": ["files/situation.md"]},
+        {"id": "ask", "title": "Why", "point": "It was measured.", "answers": "q2",
+         "background": True, "evidence": []}]}
+    assert script_.outline_problems(outline, ["q1"]) == [
+        "the outline.slides[1].answers is 'q2', not one of q1."]
+    assert script_.outline_problems(outline, ["q1", "q2"]) == [
+        "slide 2 (ask): its id is another slide's."]
+    outline["slides"][1]["id"] = "why"
+    held = script_.OutlineFile(tmp_path / script_.OUTLINE_FILE, ["q1", "q2"])
+    assert held.take({"outline": outline}) == []
+    assert held.form["outline"]["properties"]["version"]["enum"] == ["outline/1"]
+    _, applied, refused = held.edit([
+        {"slide": "ask", "field": "evidence[0]", "start": 0, "end": 18,
+         "old": "files/situation.md", "new": "files/measured.md", "reason": "r", "source": ""},
+        {"slide": "why", "field": "point", "start": 0, "end": 2, "old": "No", "new": "x",
+         "reason": "r", "source": ""}])
+    assert len(applied) == 1 and len(refused) == 1
+    assert held.read()["slides"][0]["evidence"] == ["files/measured.md"]

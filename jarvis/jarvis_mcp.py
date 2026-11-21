@@ -2240,9 +2240,9 @@ TOOL_SPECS = [
         "description": (
             "Settings, Brains: which engine and model each kind of agent JARVIS starts goes on "
             "(the package author, agent runs, builds, agent packages, and a package's editor, "
-            "judges, Theory of Mind reader, retrieval, marking, classification and "
+            "owners, reader for Tim, retrieval, marking, classification and "
             "extraction): a brain and model, the same as the agent asking, or the least in "
-            "token stress; whether a brain in token stress is overridden; whether the judges "
+            "token stress; whether a brain in token stress is overridden; whether the owners "
             "run on the other brain from the author's; and each brain's plus or minus against "
             "its pace this week (token stress is below zero)."),
         "inputSchema": {"type": "object", "properties": {}},
@@ -2276,7 +2276,7 @@ TOOL_SPECS = [
     {
         "name": "set_engine_setting",
         "description": (
-            "Change one kind of agent's engine setting, the override, or whether the judges "
+            "Change one kind of agent's engine setting, the override, or whether the owners "
             "run on the other brain, only when he asks. It starts nothing; it applies to the "
             "next agent of that kind."),
         "inputSchema": {
@@ -2284,7 +2284,7 @@ TOOL_SPECS = [
             "properties": {
                 "kind": {"type": "string",
                          "enum": ["package_author", "run", "build", "agent_package", "editor",
-                                  "judges", "theory_of_mind_reader", "retrieval", "marking",
+                                  "owners", "tims_reader", "retrieval", "marking",
                                   "classification", "extraction", "summarization"]},
                 "pick": {"type": "string", "enum": ["fixed", "requester", "least_stress"],
                          "description": ("fixed: the engine and model given; requester: the "
@@ -2298,9 +2298,9 @@ TOOL_SPECS = [
                                       "description": ("Alone, instead of a kind: whether a "
                                                       "chosen brain in token stress gives way "
                                                       "to the least stressed.")},
-                "judges_other_brain": {"type": "boolean",
+                "owners_other_brain": {"type": "boolean",
                                        "description": ("Alone, instead of a kind: whether a "
-                                                       "package's judges run on the other "
+                                                       "package's owners run on the other "
                                                        "brain from its author's (ignored "
                                                        "with only one brain).")},
             },

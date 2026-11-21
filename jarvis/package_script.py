@@ -23,6 +23,11 @@ What the rest of the run reads from it, by program:
   record_hits_used);
 - `opening`: slide 1's words, which open the message that carries the
   package (deliver write_message).
+
+The outline the script is written from is outline.yaml, outline/1
+(`outline_schema`, `OutlineFile`): each slide's title, its one point, the
+question it answers and its evidence by source path (the cooperative
+swarm's first step, construction-drafts.md "Cooperative swarm").
 """
 from __future__ import annotations
 
@@ -179,6 +184,16 @@ def _piece_problems(piece: dict, at: str) -> list[str]:
     return out
 
 
+def _slide_ids(doc: dict) -> list[str]:
+    """Each slide whose id is another slide's."""
+    out, seen = [], set()
+    for n, slide in enumerate(doc["slides"]):
+        if slide["id"] in seen:
+            out.append(f"slide {n + 1} ({slide['id']}): its id is another slide's.")
+        seen.add(slide["id"])
+    return out
+
+
 def problems(script, question_ids: list[str]) -> list[str]:
     """Everything in `script` that is not script/1 as `schema` gives it;
     empty when it checks."""
@@ -186,15 +201,54 @@ def problems(script, question_ids: list[str]) -> list[str]:
     _against(script, schema(question_ids), "the script", out)
     if out:
         return out
-    seen: set[str] = set()
+    twice = set(_slide_ids(script))
     for n, slide in enumerate(script["slides"]):
         at = f"slide {n + 1} ({slide['id']})"
-        if slide["id"] in seen:
-            out.append(f"{at}: its id is another slide's.")
-        seen.add(slide["id"])
+        out += [p for p in twice if p.startswith(f"{at}:")]
         for i, piece in enumerate(slide["on_screen"]):
             out += _piece_problems(piece, f"{at} on_screen[{i}]")
     return out
+
+
+# ── the outline ───────────────────────────────────────────────────────────
+
+# The outline the author writes before the script (owner-prompts.md, "Author:
+# the outline"; construction-drafts.md "Cooperative swarm" flow 1): for each
+# slide, its title, its one point, the question it answers (one of the
+# handoff's questions, or background for one), and the evidence it rests on,
+# by source path. The owners work on it, and the script is written from it.
+OUTLINE_VERSION = "outline/1"
+OUTLINE_FILE = "outline.yaml"
+
+
+def outline_schema(question_ids: list[str]) -> dict:
+    """outline/1 as a JSON schema both brains take as an answer format."""
+    answers = ({"type": "string", "enum": list(question_ids)} if question_ids else _WORDS)
+    slide = _object({
+        "id": {"type": "string", "pattern": ID,
+               "description": "Lower case letters, digits and dashes; the script's slide "
+                              "keeps it."},
+        "title": _WORDS,
+        "point": _described(_WORDS, "Its one point."),
+        "answers": _described(answers, "The id of the question it answers, or the one it "
+                                       "is background for."),
+        "background": {"type": "boolean",
+                       "description": "True when it is background for that question rather "
+                                      "than its answer."},
+        "evidence": _array(_described(_WORDS, f"A source path, or {UNANSWERED!r}."),
+                           "The evidence it rests on, by source path."),
+    })
+    return _object({"version": {"type": "string", "enum": [OUTLINE_VERSION]},
+                    "slides": _array(slide, "The slides, in order.", least=1)},
+                   "The outline: each slide's title, its one point, the question it "
+                   "answers and its evidence.")
+
+
+def outline_problems(outline, question_ids: list[str]) -> list[str]:
+    """Everything in `outline` that is not outline/1; empty when it checks."""
+    out: list[str] = []
+    _against(outline, outline_schema(question_ids), "the outline", out)
+    return out or _slide_ids(outline)
 
 
 # ── the file ──────────────────────────────────────────────────────────────
@@ -279,15 +333,29 @@ def _set(slide: dict, field: str, text: str) -> None:
     holder[steps[-1]] = text
 
 
-def apply_edits(script: dict, edits: list[dict]) -> tuple[dict, list[dict], list[dict]]:
-    """The editor's edits applied by the program, each at its slide and
-    field, by offsets within that field's words (sessions.apply_edits):
-    (the script, the edits applied, the edits refused: no such slide or
-    field, Tim's own words, or old text not at its offsets)."""
+def outline_units(outline: dict) -> list[Unit]:
+    """Every piece of words of the outline's slides, in order: its title,
+    its point and each source path of its evidence."""
+    out = []
+    for slide in outline.get("slides") or []:
+        out.append(Unit(slide["id"], "title", slide["title"]))
+        out.append(Unit(slide["id"], "point", slide["point"]))
+        for i, path in enumerate(slide.get("evidence") or []):
+            out.append(Unit(slide["id"], f"evidence[{i}]", path))
+    return [u for u in out if u.text.strip()]
+
+
+def apply_edits(script: dict, edits: list[dict], units_of=None
+                ) -> tuple[dict, list[dict], list[dict]]:
+    """Edits applied by the program, each at its slide and field, by
+    offsets within that field's words (sessions.apply_edits): (the script,
+    or the outline with `units_of` its `outline_units`; the edits applied;
+    the edits refused: no such slide or field, Tim's own words, or old text
+    not at its offsets)."""
     from jarvis import sessions
     script = copy.deepcopy(script)
     slides = {s["id"]: s for s in script.get("slides") or []}
-    by_unit = {(u.slide, u.field): u for u in units(script)}
+    by_unit = {(u.slide, u.field): u for u in (units_of or units)(script)}
     grouped: dict[tuple[str, str], list[dict]] = {}
     refused: list[dict] = []
     for edit in edits:
@@ -342,26 +410,45 @@ def opening(script: dict) -> list[str]:
     return [line for line in lines if line.strip()]
 
 
-class ScriptFile:
-    """A run's script.yaml as the swarm writes it (sessions.Script): the
-    author answers it in its own form, the program checks it and writes it,
-    and the editor's edits are applied at their slides and fields."""
+class StructuredFile:
+    """A run's outline.yaml or script.yaml as the swarm writes it
+    (sessions.Script): the author answers it in its own form, the program
+    checks it and writes it, and the owners' edits are applied at their
+    slides and fields."""
 
+    key = "script"
     version = VERSION
 
     def __init__(self, path: Path, question_ids: list[str]):
         self.path = Path(path)
         self.name = self.path.name
         self.question_ids = list(question_ids)
-        self.form = {"script": schema(self.question_ids)}
+        self.form = {self.key: self.schema(self.question_ids)}
         self.problems: list[str] = []       # the last answer's, when it did not check
 
+    @staticmethod
+    def schema(question_ids: list[str]) -> dict:
+        return schema(question_ids)
+
+    @staticmethod
+    def check(doc, question_ids: list[str]) -> list[str]:
+        return problems(doc, question_ids)
+
+    @staticmethod
+    def units_of(doc: dict) -> list[Unit]:
+        return units(doc)
+
+    @property
+    def edit_form(self) -> dict:
+        from jarvis import sessions
+        return sessions.located(sessions.EDIT)
+
     def take(self, answer: dict) -> list[str]:
-        script = answer.get("script") if isinstance(answer, dict) else None
-        self.problems = (["The answer has no script."] if script is None
-                         else problems(script, self.question_ids))
+        doc = answer.get(self.key) if isinstance(answer, dict) else None
+        self.problems = ([f"The answer has no {self.key}."] if doc is None
+                         else self.check(doc, self.question_ids))
         if not self.problems:
-            write(self.path, script)
+            write(self.path, doc)
         return self.problems
 
     def read(self) -> dict:
@@ -374,11 +461,34 @@ class ScriptFile:
             return ""
 
     def edit(self, edits: list[dict]) -> tuple[str, list[dict], list[dict]]:
-        script, applied, refused = apply_edits(self.read(), edits)
-        if applied and problems(script, self.question_ids):
-            # Edits that would leave a script that does not check are not
-            # applied: the script stays as the author wrote it.
+        doc, applied, refused = apply_edits(self.read(), edits, self.units_of)
+        if applied and self.check(doc, self.question_ids):
+            # Edits that would leave it not checking are not applied: it
+            # stays as the author wrote it.
             return self.text(), [], refused + applied
         if applied:
-            write(self.path, script)
+            write(self.path, doc)
         return self.text(), applied, refused
+
+
+class ScriptFile(StructuredFile):
+    """script.yaml, script/1."""
+
+
+class OutlineFile(StructuredFile):
+    """outline.yaml, outline/1."""
+
+    key = "outline"
+    version = OUTLINE_VERSION
+
+    @staticmethod
+    def schema(question_ids: list[str]) -> dict:
+        return outline_schema(question_ids)
+
+    @staticmethod
+    def check(doc, question_ids: list[str]) -> list[str]:
+        return outline_problems(doc, question_ids)
+
+    @staticmethod
+    def units_of(doc: dict) -> list[Unit]:
+        return outline_units(doc)

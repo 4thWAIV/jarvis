@@ -1458,7 +1458,7 @@ The sender's handoff is the one form a package request takes (see
 (`package_author.read_handoff` over `package_request.read` and `check`).
 The fresh author writes its package in its first turn. The old briefing
 pipeline (its editors and judges, their wording and pass mark) is gone,
-replaced by the swarm (see "Package requests"), and so is the
+replaced by the cooperative swarm (see "Package requests"), and so is the
 transcript-reading author proof: by construction the sender cannot write
 a briefing, since it only asks (workflow.yaml deliver, decided "proof that
 a fresh author wrote it"). A signature made with an author claim before
@@ -1710,75 +1710,87 @@ cites (`research-used.json`). The research right holds `search_history`
 and `read_history` (`agent_rights.TOOLS`), and so do the roles that have
 the research tools (`roles.RESEARCH_TOOLS`).
 The swarm step (`package_swarm.swarm`, `PRODUCERS["swarm"]`; design:
-workflow.yaml swarm) is the author, the editor, the four judges and the
-Theory of Mind reader in one `BrainSwarmSession` (`package_swarm.build`:
-the author picked first, each participant on its role, or resumed on the
-session it had; `CHAT`, `PICK`), its questions the handoff's (is there
-enough to answer each, `enough-<id>`, `Question.enough`: the author votes,
-and a no says what to ask the sender, `ENOUGH_FORM`) and the four judges'
-(their approved words, `judge_asks`). The script is structured YAML,
+workflow.yaml swarm, made cooperative by construction-drafts.md
+"Cooperative swarm", Tim 2026-11-21) is a team in one `BrainSwarmSession`
+(`package_swarm.build`: the author picked first, each participant on its
+role, or resumed on the session it had; `CHAT`, `PICK`): the author;
+Tim's reader (`tims_reader`: does Tim care about each part, and what would
+he ask; the cares judge and the Theory of Mind reader in one); the context
+owner (`context_owner`: is the background right); the structure and
+decision owner (`structure_owner`: is the most relevant information
+first, is the decision properly prepared); and the editor (the language).
+Each owner's prompt is owner-prompts.md's word for word (`role_prompts`,
+pre-approved first round), and its concerns are `package_swarm.concerns`
+(Tim's four judge questions word for word, read from the prompts, and the
+editor's language). Nobody votes: each owner fixes its concern by editing
+what it touches (each edit at its slide and field with its offsets, its
+reason and source, applied by the program only where its old text is
+exactly there, `package_script.apply_edits`, never Tim's own words, never
+leaving it not checking; what was applied and refused said as JARVIS's
+own turn), asks the sender only what only the sender knows
+(`ask_sender`), and signs its concerns off in the same turn
+(`sessions.owner_form`, `BrainSwarmSession.sign`: resolved with a quoted
+reason, or `not_yet` with what is left, the fix it suggests and any
+evidence missing; one that says neither is not yet, the program saying
+why). The flow (`flow` in `swarm.json`, each stage timed in `times` by
+`Clock`): the outline (the author writes `prep.md` and gives the outline
+in its answer, `outline.yaml`, outline/1, `package_script.OutlineFile`:
+each slide's id, title, one point, the question it answers or is
+background for, and its evidence by source path; the three owners work on
+it in parallel, `owners_turn` over `BrainSwarmSession.together`; the
+author settles conflicts, saying why; the owners sign the outline off);
+the fill (the author writes the script from the agreed outline; the
+program marks it; the author revises once against the marks,
+`role_prompts.AUTHOR_REVISE` word for word; marked again); then fix passes
+(`fix_passes`): the owners and the editor in parallel edit and sign off;
+what is left is merged by meaning into one numbered list
+(`merged_left`, `meaning_groups` over the engine's embeddings, each item
+with who raised it, each fix suggested and any evidence named missing,
+`list_text`, said as JARVIS's turn); the author works the list (`close_note`:
+it researches only what an item names as missing evidence; research and
+the prep are never redone otherwise), the script is marked again, and
+each owner with items re-checks only its own and signs off. Done when
+every concern is signed off; at most two fix passes (`ROUNDS_MAX`), then
+what is left goes to the sender (`findings_questions`,
+`package_jobs.failed_swarm`). An author answer that does not check is said
+back with every problem and asked again, at most `ROUNDS_MAX` times, then
+the swarm ends not passed with them. The script is structured YAML,
 `script.yaml` (`package_script.py`, script/1; Tim 2026-11-20): a list of
 slides in order, each with an id (its deck slide's), a title, what is on
 screen (an ordered list of pieces: `text`, `his_words` with its source, a
 `picture` by path, a `table`), what JARVIS says over it (`narration`), the
 source path and position of every fact (`facts`), the questions it
-answers and the decision it asks if any. A round (`play_round`, over a
-`sessions.Script`, `package_script.ScriptFile`): the author writes or
-revises `prep.md` and gives the whole script in its answer, `script` in
-the schema of its turn (`package_script.schema`, the approved prompt's
-words unchanged, `author_note` the program's words), which the program
-checks (`package_script.problems`) and writes; one that does not check is
-said back as JARVIS's own turn with every problem and the round ends there,
-still one of the three (a last one's problems are a `script-checked`
-finding). The script is marked slide by slide (`mark_slides`: one batch
-never two slides' words, the whole script with each, every part at its
-slide and field, `package_script.units`; the 28 labels, Tim's material by
-`package_mark.tim_known`); the editor edits it, given the prep
-(`EditingSession.edit`'s `prep`) and the marked parts slide by slide, each
-edit naming its slide and field beside its offsets in that field's words
-(`sessions.located_form`), applied by the program
-(`package_script.apply_edits`: never Tim's own words; edits that would
-leave a script that does not check are not applied); the judges, from the
-marked script slide by slide (`sessions.marked_slides`), and the reader
-respond; for each closed question cast on a script
-that is no longer the script (`Vote.script`), its voters each judge in
-their own session whether the change touched what it was about
-(`REOPEN_FORM`, yes or no with a reason, kept in `reopenings`), and a
-majority reopens it (`reopen_changed`); then the program votes on every
-open one. Each
-participant's first message is made at its first turn (`_Firsts`): its
-share of the evidence (`evidence`, `sessions.share_values`), the prep for
-the decision ready and background judges (and the prep as the author last
-wrote it each round after, `_round_add`, to every role whose approved
-material holds it), the script for the reader, and
-for the cares judge the script's sentences new to him (`new_to_him`, by
-program, slide by slide: a sentence is new unless every evidence file its
-slide cites, `package_script.slide_sources`, is one he knows or had access
-to; a slide citing none could not be determined), again each round; where the evidence is for one that searches it
-(`evidence_note`). An enough question that fails asks the sender what its
-no votes said, every failed one's asks grouped by meaning into one list
-(`_to_ask`, `group_by_meaning`; Tim 2026-11-20): embedded by the engine's
-own model (`EngineUDS.embed`, `POST /v1/items/embed`, `EMBED`), an ask
-joins the first group it is `SAME_MEANING` (cosine 0.85, measured on
-multilingual-e5-small) to every member of, each group keeps its wording
-nearest the rest, the groups ordered by how many voters asked, each
-`ask-<n>` with the asks it holds; no model is the step's Error
-(`package_jobs.ask`); the swarm round that asked is one of
-its three like every round played (`end_round` first: a third round
-without passing fails the swarm, its asks in the findings), and the round
-of questions counts toward its own five; the
-answers are said into the conversation as the sender's, each in its own
-element, and the enough questions reopen (`_take_answers`); once a round
-of answers leaves the same questions unproven, asking stops (`asking`'s
-`stopped`). Passed: the result and the conversation word for word
-(`swarm-result.json`, `conversation.md`), the hits used (matched against
-the script's sources, `package_script.sources`), and the job's
-`swarm`. After three rounds without passing: the findings
-(`findings_questions`) to the sender (`package_jobs.failed_swarm`). What
-the swarm holds is kept in `swarm.json` (`BrainSwarmSession.saved`,
-`restore`, the session, engine and model of each participant that has
-answered a turn; what was sent is taken as given only once it answers,
-`_heard`) between the run's processes.
+answers and the decision it asks if any; marked slide by slide
+(`mark_slides`: one batch never two slides' words, the whole script with
+each, every part at its slide and field, `package_script.units`; the 28
+labels, Tim's material by `package_mark.tim_known`). Each participant's
+first message is made at its first turn (`_Firsts`): its share of the
+evidence (`evidence`, `sessions.share_values`: Tim's reader what he knows
+and had access to, kept apart; everyone else everything, marked), the
+prep for the context and structure owners (and again in a later turn
+when it changed, `_work_text`), the editor its share marked and the script
+marked part by part, and where the evidence is for one that searches it
+(`evidence_note`). What the participants ask the sender, every ask since
+it was last asked, is grouped by meaning into one list (`group_by_meaning`;
+Tim 2026-11-20): embedded by the engine's own model (`EngineUDS.embed`,
+`POST /v1/items/embed`, `EMBED`), an ask joins the first group it is
+`SAME_MEANING` (cosine 0.85, measured on multilingual-e5-small) to every
+member of, each group keeps its wording nearest the rest, the groups
+ordered by how many asked, each `ask-<n>` with the asks it holds; no model
+is the step's Error. The sender is asked once the outline is signed off
+and after each fix pass and re-check (`_ask_sender`, `package_jobs.ask`,
+at most five rounds of questions); its answers are said into the
+conversation as the sender's, each in its own element (`_take_answers`);
+once a round of answers leaves the same concerns unresolved, asking stops
+(`asking`'s `stopped`). Passed: the result and the conversation word for
+word (`swarm-result.json`: each concern's state, every sign-off, what was
+asked, each turn's time and tokens, `turns`, and the stages' `times`;
+`conversation.md`), the hits used (matched against the script's sources,
+`package_script.sources`), and the job's `swarm`. What the swarm holds is
+kept in `swarm.json` (`BrainSwarmSession.saved`, `restore`, the session,
+engine and model of each participant that has answered a turn; what was
+sent is taken as given only once it answers, `_heard`) between the run's
+processes.
 The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
 workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
 `DECK_QUESTIONS`). A round: the author writes `deck/presentation.yaml`
@@ -1811,18 +1823,24 @@ size as the shared deck draws it, `presentation_proof.deck_words_px` read
 from its deck.css, and what JARVIS says on it from the story), and
 the questions (`review_turn`: does each slide say what the script says
 for it, is it visual where the script calls for it, does the narration say
-the substance, is every word readable at its size); the editor and the four judges answer
-(`REVIEWERS`), a question closed on an earlier deck reopens by its voters'
-judgement (`reopen_changed`'s `only` and `what`), and the program votes on
-every open one: the editor and the judges vote, never the author. Passed
+the substance, is every word readable at its size). The deck review is run by
+the same owners, the same way (`package_swarm.fix_passes` with the `deck-`
+stages): Tim's reader, the context owner, the structure and decision owner
+and the editor, in parallel, each edit the deck source (`DeckSource`: each
+edit by its offsets in presentation.yaml, applied only where its old text
+is exactly there and only while the deck still builds and proves with it)
+and sign off each deck question (`DECK_CONCERNS`); what is left is merged
+into one list, the author revises the deck, and each owner re-checks its
+own items; never the author on its own deck. Passed
 (the job's `deck`: the zip, the built folder, `deck-review.json`), or after
-three rounds (`ROUNDS_MAX`, a round whose deck did not build among them)
+two fix passes, or a deck the author could not make build,
 its findings go to the sender as a failed swarm's do. The proof also holds
 every text style at least the text floor at both sizes (`prove_text`).
 The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
 design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
-(`briefing_files`: research.md, prep.md, script.yaml, conversation.md and
-votes.json), writes the message that carries it from slide 1 of the passed
+(`briefing_files`: research.md, prep.md, outline.yaml, script.yaml,
+conversation.md and signoffs.json, each concern's state, every sign-off and
+what the sender was asked), writes the message that carries it from slide 1 of the passed
 script (its title and what is on screen, `package_script.opening`) and the
 question the request gave, its questions' text in order (`message_of`, no
 sender text), signs it with JARVIS's own key
@@ -3419,21 +3437,24 @@ to the least stressed one. Token stress is the brain board's plus/minus,
 `usage_store.week`'s `ahead` (expected use minus actual, points, seven-day
 window): stressed below 0, least stressed the highest; a brain not measured
 is neither. Each role of a package's making is a kind too
-(`engine_choice.ROLE_KINDS`: editor, judges, Theory of Mind reader,
+(`engine_choice.ROLE_KINDS`: editor, owners, Tim's reader (`tims_reader`),
 retrieval, marking, classification, extraction, summarization; the author
 is `package_author`), each on the requester's engine by default, its model
-its tier's (model_tiers.pick); and "Run the judges on the other brain from
-the author's" (`judges_other_brain`, `other_brain_for_judges`) moves the
-judges off the author's brain, ignored while there is only one brain. An engine he names for one agent (the tools' `engine`, or a model
+its tier's (model_tiers.pick); and "Run the owners on the other brain from
+the author's" (`owners_other_brain`, `other_brain_for_owners`; the judges'
+option, carried to the owners who took their place) moves the owners off
+the author's brain, ignored while there is only one brain. A file saved
+before reads its judges' and Theory of Mind reader's entries as the
+owners' and Tim's reader's (`engine_choice.WAS`). An engine he names for one agent (the tools' `engine`, or a model
 that names its engine: "opus" is Claude's, "gpt-..." Codex's,
 `server._engine_for`) is kept, override or not. The defaults are what JARVIS
 did before (the author on the requester's engine, the rest on Claude). Kept
 in `<data>/jarvis/engines.json` beside brains.json, so make_package (another
 process) reads the same. Settings, Brains shows each kind and the override
 with each brain's plus/minus (`BrainsSection.tsx` `EngineChoices`,
-`GET`/`POST /api/settings/engines`, the judges' option beside the
+`GET`/`POST /api/settings/engines`, the owners' option beside the
 override); the brain's `engine_settings` and acting `set_engine_setting`
-(`judges_other_brain` too) call the same `engine_choice.view` and
+(`owners_other_brain` too) call the same `engine_choice.view` and
 `server._change_engine_setting`.
 
 ## The sessions a package is made with
@@ -3445,8 +3466,7 @@ ClassificationSession (see "A package's evidence"), the rest wait for theirs.
 Composition, each type with its own interface (Tim, 2026-11-18): every
 session type is a `Protocol` its callers depend on (`ChatSession`,
 `SwarmSession`, `DecisionSession`, `ClassificationSession`,
-`ExtractionSession`, `MarkingSession`, `RetrievalSession`,
-`EditingSession`), each with its Brain implementation on the brain
+`ExtractionSession`, `MarkingSession`, `RetrievalSession`), each with its Brain implementation on the brain
 providers (`BrainChatSession`, `BrainSwarmSession` ...); the Team ones come
 later. A `ChatSession` is one role's conversation on the brain's own transport
 (`ClaudeSession`, `CodexSession`: one transport per brain, the voice brain
@@ -3461,39 +3481,25 @@ says so on the first turn, Codex at the thread or the turn) is logged and
 the session opened again on the sweep's next model, its first turn sent
 again there; a new long-lived Claude session takes a new id on each try,
 never `--resume` of a refused one; after an answer nothing is swept.
-`BrainSwarmSession` is long-lived ChatSessions in one conversation (`for_roles`
-builds them, the author picked first so the judges' Settings option can
-put them on the other brain; `package_swarm.build` for a package run):
-each participant sent every new message of
-the others word for word, with who said it, and on its first turn its
-first message (given, or made then by a callable) and the questions to
-prove by id (`turn`, `say`); each
-given exactly its share of what Tim knows (`SHARES`, `share`,
-`share_values`, workflow.yaml tim_knowledge who_gets_what: the Theory of
-Mind reader and the cares and order judges know and had access only, kept
-apart; the author, the editor and the decision ready and background
-judges every item with its state). Every turn's answer is `TURN_FORM`,
-its message and the votes it calls (`call_vote`; a turn answered in words
-alone, which a long-lived Claude session may give, is its message word for
-word and calls no vote: `ask`'s `strict` off): any participant calls
-the vote on a question whose discussion has settled, held at once (one
-called before the swarm is open, on the author's research turn, is kept,
-`held`, between the run's processes and called on its first round once
-every participant has spoken); a vote
-a turn in each voter's own session (`vote`, `VOTE_FORM`, `Vote.called_by`),
-a majority of yes proving a question and anything else failing it, the
-Theory of Mind reader never voting and the author only where
-`Question.author_votes`. A `round` is the design's order: the author's
-turn (it revises the script file), the script marked, the editor's edits
-through its own session (its `editing`, `BrainEditingSession` by
-default, applied and written by the program, the script marked again
-when they changed it), then the judges (from the marked script) and the Theory of Mind reader (from the script),
-then the program's vote on every open question (`vote_open`) and
-`end_round`, whose result after `ROUNDS_MAX` (3) is passed or not passed
-with the findings (`play_round` is the round without `end_round`); a
-question whose vote was cast on another script reopens (`reopen_changed`),
-and `reopen` reopens one by hand; a vote called names the question inside
-its own element. `BrainDecisionSession` asks each question `ASKS` (3) times in
+`BrainSwarmSession` is long-lived ChatSessions in one conversation, working
+cooperatively (`package_swarm.build` for a package run): each participant
+sent every new message of the others word for word, with who said it, and
+on its first turn its first message (given, or made then by a callable);
+a turn is one participant's (`answer`) or several in parallel
+(`together`: each sent the conversation as it stood when they began,
+their messages put in it in the order given), each answering in the form
+its turn gives; each given exactly its share of what Tim knows (`SHARES`,
+`share`, `share_values`, workflow.yaml tim_knowledge who_gets_what carried
+to the new roles: Tim's reader knows and had access only, kept apart; the
+author, the editor and the context and structure owners every item with
+its state). Each concern (`Concern`: its id, its sign-off question, its
+owner) is signed off in its owner's turn (`sign`, `SignOff`: resolved or
+not yet with what is left, kept with the stage), its state its latest
+sign-off (`state`, `resolved`, `not_resolved`, `left`); what a turn asks
+the sender is kept until sent (`ask`, `to_send`, `sent`); each turn's time
+and tokens (`turns`, from `BrainChatSession.last_turn`: engine, model,
+seconds, its context window and output tokens, also logged) are in its
+`result`. Nobody votes. `BrainDecisionSession` asks each question `ASKS` (3) times in
 one-shot sessions of its own with no tools, the answer most gave and the
 share that agreed (`agreement`); `BrainClassificationSession` scores each
 item against every question plus `background`; `BrainExtractionSession`
@@ -3508,9 +3514,9 @@ never apart from its phrases, each call given the whole file; one not
 answered whole halved and asked again; a script slide by slide,
 `mark_slides`), Tim's material with its knowledge states; `BrainRetrievalSession`
 answers each free-text reference as typed entries of
-`evidence_types.NAMED_BY_LABEL` or not found; `BrainEditingSession` gives the
-editor the script, its marked parts and the information, and the program
-applies only edits whose old text is at their offsets (`apply_edits`).
+`evidence_types.NAMED_BY_LABEL` or not found; the program applies only
+edits whose old text is at their offsets (`apply_edits`; `EDIT`, and
+`located` for an edit at a slide and field).
 A session that cannot answer raises
 `SessionFailed`, the step's Error. Every call of a role session ends: its
 start and each turn are held to the run's own bounds
@@ -3536,10 +3542,9 @@ given to the server as `--read`), hidden, credential and key files never
 shown. The author has the research tools (`roles.RESEARCH_TOOLS`, the
 research right's with `search_history` and `read_history`), the file tools
 and Write and Edit; the editor the evidence search (`knowledge_search`) and
-the file tools; the decision ready and background judges the research
-tools and the file tools; the Theory of Mind reader and the cares and order
-judges nothing (their material, only what Tim knows and had access to, is
-in their prompt); retrieval its read tools for Work items, packages,
+the file tools; the context owner and the structure and decision owner
+the research tools and the file tools; Tim's reader nothing (its material,
+only what Tim knows and had access to, is in its prompt); retrieval its read tools for Work items, packages,
 messages, workflows and runs and its GitHub lookups (`role_lookups.py`:
 lists and searches of pull requests, CI runs, issues and commits, one pull
 request, CI run or issue by its number and a commit by its hash, each

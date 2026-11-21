@@ -480,31 +480,38 @@ EXEMPT = {
         "probe, used only to pair each tool listing's start with its end; the text it builds is "
         "a server and tool name in the probe's verdict, printed to the probe's own terminal, "
         "never a brain header, never said"),
-    "sessions.vote": (
-        "the field it reads is the question's state in the swarm, one of JARVIS's own words "
-        "(open, proven, failed); the call and each vote it writes are turns of the package "
-        "swarm's own conversation between role sessions, kept word for word as the design says, "
-        "never a brain header, never said"),
-    "sessions.reopen_changed": (
-        "the field it reads is the question's state in the swarm, one of JARVIS's own words "
-        "(open, proven, failed); each voter's judgement it writes is a turn of the package "
-        "swarm's own conversation between role sessions, kept word for word as the design says, "
-        "never a brain header, never said"),
-    "package_swarm.questions": (
-        "it makes the swarm's questions: each id is the handoff's question id behind a fixed "
-        "prefix and its words are the sender's question, which the swarm gives its participants "
-        "only inside a <question> element (BrainSwarmSession._new_for and vote); never a brain "
-        "header, never said"),
-    "package_swarm._to_ask": (
-        "it reads each swarm question's state, one of JARVIS's own words (open, proven, failed), "
-        "and keeps what the votes said to ask the sender as data on the job record, which the "
-        "sender reads as its own job's questions; never a brain header, never said"),
     "server._package_swarm_failed": (
         "a failed swarm's findings (the swarm's own votes and reasons) go on the Work item as "
         "JARVIS's message (read by the brain walled, as every message is) and to the asking "
         "agent's own session as JARVIS's message (that agent's own request, read by it alone); the "
         "attention record gets the agent's name as other people's words (untrusted) and counts; "
         "the job's id is JARVIS's own. Driven by tests/test_package_jobs.py"),
+    "sessions.sign": (
+        "the fields it reads are a role session's own sign-off on its concern (JARVIS's own "
+        "words resolved or not_yet, and the session's reason and what it left), kept as data in "
+        "the package swarm's record; never a brain header, never said"),
+    "sessions.state": (
+        "the field it reads is a concern's latest sign-off state, one of JARVIS's own words "
+        "(open, resolved, not_yet); it prints nothing"),
+    "package_swarm.list_text": (
+        "the merged list of what the owners left is the program's turn in the package swarm's "
+        "own conversation between role sessions, each item a role session's own words kept "
+        "word for word as the design says; never a brain header, never said"),
+    "package_swarm.findings_questions": (
+        "it turns what the owners left into the questions the sender's own job asks, data on "
+        "the job record the sender reads as its own; never a brain header, never said"),
+    "package_swarm.swarm": (
+        "the swarm step: the only fields it reads are the job's id, the run's own flow stage "
+        "and its outcome, JARVIS's own, to keep the outcome on the job record and send what is "
+        "left to the sender as data; never a brain header, never said. Driven by "
+        "tests/test_package_swarm.py"),
+    "package_script._slide_ids": (
+        "it names an outline's or script's slide whose id is another's, in the check's problems "
+        "said back to the author in the package swarm's own conversation between role sessions; "
+        "never a brain header, never said"),
+    "package_script.outline_units": (
+        "it reads an outline's slides into units the owners' edits are applied to by offsets; "
+        "it prints nothing"),
     "package_deck.deck": (
         "the deck step: the only fields it reads are the job's id and its swarm result, JARVIS's "
         "own, to keep the deck's outcome on the job record and send a failed deck's findings to "
@@ -3371,7 +3378,7 @@ def _drive_share(monkeypatch, tmp_path):
     with pytest.raises(ValueError) as refused:
         sessions.share("author", [sessions.Known("words", HOSTILE)])
     assert "\n" not in str(refused.value) and MARKER in str(refused.value)
-    kept = sessions.share("cares_judge", [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)])
+    kept = sessions.share("tims_reader", [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)])
     return [sessions._material(kept, marked=False)]
 
 
@@ -3413,25 +3420,11 @@ def _drive_resolve(monkeypatch, tmp_path):
     return role.given
 
 
-def _drive_edit(monkeypatch, tmp_path):
-    from jarvis import sessions
-    role = _Role({"edits": []})
-    asyncio.run(sessions.BrainEditingSession(role).edit(
-        HOSTILE, _hostile_parts(), [sessions.Known(HOSTILE, sessions.PROBABLY_NOT, HOSTILE)],
-        1.0, source=HOSTILE))
-    return role.given
-
-
 def _drive_handoff_questions(monkeypatch, tmp_path):
     from jarvis import package_swarm
     return [package_swarm._handoff_questions({"request": {"questions": [
         {"id": HOSTILE, "text": HOSTILE,
          "options_from_the_sender": [{"id": HOSTILE, "name": HOSTILE, "says": HOSTILE}]}]}})]
-
-
-def _drive_parts_text(monkeypatch, tmp_path):
-    from jarvis import package_swarm
-    return [package_swarm._parts_text(_hostile_parts())]
 
 
 def _drive_take_answers(monkeypatch, tmp_path):
@@ -3440,44 +3433,20 @@ def _drive_take_answers(monkeypatch, tmp_path):
                "answers": {HOSTILE: HOSTILE}}]
     monkeypatch.setattr(package_jobs, "get", lambda job: {"id": job, "rounds": rounds})
     run = package_swarm.Run({"id": "job-1"}, None, [], {})
-    swarm = sessions.BrainSwarmSession({}, [sessions.Question(HOSTILE, HOSTILE, enough=True)])
+    swarm = sessions.BrainSwarmSession({}, [])
     package_swarm._take_answers(run, swarm, {})
     return [m["text"] for m in swarm.conversation]
 
 
-def _drive_vote(monkeypatch, tmp_path):
-    from jarvis import sessions
-    role = _Role({"vote": "no", "reason": "r", "ask_sender": ""})
-    swarm = sessions.BrainSwarmSession({"editor": role},
-                                       [sessions.Question(HOSTILE, HOSTILE, enough=True)])
-    asyncio.run(swarm.vote(HOSTILE, 1.0))
-    return role.given
-
-
-def _drive_reopen(monkeypatch, tmp_path):
-    from jarvis import sessions
-    role = _Role({"changed": "no", "reason": "r"})
-    swarm = sessions.BrainSwarmSession({"editor": role},
-                                       [sessions.Question(HOSTILE, HOSTILE)])
-    swarm.closed_by[HOSTILE] = [sessions.Vote(HOSTILE, "editor", "yes", "r", script="before")]
-    swarm.state[HOSTILE] = sessions.PROVEN
-    asyncio.run(swarm.reopen_changed(1.0))
-    return role.given
-
-
 ROLE_PROMPT_DRIVERS = {
     "package_swarm._handoff_questions": _drive_handoff_questions,
-    "package_swarm._parts_text": _drive_parts_text,
     "package_swarm._take_answers": _drive_take_answers,
-    "sessions.vote (the question called)": _drive_vote,
-    "sessions.reopen_changed (the question judged)": _drive_reopen,
     "sessions.share": _drive_share,
     "sessions._material": _drive_material,
     "sessions.marked_parts": _drive_marked_parts,
     "sessions.mark": _drive_mark,
     "sessions._score": _drive_mark,
     "sessions.resolve": _drive_resolve,
-    "sessions.edit": _drive_edit,
 }
 
 

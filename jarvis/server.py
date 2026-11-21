@@ -3982,14 +3982,14 @@ async def api_brain_start():
 async def _change_engine_setting(change: dict) -> dict:
     """One change to the engine settings, from the page or the brain:
     `{"kind", "pick", "engine"?, "model"?}`, `{"override_stressed"}` or
-    `{"judges_other_brain"}`.
+    `{"owners_other_brain"}`.
     A model is checked against its brain's own list. Raises
     engine_choice.Refused."""
     if "override_stressed" in change:
         await asyncio.to_thread(engine_choice.set_override, _truthy(change["override_stressed"]))
-    elif "judges_other_brain" in change:
-        await asyncio.to_thread(engine_choice.set_judges_other_brain,
-                                _truthy(change["judges_other_brain"]))
+    elif "owners_other_brain" in change:
+        await asyncio.to_thread(engine_choice.set_owners_other_brain,
+                                _truthy(change["owners_other_brain"]))
     else:
         engine = change.get("engine") or None
         model = str(change.get("model") or "").strip() or None
@@ -12912,8 +12912,8 @@ async def tool_set_voice_input_settings(args: dict) -> str:
 
 _KIND_SAID = {"package_author": "The package author", "run": "Agent runs",
               "build": "Builds", "agent_package": "Agent packages",
-              "editor": "A package's editor", "judges": "A package's judges",
-              "theory_of_mind_reader": "A package's Theory of Mind reader",
+              "editor": "A package's editor", "owners": "A package's owners",
+              "tims_reader": "A package's reader for Tim",
               "retrieval": "Retrieval", "marking": "Marking",
               "classification": "Classification", "extraction": "Extraction",
               "summarization": "Summarization"}
@@ -12934,8 +12934,8 @@ def _engine_settings_said(view: dict) -> str:
         lines.append(f"{_KIND_SAID[kind]}: {how}.")
     lines.append("Override when the chosen brain is in token stress: "
                  + ("on." if view["override_stressed"] else "off."))
-    lines.append("Judges on the other brain from the author's: "
-                 + ("on" if view["judges_other_brain"] else "off")
+    lines.append("Owners on the other brain from the author's: "
+                 + ("on" if view["owners_other_brain"] else "off")
                  + ("" if len(view["engines"]) > 1 else ", ignored with only one brain") + ".")
     for e in view["engines"]:
         ahead = e["ahead"]

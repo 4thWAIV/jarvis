@@ -38,19 +38,24 @@ in the run's folder. A round:
                    script beside its deck slide's layout data (the deck
                    compiler's and the layout proof's, presentation_proof.
                    layout_data, .jarvis/layout-proof.json), and the
-                   questions (DECK_QUESTIONS); the editor and the four
-                   judges answer with their approved prompts; then, as in
-                   the swarm, a question closed on an earlier deck reopens
-                   when a majority of its voters judge the change touched
-                   it, and the program calls a vote on every open question.
-                   The editor and the judges vote; the author never on its
-                   own deck.
+                   questions (DECK_QUESTIONS). The deck review is run by
+                   the same owners, the same way (construction-drafts.md
+                   "Cooperative swarm"): Tim's reader, the context owner,
+                   the structure and decision owner and the editor, in
+                   parallel, each edit the deck source (each edit by its
+                   offsets in presentation.yaml, applied by the program only
+                   where its old text is exactly there and only when the
+                   deck still builds and proves with it) and sign off each
+                   of the deck's questions (DECK_CONCERNS); what is left is
+                   merged by meaning into one list, the author works it, and
+                   each owner re-checks its own items (package_swarm.
+                   fix_passes).
 
-As in the swarm, the deck passes when every deck question is proven; after
-three rounds without that (a round whose deck did not build among them),
-nothing is delivered: the sender is sent the findings (package_jobs.
-failed_swarm) and its answer starts a new run. A passed deck's zip, its
-built folder and the review are kept on the job (`deck`) for the deliver
+The deck passes when every deck concern is signed off; after two fix passes
+without that, or a deck the author could not make build, nothing is
+delivered: the sender is sent what is left (package_jobs.failed_swarm) and
+its answer starts a new run. A passed deck's zip, its built folder and the
+review are kept on the job (`deck`) for the deliver
 step (package_deliver.py).
 """
 from __future__ import annotations
@@ -58,7 +63,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import yaml
 
@@ -73,7 +78,7 @@ SOURCE = "presentation.yaml"
 BUILT = "deck-built"                    # each round's build, in the run's folder
 REVIEW = "deck-review.json"
 PROGRAM = sessions.PROGRAM              # the program's own turns in the conversation
-ROUNDS_MAX = sessions.ROUNDS_MAX        # as in the swarm
+ROUNDS_MAX = sessions.ROUNDS_MAX        # fix passes, as in the swarm
 DOC = data_paths.SOURCE_ROOT / "docs" / "making-a-package.md"
 FORMAT_START, FORMAT_END = "## A deck: one presentation.yaml", "## A folder"
 
@@ -82,18 +87,20 @@ FORMAT_START, FORMAT_END = "## A deck: one presentation.yaml", "## A folder"
 # style and narrated is the program's check, not a vote (his_words_check,
 # Tim 2026-11-20: "Aproved").
 DECK_QUESTIONS = (
-    sessions.Question("deck-says", "Does each slide say what the passed script says for it, "
-                                   "nothing lost or added?"),
-    sessions.Question("deck-visual", "Is each slide visual where the script calls for it, not "
-                                     "one line of text spoken over?"),
-    sessions.Question("deck-narration", "Does the narration say the substance, not read "
-                                        "headings?"),
-    sessions.Question("deck-readable", "Is every word on the slide readable at the size the "
-                                       "layout data gives it?"),
+    ("deck-says", "Does each slide say what the passed script says for it, nothing lost or "
+                  "added?"),
+    ("deck-visual", "Is each slide visual where the script calls for it, not one line of text "
+                    "spoken over?"),
+    ("deck-narration", "Does the narration say the substance, not read headings?"),
+    ("deck-readable", "Is every word on the slide readable at the size the layout data gives "
+                      "it?"),
 )
-DECK_IDS = frozenset(q.id for q in DECK_QUESTIONS)
-# The participants who answer the program's review turn, in order.
-REVIEWERS = (ps.EDITOR, *ps.JUDGE_QUESTION)
+# The deck review is run by the same owners, the same way (construction-
+# drafts.md "Cooperative swarm"): each owner and the editor signs off each
+# of the deck's questions.
+DECK_CONCERNS = tuple(sessions.Concern(f"{qid}:{owner}", asks, owner)
+                      for qid, asks in DECK_QUESTIONS for owner in ps.FIXERS)
+DECK_IDS = tuple(c.id for c in DECK_CONCERNS)
 
 
 def _log(line: str) -> None:
@@ -140,7 +147,7 @@ def write_note(run: ps.Run) -> str:
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
         f"with a block of text. JARVIS checks every one.",
         "JARVIS fills each picture's size and hash, builds the deck and proves it; what does "
-        "not build comes back to you here. The editor and the judges then compare each slide "
+        "not build comes back to you here. The owners and the editor then compare each slide "
         "with the script.",
         sessions._tag("script", ps._read(run.script), file=ps.SCRIPT),
         sessions._tag("format", deck_format()),
@@ -150,6 +157,12 @@ def write_note(run: ps.Run) -> str:
 def revise_note(run: ps.Run) -> str:
     return (f"Revise the deck in {source_of(run)}, or answer each point raised. Say what you "
             f"changed and why.")
+
+
+def _findings_of_build(problems: list[str]) -> list[dict]:
+    """A deck that never built, as the one finding the sender is sent."""
+    return [{"id": 1, "what": "The deck never built and proved: " + " ".join(problems),
+             "raised_by": [PROGRAM], "concerns": [], "fixes": [], "evidence_missing": []}]
 
 
 def build_problems_note(problems: list[str]) -> str:
@@ -271,14 +284,41 @@ def review_turn(run: ps.Run, built: Built) -> str:
         "and the largest frame, in deck units on the 880 x 640 canvas and in pixels) and its "
         "narration. No browser and no screenshots. Compare each slide with the script.",
         slides,
-        "The questions to prove, by id:\n" + "\n".join(
-            sessions._tag("question", q.asks, id=q.id) for q in DECK_QUESTIONS)])
+        "The deck's questions, by id:\n" + "\n".join(
+            sessions._tag("question", asks, id=qid) for qid, asks in DECK_QUESTIONS)])
 
 
-def _findings_of_build(problems: list[str]) -> dict:
-    return {"question": "deck-built", "asks": "Does the deck build and prove?", "state":
-            sessions.FAILED, "against": [{"participant": PROGRAM, "reason": " ".join(problems),
-                                         "ask": ""}]}
+class DeckSource:
+    """The author's deck source as the owners work on it (sessions.Script):
+    each edit by its offsets in presentation.yaml, applied by the program
+    only where its old text is exactly there (sessions.apply_edits); edits
+    with which the deck no longer builds and proves are not applied."""
+
+    key = "deck"
+    version = "presentation/1"
+    form: dict = {}
+
+    def __init__(self, run: ps.Run, built: Callable[[], Optional["Built"]]):
+        self.run = run
+        self.path = source_of(run)
+        self.name = SOURCE
+        self.edit_form = sessions.EDIT
+        self._build = built
+
+    def text(self) -> str:
+        return ps._read(self.path)
+
+    def edit(self, edits: list[dict]) -> tuple[str, list[dict], list[dict]]:
+        before = self.text()
+        after, applied, refused = sessions.apply_edits(before, edits)
+        if not applied:
+            return before, [], refused
+        pe.write_file(self.path, after.encode("utf-8"))
+        if self._build() is None:
+            pe.write_file(self.path, before.encode("utf-8"))
+            self._build()
+            return before, [], refused + applied
+        return after, applied, refused
 
 
 def _write_review(run: ps.Run, result: dict) -> None:
@@ -289,8 +329,8 @@ def _write_review(run: ps.Run, result: dict) -> None:
 
 def deck(doc: dict) -> Optional[str]:
     """The deck step of one run (package_jobs.PRODUCERS["deck"]): WAITING
-    when the deck failed its three rounds and the sender is sent the
-    findings."""
+    when it waits on the sender (questions, or what is left after its fix
+    passes)."""
     run = ps._run(doc, DECK)
     kept = ps._kept(run)
     if (package_jobs.get(doc["id"]).get("swarm") or {}).get("result") != "passed":
@@ -301,57 +341,92 @@ def deck(doc: dict) -> Optional[str]:
                                          f"in this install ({DOC}).",
                                    "JARVIS reached the deck step.",
                                    "Install JARVIS with its docs folder, then a new run.")
-    state = kept.setdefault(DECK, {"rounds": 0})
+    state = kept.setdefault(DECK, {"builds": 0})
+    flow = kept.setdefault("deck_flow", {"stage": "deck-write", "pass": 1})
+    clock = ps.Clock(kept)
     outcome: dict = {}
+    last: dict = {}
+
+    def build_now() -> Optional[Built]:
+        state["builds"] += 1
+        built, problems = build_and_prove(run, state["builds"])
+        state["problems"] = problems
+        last["built"] = built
+        return built
 
     async def go():
-        swarm_, _ = ps.build(run, kept, DECK_QUESTIONS)
+        swarm_ = ps.build(run, kept, DECK_CONCERNS)
+        source = DeckSource(run, build_now)
+
+        async def written(note: str) -> bool:
+            """The author writes or revises the deck until it builds and
+            proves, at most ROUNDS_MAX more times; the review said once it
+            does."""
+            for attempt in range(ROUNDS_MAX + 1):
+                await swarm_.answer(ps.AUTHOR, ps.TIMEOUT, note if attempt == 0 else
+                                    revise_note(run), ps.TALK)
+                built = build_now()
+                if built is not None:
+                    swarm_.say(PROGRAM, review_turn(run, built))
+                    return True
+                swarm_.say(PROGRAM, build_problems_note(state["problems"]))
+            return False
+
+        async def nothing() -> None:
+            return None
+
+        def given(name: str) -> str:
+            return ("Review the deck, above, against the passed script, for your concerns.\n"
+                    + sessions._tag(DeckSource.key, source.text(), file=SOURCE))
         try:
             await swarm_.open()
-            while True:
-                state["rounds"] += 1
-                await swarm_.turn(ps.AUTHOR, ps.TIMEOUT, add=write_note(run)
-                                  if state["rounds"] == 1 else revise_note(run))
-                built, problems = build_and_prove(run, state["rounds"])
-                state["problems"] = problems
-                if built is None:
-                    swarm_.say(PROGRAM, build_problems_note(problems))
-                else:
-                    swarm_.script_now(source_of(run).read_text(encoding="utf-8"))
-                    swarm_.say(PROGRAM, review_turn(run, built))
-                    for name in REVIEWERS:
-                        await swarm_.turn(name, ps.TIMEOUT)
-                    await swarm_.reopen_changed(ps.TIMEOUT, only=set(DECK_IDS), what="deck")
-                    await swarm_.vote_open(ps.TIMEOUT)
-                proven = built is not None and all(
-                    swarm_.state[q] == sessions.PROVEN for q in DECK_IDS)
-                if proven or state["rounds"] >= ROUNDS_MAX:
-                    result = swarm_.result()
-                    result["findings"] = [f for f in result["findings"] if f["question"]
-                                          in DECK_IDS] + ([_findings_of_build(problems)]
-                                                          if built is None else [])
-                    result["result"] = "passed" if proven else "not passed"
-                    result["deck_rounds"] = state["rounds"]
-                    outcome.update(result=result, built=built)
-                    return
+            ps._take_answers(run, swarm_, kept)
+            if flow["stage"] == "deck-write":
+                with clock("deck-write"):
+                    if not await written(write_note(run)):
+                        outcome.update(result="not passed",
+                                       findings=_findings_of_build(state["problems"]))
+                        return
+                flow["stage"] = "deck-pass"
                 ps._keep(run, swarm_, kept)
+            elif last.get("built") is None and build_now() is None:
+                swarm_.say(PROGRAM, build_problems_note(state["problems"]))
+            end = await ps.fix_passes(
+                run, swarm_, kept, flow, DECK_IDS, source, mark=nothing,
+                revise=lambda items: written(revise_note(run)), given=given, clock=clock,
+                prefix="deck-")
+            if end == "waiting":
+                outcome["waiting"] = True
+            elif end == "unchecked":
+                outcome.update(result="not passed",
+                               findings=_findings_of_build(state["problems"]))
+            else:
+                outcome.update(result=end, findings=flow.get("left") or [])
         finally:
             ps._keep(run, swarm_, kept)
+            outcome["swarm"] = swarm_.result()
             await swarm_.close()
     package_jobs.asked(DECK, "the swarm",
                        "JARVIS asked the author to write the deck from the passed script, built "
-                       "and proved it, and had the editor and the judges compare it with the "
+                       "and proved it, and had the owners and the editor compare it with the "
                        "script.", go())
-    result, built = outcome["result"], outcome["built"]
+    if outcome.get("waiting"):
+        return package_jobs.WAITING
+    built = last.get("built")
+    passed = outcome["result"] == "passed" and built is not None
+    result = {**outcome["swarm"], "result": "passed" if passed else "not passed",
+              "findings": [] if passed else (outcome["findings"] or _findings_of_build(
+                  state.get("problems") or [])),
+              "deck_passes": flow["pass"], "times": kept.get("times") or []}
     _write_review(run, result)
-    if result["result"] == "passed":
+    if passed:
         package_jobs.noted(doc["id"], DECK, {
-            "result": "passed", "rounds": result["deck_rounds"], "archive": str(built.archive),
+            "result": "passed", "passes": flow["pass"], "archive": str(built.archive),
             "folder": str(built.folder), "source": str(source_of(run)),
             "review": str(run.folder / REVIEW)})
         return None
-    package_jobs.noted(doc["id"], DECK, {"result": "not passed",
-                                         "rounds": result["deck_rounds"],
+    package_jobs.noted(doc["id"], DECK, {"result": "not passed", "passes": flow["pass"],
                                          "review": str(run.folder / REVIEW)})
-    package_jobs.failed_swarm(doc["id"], ps.findings_questions(result), result["findings"])
+    package_jobs.failed_swarm(doc["id"], ps.findings_questions(result["findings"]),
+                              result["findings"])
     return package_jobs.WAITING

@@ -87,8 +87,8 @@ export function BrainsSection() {
 
 const KIND_ITEM: Record<EngineKind, SettingsItem> = {
   package_author: "enginePackageAuthor", run: "engineRun", build: "engineBuild",
-  agent_package: "engineAgentPackage", editor: "engineEditor", judges: "engineJudges",
-  theory_of_mind_reader: "engineTheoryOfMindReader", retrieval: "engineRetrieval",
+  agent_package: "engineAgentPackage", editor: "engineEditor", owners: "engineOwners",
+  tims_reader: "engineTimsReader", retrieval: "engineRetrieval",
   marking: "engineMarking", classification: "engineClassification", extraction: "engineExtraction",
   summarization: "engineSummarization",
 };
@@ -114,7 +114,7 @@ function EngineChoices({ cards }: { cards: BrainCard[] }) {
   // moves when they arrive (a section scrolled to stays in view).
   const settings = read ?? waiting(cards);
   const overrideUi = useSettingsItem("engineOverride", t("left.brains.engines.override"));
-  const judgesUi = useSettingsItem("engineJudgesOtherBrain", t("left.brains.engines.judgesOtherBrain"));
+  const ownersUi = useSettingsItem("engineOwnersOtherBrain", t("left.brains.engines.ownersOtherBrain"));
   const title = (engine: Engine) =>
     cards.find((c) => c.name === ENGINE_PROVIDER[engine])?.title ?? engine;
   const change = (work: Promise<EngineSettings>) =>
@@ -136,15 +136,15 @@ function EngineChoices({ cards }: { cards: BrainCard[] }) {
                checked={settings.override_stressed}
                onChange={(e) => change(changeEngines({ override_stressed: e.target.checked }))} />
       </SettingsRow>
-      <SettingsRow label={t("left.brains.engines.judgesOtherBrain")} labelRef={judgesUi.part("label")}
-                   htmlFor="engine-judges-other-brain">
-        <input id="engine-judges-other-brain" type="checkbox" data-ui-action="domain"
-               ref={judgesUi.whole} disabled={!read}
-               checked={settings.judges_other_brain}
-               onChange={(e) => change(changeEngines({ judges_other_brain: e.target.checked }))} />
+      <SettingsRow label={t("left.brains.engines.ownersOtherBrain")} labelRef={ownersUi.part("label")}
+                   htmlFor="engine-owners-other-brain">
+        <input id="engine-owners-other-brain" type="checkbox" data-ui-action="domain"
+               ref={ownersUi.whole} disabled={!read}
+               checked={settings.owners_other_brain}
+               onChange={(e) => change(changeEngines({ owners_other_brain: e.target.checked }))} />
       </SettingsRow>
       {settings.engines.length < 2 && (
-        <p className="settings-hint">{t("left.brains.engines.judgesOneBrain")}</p>
+        <p className="settings-hint">{t("left.brains.engines.ownersOneBrain")}</p>
       )}
       <p className="settings-hint">
         {settings.engines.map((e) => e.ahead === null
@@ -164,7 +164,7 @@ function waiting(cards: BrainCard[]): EngineSettings {
   return {
     kinds: Object.fromEntries(kinds_order.map((k) => [k, { pick: "requester" }])) as
       Record<EngineKind, EngineSetting>,
-    kinds_order, override_stressed: false, judges_other_brain: false, least_stressed: null,
+    kinds_order, override_stressed: false, owners_other_brain: false, least_stressed: null,
     engines: (Object.keys(ENGINE_PROVIDER) as Engine[])
       .filter((engine) => cards.some((c) => c.name === ENGINE_PROVIDER[engine]))
       .map((engine) => ({ engine, provider: ENGINE_PROVIDER[engine], ahead: null, stressed: false })),

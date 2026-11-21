@@ -134,7 +134,7 @@ class Pick:
     engine: str               # "claude" or "codex"
     model: str
     tier: int
-    why: str                  # engine_choice's reason, or "judges_other_brain"
+    why: str                  # engine_choice's reason, or "owners_other_brain"
     tried: list[str] = field(default_factory=list)   # the sweep, in order, for the job's log
 
 
@@ -150,13 +150,13 @@ def pick(kind: str, tier: int, *, requester: Optional[str] = None,
          listed: Callable[[str], list[str]] = listed_models) -> Pick:
     """The brain and model for one role. `kind` is its engines.json entry;
     `engine` and `model` what was named for this one; `author_engine` the
-    author's brain, for the judges' Settings option. Raises NoModel."""
+    author's brain, for the owners' Settings option. Raises NoModel."""
     from jarvis import engine_choice
     choice = engine_choice.choose(kind, engine=engine, model=model, requester=requester)
     chosen, why, named = choice.engine, choice.why, choice.model
-    other = engine_choice.other_brain_for_judges(kind, author_engine) if not engine else None
+    other = engine_choice.other_brain_for_owners(kind, author_engine) if not engine else None
     if other:
-        chosen, why, named = other, "judges_other_brain", None
+        chosen, why, named = other, "owners_other_brain", None
     available = listed(chosen)
     if named:
         return Pick(chosen, named, tier_of(chosen, named) or tier, why, [named])
