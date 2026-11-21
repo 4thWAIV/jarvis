@@ -1506,7 +1506,9 @@ the steps `package_jobs.STEPS` (gather, mark, research, swarm, deck,
 deliver), each the program `PRODUCERS` names; a step not built yet is an
 Error, never a silent stop. A step may ask the sender (`package_jobs.ask`,
 `waiting_on_sender`, at most `MAX_ROUNDS`, five rounds of questions,
-`question_rounds`); its answers queue the run again. A swarm that fails
+`question_rounds`), told to it once in a message to its session (each
+question by its id and how to answer, `server._package_questions_to_sender`
+from the same look, `to_tell_sender`); its answers queue the run again. A swarm that fails
 sends the sender its findings the same way (`package_jobs.failed_swarm`, a
 round of kind `findings`, never one of the five): the server's look tells
 it once (`server._package_swarm_failed`, `to_tell_sender`,
@@ -1778,15 +1780,22 @@ program reads yet), signs it with JARVIS's own key
 sender to check (`package_jobs.ask_check`: a round of kind `check`, its one
 question `check` with `SENDER_CHECK` word for word; the server's look
 tells it once, `server._package_check_to_sender`, with where the package
-and its deck are, the message and how to answer). Its answer `approve`
-(`APPROVE`, alone; `package_jobs.checked`, recorded `approved_by`) delivers
-it at once (`server._deliver_package_run`, from the now async
+and its deck are, the message and how to answer). Its answer is
+structured, no free text parsed (`package_jobs.check_answer`; Tim
+2026-11-20): `{"check": "approve"}` (`APPROVE`; `package_jobs.checked`,
+recorded `approved_by`) delivers it at once (`server._deliver_package_run`, from the now async
 `_answer_package_job`): through `_send_message`, as a message from the
 agent that asked, on the Work item's Messages tab (his Inbox with none),
 the job `delivered` with its inbox id and message (`result`); what stops it
-is the run's Error on the Work item. Any other answer ends the run `failed`
-and starts the next with its words, which are kept in the package's
-evidence (`sender-answers/<n>.md`, n counting across the package's runs).
+is the run's Error on the Work item. `{"check": "change", "what_is_wrong":
+<its words>}` ends the run `failed` and starts the next with its words,
+which are kept in the package's evidence (`sender-answers/<n>.md`, n
+counting across the package's runs); any other answer is refused, saying
+the form. His Reject of a delivered package (the standard vote, at sign-off)
+starts the package's next run too (`server._rejected_starts_new_run`,
+`package_jobs.delivered_as`, `rejected`): his words are kept on the run and
+in Tim's record in the evidence (`package_gather.refresh_tim`,
+`jarvis/tim.md`, "His Reject of this package's earlier runs").
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m

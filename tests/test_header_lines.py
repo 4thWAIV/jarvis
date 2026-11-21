@@ -526,6 +526,15 @@ EXEMPT = {
         "it sends the asking agent's own session JARVIS's message with the package's paths and its "
         "message (that agent's own request, read by it alone); the job's id is JARVIS's own; "
         "nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    "server._package_questions_to_sender": (
+        "it sends the asking agent's own session JARVIS's message with the questions the swarm "
+        "voted it needs (the swarm's own words, that agent's own request, read by it alone); the "
+        "job's id is JARVIS's own; nothing reaches the brain or the voice. Driven by "
+        "tests/test_package_jobs.py"),
+    "server._rejected_starts_new_run": (
+        "his Reject words on a package go onto the run's record and into Tim's record in the "
+        "package's evidence (read by the role sessions as evidence, never a brain header); the "
+        "log line names only JARVIS's own ids. Driven by tests/test_package_jobs.py"),
     "work_research.refresh": (
         "it writes a Work item's research files from what was looked up; never a brain header, never said"),
     "package_author.author": (

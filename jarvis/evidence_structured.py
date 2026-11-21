@@ -494,7 +494,9 @@ def _tests(f: _Facts, start: int, end: int) -> None:
                {"message": "error"}, g)
 
 
-_GH_LOG = re.compile(r"^(?P<job>[^\t\n]+)\t(?P<step>[^\t\n]+)\t\d{4}-\d\d-\d\dT\S+ (?P<rest>.*)$")
+# One whole line: no line separator of any kind.
+_GH_LOG = re.compile(r"(?P<job>[^\t\n]+)\t(?P<step>[^\t\n]+)\t\d{4}-\d\d-\d\dT\S+ "
+                     r"(?P<rest>[^\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]*)")
 
 
 def _log_bodies(text: str, start: int, end: int) -> Iterator[tuple[int, Optional[str]]]:
@@ -502,9 +504,9 @@ def _log_bodies(text: str, start: int, end: int) -> Iterator[tuple[int, Optional
     start, its words after the job, step and time that lead it), or (its
     offset, None) for a line not led so."""
     for pos, line in _lines(text, start, end):
-        m = _GH_LOG.match(line)
+        m = _GH_LOG.fullmatch(line)
         yield (pos + m.start("rest"), m.group("rest")) if m else (pos, None)
-_GROUP = re.compile(r"##\[group\](?P<step>.+)$")
+_GROUP = re.compile(r"##\[group\](?P<step>.+)")
 _ERRORS = (re.compile(r"##\[error\](?P<e>.+)$"),
            re.compile(r"(?P<e>\S.*?:\d+:\d+: (?:fatal )?error: .+)$"),
            re.compile(r"^(?P<e>error(?:\[E\d+\])?: .+)$"),
@@ -520,7 +522,7 @@ def _build(f: _Facts, start: int, end: int) -> None:
     group_step: Optional[tuple[int, int]] = None
     for pos, line in _lines(f.text, start, end):
         body, at = line, pos
-        gh = _GH_LOG.match(line)
+        gh = _GH_LOG.fullmatch(line)
         if gh:
             key = (gh.group("job"), gh.group("step"))
             if key not in seen_steps:
@@ -542,8 +544,8 @@ def _build(f: _Facts, start: int, end: int) -> None:
                 break
 
 
-_JOB = re.compile(r"^jobs\[(\d+)\]\.(name|conclusion|startedAt|completedAt)$")
-_STEP = re.compile(r"^jobs\[(\d+)\]\.steps\[(\d+)\]\.(name|conclusion)$")
+_JOB = re.compile(r"jobs\[(\d+)\]\.(name|conclusion|startedAt|completedAt)")
+_STEP = re.compile(r"jobs\[(\d+)\]\.steps\[(\d+)\]\.(name|conclusion)")
 _JOB_FIELDS = {"name": "job", "conclusion": "result", "startedAt": "started",
                "completedAt": "finished"}
 
@@ -553,11 +555,11 @@ def _ci_run(f: _Facts, leaves: list[Leaf]) -> None:
     failed."""
     steps: dict[tuple[str, str], dict[str, Leaf]] = {}
     for leaf in leaves:
-        m = _JOB.match(leaf.path)
+        m = _JOB.fullmatch(leaf.path)
         if m:
             f.add(_JOB_FIELDS[m.group(2)], leaf.start, leaf.end, f"job {int(m.group(1)) + 1}")
             continue
-        m = _STEP.match(leaf.path)
+        m = _STEP.fullmatch(leaf.path)
         if m:
             steps.setdefault((m.group(1), m.group(2)), {})[m.group(3)] = leaf
     for (job, _), step in steps.items():

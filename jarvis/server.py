@@ -97,7 +97,8 @@ from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
-from jarvis import package_jobs, package_jobs_api, package_request, sessions, work_research
+from jarvis import (package_gather, package_jobs, package_jobs_api, package_request, sessions,
+                    work_research)
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, package_signature
@@ -10875,6 +10876,31 @@ def _inbox_questions_on_work(entry, package, where: str) -> None:
     _work_recorded(done, work_store.DECISION_MADE)
 
 
+def _rejected_starts_new_run(entry, package) -> None:
+    """He answered the standard vote Reject on a package a run made
+    (workflow.yaml deliver arrive: "his Reject starts a new run under the
+    same package id"; record_and_start new_run): his words are kept on that
+    run and in the package's evidence, in Tim's record (`jarvis/tim.md`,
+    package_gather.refresh_tim), and the next run of the package starts.
+    Blocking; never raises."""
+    question = _rejected(package_inbox.questions(package))
+    if question is None or question.id != package_inbox.VOTE_ID:
+        return
+    try:
+        job = package_jobs.delivered_as(entry.id)
+        if job is None:
+            return
+        words = question.answer.get("note") or question.answered_words()
+        package_jobs.rejected(job["id"], words)
+        package_gather.refresh_tim(job)
+        doc = _new_package_run(job["id"], f"Tim rejected the delivered package: {words}")
+        log.info("packages: Tim rejected %s (job %s); %s of package %s started (job %s)",
+                 entry.id, job["id"], doc["run"], doc["package"], doc["id"])
+    except Exception:
+        log.warning("packages: his Reject of %s did not start a new run", entry.id,
+                    exc_info=True)
+
+
 def _inbox_workflow_answers(entry, package) -> None:
     """His answers, as the workflow's own decisions: each answered question
     asked and answered at once under its id, so its reporter reads it with
@@ -11014,6 +11040,8 @@ async def _sign_off_package(reference: str, how: str, confirmed: bool = False):
     # On the loop: they tell the pages and the attention record as they go.
     _inbox_workflow_answers(entry, package)
     _inbox_sign_off_work(entry, package, how)
+    # His Reject of a package a run made starts its next run.
+    await asyncio.to_thread(_rejected_starts_new_run, entry, package)
     # A review package's item shows what his sign-off did, at once.
     await asyncio.to_thread(_review_from_package, entry, package, True)
     to = agent_directory.names_by_session().get(entry.from_session) if entry.from_session else None
@@ -11354,11 +11382,34 @@ def _package_check_to_sender(doc: dict) -> None:
         + (f", Work item {doc['work']}" if doc.get("work") else "") + f") is made. "
         f"{package_jobs.SENDER_CHECK}\nThe package: {sent.get('archive')}\nIts deck, unpacked: "
         f"{sent.get('folder')}\nThe message that carries it to Tim:\n{sent.get('message')}\n"
-        f"Answer within 2 hours with package_answer (make_package --answer {doc['id']} --reply "
-        f"{package_jobs.CHECK_ID}={package_jobs.APPROVE}, or --reply "
-        f"{package_jobs.CHECK_ID}=<what is wrong>).")
+        f"Answer within 2 hours with package_answer: {{\"{package_jobs.CHECK_ID}\": "
+        f"\"{package_jobs.APPROVE}\"}}, or {{\"{package_jobs.CHECK_ID}\": "
+        f"\"{package_jobs.CHANGE}\", \"{package_jobs.WHAT_IS_WRONG}\": \"<what is wrong>\"}} "
+        f"(make_package --answer {doc['id']} --reply {package_jobs.CHECK_ID}="
+        f"{package_jobs.APPROVE}, or --reply {package_jobs.CHECK_ID}={package_jobs.CHANGE} "
+        f"--reply {package_jobs.WHAT_IS_WRONG}=<what is wrong>).")
     package_jobs.told_sender(doc["id"], told_agent)
     log.info("packages: job %s sent to its sender to check (message %s)", doc["id"], told_agent)
+
+
+def _package_questions_to_sender(doc: dict) -> None:
+    """The questions the swarm voted it needs, sent to the agent that asked,
+    once (workflow.yaml swarm ask_sender: they go to the sender through the
+    job's ask-and-wait channel): each by its id, and how to answer within
+    2 hours, after which the run is in Error. Blocking."""
+    questions = doc["rounds"][-1]["questions"]
+    name = agent_directory.names_by_session().get(doc["session"]) or doc["session"]
+    listed = "\n".join(f"- {q['id']}: {q['question']}" for q in questions)
+    told_agent = _tell_agent(
+        doc["session"], name,
+        f"Your package request (job {doc['id']}, package {doc['package']}, {doc['run']}"
+        + (f", Work item {doc['work']}" if doc.get("work") else "") + ") needs your answers "
+        f"to go on. Its questions, each to answer by its id:\n{listed}\nAnswer them with "
+        f"package_answer (make_package --answer {doc['id']} --reply <id>=<your answer>) within "
+        f"2 hours; the run goes on with your answers, and without them it stops in Error.")
+    package_jobs.told_sender(doc["id"], told_agent)
+    log.info("packages: job %s asked its sender %d question(s) (message %s)", doc["id"],
+             len(questions), told_agent)
 
 
 def _look_after_package_jobs() -> None:
@@ -11369,10 +11420,13 @@ def _look_after_package_jobs() -> None:
     for doc in package_jobs.to_tell():
         _package_job_errored(doc)
     for doc in package_jobs.to_tell_sender():
-        if package_jobs.kind_of(doc["rounds"][-1]) == package_jobs.CHECK:
+        kind = package_jobs.kind_of(doc["rounds"][-1])
+        if kind == package_jobs.CHECK:
             _package_check_to_sender(doc)
-        else:
+        elif kind == package_jobs.FINDINGS:
             _package_swarm_failed(doc)
+        else:
+            _package_questions_to_sender(doc)
 
 
 async def _watch_package_jobs() -> None:

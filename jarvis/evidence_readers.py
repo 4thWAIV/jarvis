@@ -222,7 +222,7 @@ def _origin(folder: Path) -> str:
 
 
 def _names_repo(url: str, repo: str) -> bool:
-    match = re.search(r"github\.com[:/]+([^/]+/[^/]+?)(?:\.git)?/?$", url or "")
+    match = re.search(r"github\.com[:/]+([^/]+/[^/]+?)(?:\.git)?/?\Z", url or "")
     return bool(match) and match.group(1).lower() == repo.lower()
 
 
@@ -265,13 +265,15 @@ def commit(entry: dict) -> Read:
 
 # ── a url ─────────────────────────────────────────────────────────────────
 
-_GITHUB = re.compile(r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(.+?)/?$")
+# A whole address on one line: no line separator of any kind.
+_GITHUB = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s]+)/"
+                     r"([^\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]+?)/?")
 
 
 def github_entry(url: str) -> Optional[dict]:
     """The entry of its own type a GitHub address names (a pull request, a
     CI run, a commit, an issue or a branch), else None."""
-    match = _GITHUB.match(url.strip())
+    match = _GITHUB.fullmatch(url.strip())
     if not match:
         return None
     repo, rest = f"{match.group(1)}/{match.group(2)}", match.group(3).split("#", 1)[0]

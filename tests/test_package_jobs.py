@@ -793,6 +793,7 @@ def test_the_sender_checks_the_package_and_its_approval_delivers_it(wired, marks
     assert message.session_id == PLAN and pj.SENDER_CHECK in message.text
     assert doc["rounds"][-1]["package"]["archive"] in message.text
     assert "--reply check=approve" in message.text
+    assert "--reply check=change --reply what_is_wrong=" in message.text
     server._look_after_package_jobs()
     assert pj.to_tell_sender() == [], "told once"
     # Its approval, signed with its own key, delivers it: on the Work
@@ -819,10 +820,89 @@ def test_the_sender_s_words_of_what_is_wrong_start_a_new_run(wired, marks, tmp_p
     job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
     _checked(tmp_path, job)
     r = agent.post(client, f"{pr.ROUTE}/{job}/answer",
-                   {"answers": {"check": "Approve, but the cost is missing."}})
+                   {"answers": {"check": "change", "what_is_wrong": "The cost is missing."}})
     assert r.status_code == 200 and r.json()["run"] == "run-2"
-    assert pj.get(job)["state"] == pj.FAILED, "only the one word approves"
+    assert pj.get(job)["state"] == pj.FAILED
+    assert pj.get(job)["rounds"][-1]["answers"] == {"check": "change",
+                                                    "what_is_wrong": "The cost is missing."}
     assert spawned[-1] == r.json()["id"]
+
+
+@pytest.mark.parametrize("answers", [
+    {"check": "Approve, but the cost is missing."},     # free text is never read as an answer
+    {"check": "change"},                                # change needs what_is_wrong
+    {"check": "approve", "what_is_wrong": "The cost."},  # approve is as it is
+    {"check": "approve", "note": "x"},                  # nothing else is taken
+])
+def test_the_sender_s_check_is_answered_only_in_its_structured_form(wired, marks, tmp_path,
+                                                                   spawned, answers):
+    """workflow.yaml deliver sender_check answer (Tim 2026-11-20, "Aproved"):
+    check: approve | change, with what_is_wrong required for change; no free
+    text is parsed."""
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    _checked(tmp_path, job)
+    r = agent.post(client, f"{pr.ROUTE}/{job}/answer", {"answers": answers})
+    assert r.status_code == 409, r.text
+    assert pj.get(job)["state"] == pj.WAITING, "nothing taken"
+
+
+def test_the_swarm_s_questions_are_told_to_the_sender_once(wired, tmp_path, spawned):
+    """workflow.yaml swarm ask_sender: the questions the vote agreed go to
+    the sender, each by its id, in a message to its session, once."""
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    assert pj.ask(job, [{"id": "enough-q1-1", "question": "Which CI run failed?"}])
+    server._look_after_package_jobs()
+    from jarvis import run_store
+    doc = pj.get(job)
+    [message] = [m for m in run_store.queued_messages()
+                 if m.id == doc["rounds"][-1]["told_agent_message"]]
+    assert message.session_id == PLAN and "- enough-q1-1: Which CI run failed?" in message.text
+    assert f"make_package --answer {job} --reply <id>=" in message.text
+    server._look_after_package_jobs()
+    assert pj.to_tell_sender() == [], "told once"
+
+
+def test_tim_s_reject_of_a_delivered_package_starts_a_new_run(wired, marks, tmp_path, spawned,
+                                                              monkeypatch):
+    """workflow.yaml deliver arrive: his Reject starts a new run under the
+    same package id; his words go into Tim's record in its evidence."""
+    from jarvis import package_evidence as pe, package_gather, package_inbox
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    _checked(tmp_path, job)
+    r = agent.post(client, f"{pr.ROUTE}/{job}/answer", {"answers": {"check": "approve"}})
+    assert r.status_code == 200 and pj.get(job)["state"] == pj.DELIVERED
+    inbox = pj.get(job)["result"]["inbox"]
+    entry = package_inbox.get(inbox)
+    assert pj.delivered_as(inbox)["id"] == job
+
+    class Rejected:
+        id, applies = package_inbox.VOTE_ID, True
+        answer = {"answer": package_inbox.VOTE_REJECT, "note": "Lead with the cost."}
+
+        def answered_words(self):
+            return "Reject"
+    monkeypatch.setattr(package_inbox, "questions", lambda _p: [Rejected()])
+    server._rejected_starts_new_run(entry, object())
+    later = pj.later_run(job)
+    assert later is not None and later["package"] == pj.get(job)["package"]
+    assert later["run"] == "run-2" and spawned[-1] == later["id"]
+    assert pj.get(job)["rejected"]["words"] == "Lead with the cost."
+    place = pe.place_of(later)
+    text = (place.folder / pe.TIM_RECORD).read_text(encoding="utf-8")
+    assert "run-1: Lead with the cost." in text
+    [row] = [r for r in pe.read_manifest(place) if r.stored == pe.TIM_RECORD]
+    assert row.knowledge_state == pe.KNOWS
+    assert pj.delivered_as(inbox) is None, "once: a later run has followed it"
+    assert package_gather.rejections_text(later["package"]).count("Lead with the cost.") == 1
 
 
 def test_an_approved_package_that_cannot_be_delivered_is_in_error(wired, marks, tmp_path,

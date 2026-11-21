@@ -32,9 +32,13 @@ A step that asks the sender questions (`ask`) leaves the job waiting on it;
 the sender answers with `answer` (package_answer, make_package --answer).
 The finished package goes back to the sender before delivery
 (`ask_check`; workflow.yaml deliver sender_check), with the pre-written
-instructions (SENDER_CHECK): it answers `check` with APPROVE, and JARVIS
-delivers it (server._deliver_package_run), or with what is wrong, which
-ends the run `failed` and starts a new run with its words.
+instructions (SENDER_CHECK): it answers `check` APPROVE, and JARVIS
+delivers it (server._deliver_package_run), or CHANGE with `what_is_wrong`,
+which ends the run `failed` and starts a new run with its words
+(check_answer). Every round asked of the sender (questions, findings, its
+check) is told to it once in a message to its session (`to_tell_sender`).
+Tim's Reject of a delivered package starts a new run too (`delivered_as`,
+`rejected`; server._rejected_starts_new_run).
 At most MAX_ROUNDS rounds of questions are asked. A swarm that fails
 (`failed_swarm`) sends the sender its findings, through the same waiting:
 the server tells it once (`findings_to_tell`) and puts them on the Work
@@ -81,12 +85,16 @@ ENDED = (DELIVERED, ERROR, FAILED)
 # or its check of the finished package (deliver sender_check).
 QUESTIONS, FINDINGS, CHECK = "questions", "findings", "check"
 # The sender's check: its one question's id, the instructions word for word
-# (Tim 2026-11-20, approved as recommended), and the answer that approves.
+# (Tim 2026-11-20, approved as recommended), and its structured answer
+# (Tim 2026-11-20, "Aproved"): `check` is APPROVE or CHANGE, and CHANGE
+# needs `what_is_wrong`, its words; no free text is parsed.
 CHECK_ID = "check"
 SENDER_CHECK = ("This is the package JARVIS made from your request, before Tim sees it. Open it "
                 "and judge broadly whether it does what you asked for and what Tim needs from "
                 "it. Approve it, or say what is wrong, and a new run starts with your words.")
-APPROVE = "approve"
+APPROVE, CHANGE = "approve", "change"
+WHAT_IS_WRONG = "what_is_wrong"
+CHECK_ANSWERS = (APPROVE, CHANGE)
 # The steps a run is produced by, in order (workflow.yaml record_and_start
 # produce).
 STEPS = ("gather", "mark", "research", "swarm", "deck", "deliver")
@@ -289,16 +297,19 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
         raise JobError(f"Job {job_id} is {doc['state']}, not waiting on your answers.")
     if not isinstance(answers, dict) or not answers:
         raise JobError("Answer with {question id: your answer}.")
-    asked = {q["id"] for q in doc["rounds"][-1]["questions"]}
-    unknown = sorted(set(answers) - asked)
-    if unknown:
-        raise JobError(f"Job {job_id} asked no question {', '.join(unknown)}; it asked "
-                       f"{', '.join(sorted(asked))}.")
-    given = {}
-    for key, value in answers.items():
-        if not isinstance(value, str) or not value.strip():
-            raise JobError(f"The answer to {key} is words.")
-        given[key] = value.strip()
+    if kind_of(doc["rounds"][-1]) == CHECK:
+        given = check_answer(job_id, answers)
+    else:
+        asked = {q["id"] for q in doc["rounds"][-1]["questions"]}
+        unknown = sorted(set(answers) - asked)
+        if unknown:
+            raise JobError(f"Job {job_id} asked no question {', '.join(unknown)}; it asked "
+                           f"{', '.join(sorted(asked))}.")
+        given = {}
+        for key, value in answers.items():
+            if not isinstance(value, str) or not value.strip():
+                raise JobError(f"The answer to {key} is words.")
+            given[key] = value.strip()
 
     def write(d):
         if d["state"] != WAITING:
@@ -325,6 +336,29 @@ def answer(job_id: str, answers: dict, *, session: str = "") -> dict:
     return doc
 
 
+def check_answer(job_id: str, answers: dict) -> dict:
+    """The sender's answer to its check, structured (workflow.yaml deliver
+    sender_check answer): {"check": "approve"}, or {"check": "change",
+    "what_is_wrong": its words}. Anything else is refused, saying the form."""
+    form = (f"Answer the check with {CHECK_ID}={APPROVE}, or {CHECK_ID}={CHANGE} and "
+            f"{WHAT_IS_WRONG}=<what is wrong>.")
+    unknown = sorted(set(answers) - {CHECK_ID, WHAT_IS_WRONG})
+    if unknown:
+        raise JobError(f"Job {job_id}'s check takes no {', '.join(unknown)}. {form}")
+    said = answers.get(CHECK_ID)
+    said = said.strip().casefold() if isinstance(said, str) else ""
+    if said not in CHECK_ANSWERS:
+        raise JobError(f"{CHECK_ID} is {APPROVE} or {CHANGE}. {form}")
+    wrong = answers.get(WHAT_IS_WRONG)
+    wrong = wrong.strip() if isinstance(wrong, str) else ""
+    if said == CHANGE and not wrong:
+        raise JobError(f"{CHECK_ID}={CHANGE} needs {WHAT_IS_WRONG}: your words of what is wrong.")
+    if said == APPROVE and WHAT_IS_WRONG in answers:
+        raise JobError(f"{CHECK_ID}={APPROVE} approves it as it is; to say what is wrong, "
+                       f"answer {CHECK_ID}={CHANGE} with {WHAT_IS_WRONG}.")
+    return {CHECK_ID: said, **({WHAT_IS_WRONG: wrong} if said == CHANGE else {})}
+
+
 # -- what a step calls -------------------------------------------------------------------
 
 def kind_of(round_: dict) -> str:
@@ -334,10 +368,10 @@ def kind_of(round_: dict) -> str:
 
 
 def checked(round_: dict) -> bool:
-    """Whether the sender's answer to its check approves the package: the
-    one word APPROVE, alone."""
+    """Whether the sender's answer to its check approves the package:
+    `check` is APPROVE (check_answer)."""
     said = (round_.get("answers") or {}).get(CHECK_ID) or ""
-    return kind_of(round_) == CHECK and said.strip().casefold() == APPROVE
+    return kind_of(round_) == CHECK and said == APPROVE
 
 
 def to_deliver(doc: dict) -> bool:
@@ -363,7 +397,7 @@ def ask(job_id: str, questions: list[dict]) -> bool:
             return False
         d["rounds"] = d["rounds"] + [{"kind": QUESTIONS, "questions": questions,
                                       "asked_at": time.time(), "answers": None,
-                                      "answered_at": None}]
+                                      "answered_at": None, "told": False}]
         d["state"], d["pid"] = WAITING, None
         asked["now"] = True
     _change(job_id, "asked", write)
@@ -508,20 +542,52 @@ def to_tell() -> list[dict]:
 
 def to_tell_sender() -> list[dict]:
     """The jobs waiting on the sender with a round nobody has told it of
-    yet: a failed swarm's findings, or the finished package to check."""
+    yet: the swarm's questions, a failed swarm's findings, or the finished
+    package to check. (A round from before rounds were told has no `told`
+    and is not told now.)"""
     return [d for d in _jobs([["state", "=", WAITING]])
-            if d["rounds"] and kind_of(d["rounds"][-1]) in (FINDINGS, CHECK)
-            and d["rounds"][-1].get("told") is False]
+            if d["rounds"] and d["rounds"][-1].get("told") is False]
 
 
 def told_sender(job_id: str, message: Optional[int] = None) -> dict:
-    """The sender has been told of its round (the swarm's findings, or its
-    check); `message` is JARVIS's message to it (run_store's id)."""
+    """The sender has been told of its round (the swarm's questions, its
+    findings, or its check); `message` is JARVIS's message to it
+    (run_store's id)."""
     def write(d):
-        if not d["rounds"] or kind_of(d["rounds"][-1]) not in (FINDINGS, CHECK):
+        if not d["rounds"]:
             return False
         d["rounds"][-1].update(told=True, told_agent_message=message)
     return _change(job_id, "sender told", write)
+
+
+def later_run(job_id: str) -> Optional[dict]:
+    """The run that followed this one (`new_run`), or None."""
+    found = _jobs([["after", "=", job_id]])
+    return found[0] if found else None
+
+
+def delivered_as(inbox_id: str) -> Optional[dict]:
+    """The run whose package was delivered as this inbox row, when no later
+    run of its package has followed it; else None."""
+    for d in _jobs([["state", "=", DELIVERED]]):
+        if (d.get("result") or {}).get("inbox") == inbox_id and later_run(d["id"]) is None:
+            return d
+    return None
+
+
+def rejected(job_id: str, words: str) -> dict:
+    """Tim rejected the package this run delivered, with his words
+    (workflow.yaml deliver arrive): kept on the run."""
+    return _change(job_id, "rejected by Tim", lambda d: d.update(
+        rejected={"words": words, "at": time.time()}))
+
+
+def rejections(package: str) -> list[dict]:
+    """His Reject of each delivered run of a package, in run order: {run,
+    words, at}."""
+    runs = sorted(_jobs([["package", "=", package]]),
+                  key=lambda d: int(str(d["run"]).rsplit("-", 1)[-1]))
+    return [{"run": d["run"], **d["rejected"]} for d in runs if d.get("rejected")]
 
 
 def errored_work() -> set[str]:

@@ -229,6 +229,41 @@ def tim_text(work_ids: list[str]) -> str:
     return "\n".join(parts)
 
 
+def rejections_text(package: str) -> str:
+    """His Reject words on this package's delivered runs, each with its run."""
+    from jarvis import package_jobs
+    said = package_jobs.rejections(package)
+    if not said:
+        return ""
+    return "\n".join(["## His Reject of this package's earlier runs", ""]
+                     + [f"- {r['run']}: {r['words']}" for r in said] + [""])
+
+
+def refresh_tim(doc: dict) -> Row:
+    """Tim's record in the package's evidence made again (`jarvis/tim.md`,
+    gather_jarvis_material's), now holding his Reject words on its earlier
+    runs (workflow.yaml gather: "his Reject words -> evidence/jarvis/tim.md"),
+    so the next run reads them: its manifest row's hash and size made new,
+    and indexed as it is written. The row."""
+    g = Gathering(doc)
+    ids = _work_ids(doc)
+    text = tim_text(ids) if ids else "# Tim's record on this work\n"
+    text = text.rstrip("\n") + "\n\n" + rejections_text(doc["package"])
+    rows = [r for r in pe.read_manifest(g.place) if r.stored != pe.TIM_RECORD]
+    from jarvis import package_jobs, work_store
+    source = (", ".join(work_store.path_of(i) for i in ids) if ids
+              else package_jobs.path_of(doc))
+    sha, size = g.place.write(pe.TIM_RECORD, text.encode("utf-8"))
+    row = Row("tim", pe.JARVIS_TYPE, source, pe.TIM_RECORD, sha, size, origin="jarvis")
+    row.knowledge_state = pe.knowledge_state(row)
+    pe.write_manifest(g.place, rows + [row])
+    try:
+        pe.index_now(g.place)
+    except Exception:  # noqa: BLE001 - the content child reads it once the engine answers
+        pass
+    return row
+
+
 # The tools that run a command: Claude Code's Bash, Codex's shell calls.
 COMMAND_TOOLS = ("Bash", "shell", "exec_command", "local_shell_call", "shell_command")
 
