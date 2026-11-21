@@ -3498,8 +3498,10 @@ not yet with what is left, kept with the stage), its state its latest
 sign-off (`state`, `resolved`, `not_resolved`, `left`); what a turn asks
 the sender is kept until sent (`ask`, `to_send`, `sent`); each turn's time
 and tokens (`turns`, from `BrainChatSession.last_turn`: engine, model,
-seconds, its context window and output tokens, also logged) are in its
-`result`. Nobody votes. `BrainDecisionSession` asks each question `ASKS` (3) times in
+seconds, its context window and output tokens, also logged, and on Codex
+the turn's whole use, `turn_tokens`: the change in the thread's running
+total, input, cached input and output, `CodexSession.turn_usage`) are in
+its `result`. Nobody votes. `BrainDecisionSession` asks each question `ASKS` (3) times in
 one-shot sessions of its own with no tools, the answer most gave and the
 share that agreed (`agreement`); `BrainClassificationSession` scores each
 item against every question plus `background`; `BrainExtractionSession`
