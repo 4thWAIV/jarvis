@@ -3532,6 +3532,8 @@ def _attend_start_reverted() -> None:
 async def lifespan(application: FastAPI):
     global cached_projects
     cached_projects = []
+    # Before anything starts: never a second JARVIS on one data folder.
+    _refuse_second_start()
 
     # FIRST, before anything reads JARVIS_PORT / JARVIS_BIND_HOST — the
     # origin allowlist, the Host allowlist, and the URL the brain's MCP
@@ -19064,6 +19066,17 @@ def _apply_start_settings(args) -> bool:
     return from_settings
 
 
+def _refuse_second_start() -> None:
+    """Stop this start, before anything starts, while another JARVIS runs
+    on the same data folder (server_address.refusal): a second start would
+    end the first one's knowledge engine. Both launch paths ask, `main()`
+    and `lifespan` (`uvicorn jarvis.server:app`)."""
+    why = server_address.refusal()
+    if why is not None:
+        log.error(why)
+        raise SystemExit(why)
+
+
 def main() -> None:
     """`python -m jarvis` and the `jarvis` command."""
     import argparse
@@ -19079,6 +19092,7 @@ def main() -> None:
     parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
     parser.add_argument("--ssl", action="store_true", help="HTTPS for this run (needs key.pem/cert.pem)")
     args = parser.parse_args()
+    _refuse_second_start()
     _stacks_on_signal()
     from_settings = _apply_start_settings(args)
 
