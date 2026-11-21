@@ -144,11 +144,10 @@ def another() -> Optional[Running]:
     start refuses while there is one (`refusal`; Tim, 2026-11-20), so a
     second start never ends the first one's knowledge engine. The record of
     this very process is not another: `/api/restart` re-executes in place
-    (`os.execv`, the same pid on macOS and Linux), and on Windows, where
-    execv starts a new process from the old one, the record is the parent's
-    until this one writes its own."""
+    (`os.execv`, the same pid). Any other live pid, a parent included, is
+    another."""
     found = running()
-    if found is None or found.pid in (os.getpid(), os.getppid()):
+    if found is None or found.pid == os.getpid():
         return None
     return found
 

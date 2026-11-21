@@ -2873,8 +2873,8 @@ in its data folder; the same address the brain's tool channel dials,
 `server_address.own()`) and removes it on a clean shutdown; a record whose
 pid is dead is stale and ignored. The same record keeps a second JARVIS off
 one data folder (Tim, 2026-11-20): a start refuses, before anything
-starts, while it names a live pid that is neither its own (the restart's
-`os.execv` keeps it) nor its parent's (Windows' execv), saying which
+starts, while it names a live pid other than its own (the restart's
+`os.execv` keeps it; a parent's pid is another JARVIS), saying which
 process and address (`server_address.refusal`,
 `server._refuse_second_start`, from `main()` and `lifespan` alike), so a
 second start never ends the first one's knowledge engine. With a live record the command asks that

@@ -1020,11 +1020,20 @@ def test_main_refuses_before_anything_starts(server, other_server, monkeypatch, 
     assert f"process {other_server}" in str(refused.value)
 
 
-@pytest.mark.parametrize("whose", ["mine", "parent", "gone"])
-def test_a_start_goes_ahead_on_its_own_record_its_restarted_parents_or_a_stale_one(whose):
+@pytest.mark.parametrize("whose", ["mine", "gone"])
+def test_a_start_goes_ahead_on_its_own_record_or_a_stale_one(whose):
     from jarvis import server_address
-    _record({"mine": os.getpid(), "parent": os.getppid(), "gone": _dead_pid()}[whose])
+    _record({"mine": os.getpid(), "gone": _dead_pid()}[whose])
     assert server_address.another() is None and server_address.refusal() is None
+
+
+def test_a_start_is_refused_while_its_own_parent_is_recorded_as_running():
+    """Only the same pid (execv) is exempt: a JARVIS started as a child of
+    the running one, or by a wrapper whose pid is recorded, is refused."""
+    from jarvis import server_address
+    _record(os.getppid())
+    assert server_address.another().pid == os.getppid()
+    assert f"process {os.getppid()}" in server_address.refusal()
 
 
 def test_a_start_goes_ahead_with_no_record():
