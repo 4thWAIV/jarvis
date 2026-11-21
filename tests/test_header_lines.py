@@ -503,6 +503,28 @@ EXEMPT = {
         "agent's own session as JARVIS's message (that agent's own request, read by it alone); the "
         "attention record gets the agent's name as other people's words (untrusted) and counts; "
         "the job's id is JARVIS's own. Driven by tests/test_package_jobs.py"),
+    "package_deck.deck": (
+        "the deck step: the only fields it reads are the job's id and its swarm result, JARVIS's "
+        "own, to keep the deck's outcome on the job record and send a failed deck's findings to "
+        "the sender as data; what it writes into the swarm's conversation is the program's fixed "
+        "words, the run's own paths and the deck's layout data, a turn between role sessions, "
+        "never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deliver.deliver": (
+        "the deliver step: the only field it reads is the job's id, JARVIS's own, to keep where "
+        "the signed package is and its message on the job record for its own sender; never a "
+        "brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deliver.message_of": (
+        "it writes the message that carries a package from the passed deck's own words, which "
+        "reaches Tim as a message in his Inbox, read by the brain walled as every message is; "
+        "never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "server._deliver_package_run": (
+        "it delivers a package through _send_message, the one way an agent's package reaches him; "
+        "the message is recorded as the asking agent's and read by the brain walled, and the log "
+        "line names only JARVIS's own ids. Driven by tests/test_package_jobs.py"),
+    "server._package_check_to_sender": (
+        "it sends the asking agent's own session JARVIS's message with the package's paths and its "
+        "message (that agent's own request, read by it alone); the job's id is JARVIS's own; "
+        "nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
     "work_research.refresh": (
         "it writes a Work item's research files from what was looked up; never a brain header, never said"),
     "package_author.claim_of": (

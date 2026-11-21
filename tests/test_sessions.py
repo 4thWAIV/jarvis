@@ -787,12 +787,12 @@ async def test_a_closed_question_reopens_only_when_its_voters_judge_the_change_t
     swarm = sessions.BrainSwarmSession(people, [sessions.Question("cares", "Does Tim care?"),
                                                 sessions.Question("enough", "Enough?",
                                                                   author_votes=True)])
-    swarm._script_now("Version one.")
+    swarm.script_now("Version one.")
     assert await swarm.vote("cares", 5) == sessions.PROVEN
     assert await swarm.vote("enough", 5) == sessions.FAILED          # 2 yes, 2 no
     assert await swarm.reopen_changed(5) == [], "the script has not changed: nothing to judge"
     assert not any(p.changed == [] for p in people.values() if p.name != "author")
-    swarm._script_now("Version two.")
+    swarm.script_now("Version two.")
     # cares: editor no, cares judge no, order judge no: the change did not
     # touch it. enough: author yes, editor yes, cares judge yes, order no.
     assert await swarm.reopen_changed(5) == ["enough"]

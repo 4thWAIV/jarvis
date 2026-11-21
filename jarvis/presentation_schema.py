@@ -47,10 +47,16 @@ class Asset(Model):
     source: SourceRef
 
 
+# Tim's own words, quoted: drawn highlighted in a very bright, vibrant way
+# and narrated (workflow.yaml deck his_words_highlighted; the named style
+# deck_review checks every quote of his uses).
+HIS_WORDS = "his-words"
+
+
 class Run(Model):
     id: Id
     text: Text
-    emphasis: Literal["normal", "strong", "italic"]
+    emphasis: Literal["normal", "strong", "italic", "his-words"]
 
 
 class Paragraph(Model):

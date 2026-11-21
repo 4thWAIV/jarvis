@@ -1538,8 +1538,8 @@ Error, never a silent stop. A step may ask the sender (`package_jobs.ask`,
 `question_rounds`); its answers queue the run again. A swarm that fails
 sends the sender its findings the same way (`package_jobs.failed_swarm`, a
 round of kind `findings`, never one of the five): the server's look tells
-it once (`server._package_swarm_failed`, `findings_to_tell`,
-`findings_told`): JARVIS's message to its session with each finding to
+it once (`server._package_swarm_failed`, `to_tell_sender`,
+`told_sender`): JARVIS's message to its session with each finding to
 answer by its id, and the findings on the Work item as JARVIS's message
 there (proof `jarvis`, source `package_failed`; for no Work item in his
 Inbox), with one update (`package_job`, `failed`); its answer ends the run
@@ -1767,6 +1767,54 @@ the swarm holds is kept in `swarm.json` (`BrainSwarmSession.saved`,
 `restore`, the session, engine and model of each participant that has
 answered a turn; what was sent is taken as given only once it answers,
 `_heard`) between the run's processes.
+The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
+workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
+`DECK_QUESTIONS`). A round: the author writes `deck/presentation.yaml`
+(presentation/1) from the passed script alone, in JARVIS's named layouts,
+told so by the program (`write_note`, carrying docs/making-a-package.md's
+"A deck" section word for word and `make_package.EXAMPLE`; later rounds
+`revise_note`); where the script gives Tim's own words they are runs of
+emphasis `his-words` (`presentation_schema.HIS_WORDS`), drawn highlighted
+bright and vibrant (presentation.css `mark.his-words`), and narrated. The
+program builds and proves it with the existing pipeline
+(`build_and_prove`: `make_package.fill_assets`, `make_presentation`, the
+standard vote in its package.json); what does not build is said into the
+conversation as JARVIS's own turn (`PROGRAM`, `jarvis`). Built, the
+program posts as its own turn each slide's layout data
+(`presentation_proof.layout_data`, in the proof as `slides`: the title,
+each object in reading order with its slot, box and size in px at the
+smallest and largest frame, `sizes`, each word with its style and size,
+each picture's drawn size, the narration) beside the passed script, and
+the questions (`review_turn`: does each slide say what the script says
+for it, is it visual where the script calls for it, does the narration say
+the substance, is every word readable at its size, does every quote of
+Tim's use `his-words`); the editor and the four judges answer
+(`REVIEWERS`), a question closed on an earlier deck reopens by its voters'
+judgement (`reopen_changed`'s `only` and `what`), and the program votes on
+every open one: the editor and the judges vote, never the author. Passed
+(the job's `deck`: the zip, the built folder, `deck-review.json`), or after
+three rounds (`ROUNDS_MAX`, a round whose deck did not build among them)
+its findings go to the sender as a failed swarm's do. The proof also holds
+every text style at least the text floor at both sizes (`prove_text`).
+The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
+design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
+(`briefing_files`: research.md, prep.md, script.md, conversation.md and
+votes.json), writes the message that carries it from the passed deck's
+opening slide (its title and words in reading order) and its questions
+(`message_of`, no sender text), signs it with JARVIS's own key
+(`package_jobs.sign`) in the run's `package/` and sends it back to its
+sender to check (`package_jobs.ask_check`: a round of kind `check`, its one
+question `check` with `SENDER_CHECK` word for word; the server's look
+tells it once, `server._package_check_to_sender`, with where the package
+and its deck are, the message and how to answer). Its answer `approve`
+(`APPROVE`, alone; `package_jobs.checked`, recorded `approved_by`) delivers
+it at once (`server._deliver_package_run`, from the now async
+`_answer_package_job`): through `_send_message`, as a message from the
+agent that asked, on the Work item's Messages tab (his Inbox with none),
+the job `delivered` with its inbox id and message (`result`); what stops it
+is the run's Error on the Work item. Any other answer ends the run `failed`
+and starts the next with its words, which are kept in the package's
+evidence (`sender-answers/<n>.md`, n counting across the package's runs).
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m

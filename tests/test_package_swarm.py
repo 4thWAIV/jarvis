@@ -360,9 +360,9 @@ def test_a_failed_swarm_sends_the_sender_its_findings_and_its_answer_ends_the_ru
     assert "Is the most relevant information first? Not proven." in last["questions"][0][
         "question"] and "cares_judge says no" in last["questions"][0]["question"]
     assert json.loads((Path(marked["folder"]) / ps.RESULT).read_text())["rounds"] == 3
-    assert [d["id"] for d in pj.findings_to_tell()] == [marked["id"]]
-    pj.findings_told(marked["id"], 7)
-    assert pj.findings_to_tell() == []
+    assert [d["id"] for d in pj.to_tell_sender()] == [marked["id"]]
+    pj.told_sender(marked["id"], 7)
+    assert pj.to_tell_sender() == []
     done = pj.answer(marked["id"], {"order": "Lead with the decision."},
                      session=job["session"])
     assert done["state"] == pj.FAILED and pj.FAILED in pj.ENDED

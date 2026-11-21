@@ -16,13 +16,15 @@ each calls the server's one function for it.
         the job's record, to the agent that asked for it
   POST /api/packages/requests/{job}/answer
         {"answers": {question id: words}}: its answers to the questions the
-        job asked it; the run goes on
+        job asked it; the run goes on. Its answer to its check of the
+        finished package (`check`: approve, or what is wrong) delivers it,
+        or starts a new run with its words
 """
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -36,10 +38,11 @@ ONLY_AN_AGENT = ("A package is asked for by an onboarded agent, its request sign
 
 @dataclass(frozen=True)
 class Calls:
-    """The server's functions (each blocking)."""
+    """The server's functions (each blocking, but `answer`, a coroutine:
+    an approved check delivers the package on the loop)."""
     accept: Callable[[str, str, bool, dict], dict]
     status: Callable[[str, str], dict]
-    answer: Callable[[str, str, dict], dict]
+    answer: Callable[[str, str, dict], Awaitable[dict]]
 
 
 def _refused(why: str, status: int, problems=None) -> JSONResponse:
@@ -91,7 +94,7 @@ def mount(app: FastAPI, calls: Calls) -> None:
             body = None
         answers = body.get("answers") if isinstance(body, dict) else None
         try:
-            return await asyncio.to_thread(calls.answer, session, job, answers)
+            return await calls.answer(session, job, answers)
         except package_jobs.JobError as e:
             return _refused(str(e), 404 if "no package job" in str(e) else 409)
 

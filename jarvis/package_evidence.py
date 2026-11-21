@@ -334,17 +334,22 @@ def gathered(place: Place) -> Optional[dict]:
 
 def add_sender_answers(place: Place, round_no: int, questions: list[dict],
                        answers: dict) -> Row:
-    """The sender's answers to one round of questions, written as
-    `sender-answers/<n>.md`, a row in the manifest and indexed as it is
-    written (swarm ask_sender; gather index)."""
+    """The sender's answers to one round of questions (`round_no`, its
+    run's round), written as `sender-answers/<n>.md`, n counting every time
+    the package's sender answered, across its runs (the evidence is the
+    package's, so a later run's answers never overwrite an earlier run's):
+    a row in the manifest and indexed as it is written (swarm ask_sender;
+    gather index)."""
     lines = [f"# The sender's answers, round {round_no}", ""]
     asked = {q.get("id"): q.get("question", "") for q in questions}
     for key, answer in answers.items():
         lines += [f"## {key}: {asked.get(key, '')}", "", str(answer), ""]
-    stored = f"{SENDER_ANSWERS}/{round_no}.md"
+    rows = read_manifest(place)
+    n = 1 + sum(1 for r in rows if r.type == SENDER_ANSWER)
+    stored = f"{SENDER_ANSWERS}/{n}.md"
     sha, size = place.write(stored, "\n".join(lines).encode("utf-8"))
-    rows = [r for r in read_manifest(place) if r.stored != stored]
-    row = Row(id=f"answers-{round_no}", type=SENDER_ANSWER, source=f"round {round_no}",
+    rows = [r for r in rows if r.stored != stored]
+    row = Row(id=f"answers-{n}", type=SENDER_ANSWER, source=f"round {round_no}",
               stored=stored, sha256=sha, size=size, origin="sender")
     row.knowledge_state = knowledge_state(row)
     write_manifest(place, rows + [row])

@@ -338,10 +338,12 @@ def _read(path: Path) -> str:
         return ""
 
 
-def build(run: Run, kept: dict) -> tuple[sessions.BrainSwarmSession, _Firsts]:
+def build(run: Run, kept: dict, more: tuple[sessions.Question, ...] = ()
+          ) -> tuple[sessions.BrainSwarmSession, _Firsts]:
     """The swarm: each participant on its role, its model picked (the
     author first, the judges then on the other brain when Settings says
-    so), or resumed on the session it had. Raises NoModel."""
+    so), or resumed on the session it had; `more`, the questions the deck
+    review adds (package_deck). Raises NoModel."""
     material = evidence(run)
     firsts = _Firsts(run, material)
     participants: dict[str, sessions.ChatSession] = {}
@@ -362,7 +364,8 @@ def build(run: Run, kept: dict) -> tuple[sessions.BrainSwarmSession, _Firsts]:
         if name == AUTHOR:
             author_engine = pick.engine
         participants[name] = chat
-    swarm = sessions.BrainSwarmSession(participants, questions(run.doc), author=AUTHOR,
+    swarm = sessions.BrainSwarmSession(participants, questions(run.doc) + list(more),
+                                       author=AUTHOR,
                                        editor=EDITOR, non_voters=(READER,), material=material,
                                        first=firsts)
     if kept.get("swarm"):

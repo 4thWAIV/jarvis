@@ -19,7 +19,11 @@
       if (!isList) list=null;
       listRole=paragraph.role;
       const element=identify(node(isList?"li":paragraph.role==="heading"?"h2":"p"),paragraph.id);
-      paragraph.runs.forEach(run=>element.append(identify(node(run.emphasis==="strong"?"strong":run.emphasis==="italic"?"em":"span",run.text),run.id)));
+      paragraph.runs.forEach(run=>{
+        const shown=identify(node(run.emphasis==="strong"?"strong":run.emphasis==="italic"?"em":run.emphasis==="his-words"?"mark":"span",run.text),run.id);
+        if(run.emphasis==="his-words")shown.className="his-words";
+        element.append(shown);
+      });
       (list||parent).append(element);
     });
   }

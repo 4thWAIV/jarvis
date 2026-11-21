@@ -11232,15 +11232,52 @@ def _package_job_status(session: str, job: str) -> dict:
     return package_jobs.status(job, session)
 
 
-def _answer_package_job(session: str, job: str, answers) -> dict:
+async def _answer_package_job(session: str, job: str, answers) -> dict:
     """The asking agent's answers to its run's questions: the run goes on.
     Its answer to a failed swarm's findings ends that run, and a new run
     of the package starts from the kept research (workflow.yaml swarm
-    when_it_fails)."""
-    doc = package_jobs.answer(job, answers, session=session)
+    when_it_fails); so does its answer to its check of the finished package
+    saying what is wrong, with its words (deliver sender_check), while its
+    approval delivers it (`_deliver_package_run`)."""
+    doc = await asyncio.to_thread(package_jobs.answer, job, answers, session=session)
     if doc["state"] == package_jobs.FAILED:
-        return _new_package_run(job, "the sender answered the swarm's findings")
-    return package_jobs.start(doc)
+        why = ("the sender said what is wrong at its check"
+               if package_jobs.kind_of(doc["rounds"][-1]) == package_jobs.CHECK
+               else "the sender answered the swarm's findings")
+        return await asyncio.to_thread(_new_package_run, job, why)
+    if package_jobs.to_deliver(doc):
+        return await _deliver_package_run(doc)
+    return await asyncio.to_thread(package_jobs.start, doc)
+
+
+async def _deliver_package_run(doc: dict) -> dict:
+    """The package its sender approved, delivered (workflow.yaml deliver
+    deliver): signed with JARVIS's own key, it goes the one way an agent's
+    package reaches him (`_send_message`), as a message from the agent that
+    asked, written by JARVIS, on its Work item's Messages tab (his Inbox
+    with none). What stops it puts the run in Error, which goes on the Work
+    item (`_package_job_errored`)."""
+    check = doc["rounds"][-1]
+    sent = check.get("package") or {}
+    try:
+        data = await asyncio.to_thread(Path(sent["archive"]).read_bytes)
+        item, arrival, _ = await _send_message(
+            agent_key_store.agent_principal(doc["session"]), doc["session"], doc.get("work") or "",
+            sent["message"], data, None,
+            messages_api.Links(project=doc.get("project") or "", workflow=doc.get("workflow") or "",
+                               source=doc.get("source") or ""))
+    except (OSError, KeyError, messages_api.Refused) as e:
+        log.warning("packages: job %s was not delivered: %s", doc["id"], e)
+        return await asyncio.to_thread(
+            package_jobs.error, doc["id"], package_jobs.STEPS[-1],
+            f"The package its sender approved could not be delivered: {e}",
+            "JARVIS put the signed package in Tim's Inbox as a message from the agent that "
+            "asked" + (f", on Work item {doc['work']}." if doc.get("work") else "."),
+            "Fix what stopped it (the reason says what); once it is fixed, a new run.")
+    log.info("packages: job %s delivered as %s, message %s", doc["id"], arrival.entry.id, item.id)
+    return await asyncio.to_thread(package_jobs.delivered, doc["id"], {
+        "inbox": arrival.entry.id, "message": item.id, "package": arrival.entry.package_id,
+        "archive": sent["archive"]})
 
 
 def _new_package_run(job_id: str, why: str) -> dict:
@@ -11361,19 +11398,44 @@ def _package_swarm_failed(doc: dict) -> None:
             facts={"package": doc["package"], "run": doc["run"], "work": doc.get("work") or "",
                    "findings": len(findings)},
             untrusted={"agent": name})
-    package_jobs.findings_told(doc["id"], told_agent)
+    package_jobs.told_sender(doc["id"], told_agent)
     log.info("packages: job %s did not pass the swarm, told (message %s to its agent)",
              doc["id"], told_agent)
 
 
+def _package_check_to_sender(doc: dict) -> None:
+    """The finished package sent back to the agent that asked, once, before
+    delivery (workflow.yaml deliver sender_check): the pre-written
+    instructions word for word (package_jobs.SENDER_CHECK), where the
+    package is, the message that would carry it, and how to answer.
+    Blocking."""
+    sent = doc["rounds"][-1].get("package") or {}
+    name = agent_directory.names_by_session().get(doc["session"]) or doc["session"]
+    told_agent = _tell_agent(
+        doc["session"], name,
+        f"Your package request (job {doc['id']}, package {doc['package']}, {doc['run']}"
+        + (f", Work item {doc['work']}" if doc.get("work") else "") + f") is made. "
+        f"{package_jobs.SENDER_CHECK}\nThe package: {sent.get('archive')}\nIts deck, unpacked: "
+        f"{sent.get('folder')}\nThe message that carries it to Tim:\n{sent.get('message')}\n"
+        f"Answer within 2 hours with package_answer (make_package --answer {doc['id']} --reply "
+        f"{package_jobs.CHECK_ID}={package_jobs.APPROVE}, or --reply "
+        f"{package_jobs.CHECK_ID}=<what is wrong>).")
+    package_jobs.told_sender(doc["id"], told_agent)
+    log.info("packages: job %s sent to its sender to check (message %s)", doc["id"], told_agent)
+
+
 def _look_after_package_jobs() -> None:
     """Each run that cannot go on put in Error (package_jobs.overdue), and
-    each Error and each failed swarm told once. Blocking."""
+    each Error, each failed swarm and each package to check told once.
+    Blocking."""
     package_jobs.overdue()
     for doc in package_jobs.to_tell():
         _package_job_errored(doc)
-    for doc in package_jobs.findings_to_tell():
-        _package_swarm_failed(doc)
+    for doc in package_jobs.to_tell_sender():
+        if package_jobs.kind_of(doc["rounds"][-1]) == package_jobs.CHECK:
+            _package_check_to_sender(doc)
+        else:
+            _package_swarm_failed(doc)
 
 
 async def _watch_package_jobs() -> None:

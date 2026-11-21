@@ -42,6 +42,10 @@ html { --body:var(--deck-body); --heading:var(--deck-heading); }
 body, button, select, input { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
   "Helvetica Neue", Helvetica, Arial, sans-serif; }
 h2, h3, b, strong, th { font-weight:700; }
+/* Tim's own words, quoted (emphasis his-words): very bright and vibrant. */
+.presentation-slot mark.his-words { background:#ffe600; color:#000; font-weight:700; padding:0 .2em;
+  border-radius:.2em; box-shadow:0 0 0 .14em #ff2d95; -webkit-box-decoration-break:clone;
+  box-decoration-break:clone; }
 .slide.presentation-slide { padding:0; overflow:hidden; }
 .presentation-title { position:absolute; box-sizing:border-box; margin:0; font-size:var(--deck-heading);
   line-height:var(--deck-heading-line); font-weight:700; }

@@ -4,6 +4,7 @@ taking a signed request, recording who asked and the job with its run, and
 running it itself; and the Error state, with everyone told."""
 import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -453,13 +454,14 @@ def test_a_step_not_built_yet_is_an_error_not_a_silent_stop(wired, tmp_path, spa
     client = TestClient(server.app)
     agent = Agent(home, PLAN).onboarded()
     monkeypatch.setitem(pj.PRODUCERS, "gather", f"{__name__}:gather_done")
-    for step in ("mark", "research", "swarm"):
+    for step in ("mark", "research", "swarm", "deck"):
         monkeypatch.setitem(pj.PRODUCERS, step, f"{__name__}:gather_done")
+    monkeypatch.delitem(pj.PRODUCERS, "deliver")
     job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
     assert pj.run(job) == 1
     error = pj.get(job)["error"]
-    assert pj.get(job)["done"] == ["gather", "mark", "research", "swarm"]
-    assert error["step"] == "deck" and "not built" in error["reason"]
+    assert pj.get(job)["done"] == ["gather", "mark", "research", "swarm", "deck"]
+    assert error["step"] == "deliver" and "not built" in error["reason"]
 
 
 def test_with_no_work_item_the_error_is_a_message_to_tim(wired, tmp_path, spawned):
@@ -747,7 +749,7 @@ def test_a_failed_swarm_s_findings_go_to_the_sender_and_its_answer_starts_a_new_
     assert work_store.get(work).state != work_store.ERROR
     assert store.get("package_job", job).event == "failed"
     server._look_after_package_jobs()
-    assert pj.findings_to_tell() == [], "told once"
+    assert pj.to_tell_sender() == [], "told once"
     # Its answer ends the run, and a new run of the package starts.
     r = agent.post(client, f"{pr.ROUTE}/{job}/answer", {"answers": {"order": "Decision first."}})
     assert r.status_code == 200 and r.json()["run"] == "run-2"
@@ -755,3 +757,84 @@ def test_a_failed_swarm_s_findings_go_to_the_sender_and_its_answer_starts_a_new_
     later = pj.get(r.json()["id"])
     assert later["after"] == job and later["package"] == doc["package"]
     assert spawned[-1] == later["id"]
+
+
+# -- the sender's check and delivery ----------------------------------------------------
+
+def _checked(tmp_path, job):
+    """A real deck, made by JARVIS's own pipeline, signed with JARVIS's own
+    key and sent back to its sender to check (package_deliver's last act)."""
+    import yaml
+    from jarvis import make_package
+    source = tmp_path / "deck" / "presentation.yaml"
+    source.parent.mkdir()
+    source.write_text(yaml.safe_dump(make_package.EXAMPLE, sort_keys=False))
+    made = make_package.make_presentation(source, tmp_path / "built")
+    signed = tmp_path / made.archive.name
+    pj.sign(pj.get(job), made.archive, signed)
+    return pj.ask_check(job, {"archive": str(signed), "folder": str(tmp_path / "built"),
+                              "message": "Friday's lunch has moved\n\nWhere do we eat?"})
+
+
+def test_the_sender_checks_the_package_and_its_approval_delivers_it(wired, marks, tmp_path,
+                                                                     spawned):
+    server, _hints, _store, folder, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    work = _start_work(client, agent, folder)
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}, work=work).json()["job"]
+    _checked(tmp_path, job)
+    server._look_after_package_jobs()
+    # The sender is sent the package with the instructions word for word.
+    from jarvis import conversation_log, run_store
+    doc = pj.get(job)
+    [message] = [m for m in run_store.queued_messages()
+                 if m.id == doc["rounds"][-1]["told_agent_message"]]
+    assert message.session_id == PLAN and pj.SENDER_CHECK in message.text
+    assert doc["rounds"][-1]["package"]["archive"] in message.text
+    assert "--reply check=approve" in message.text
+    server._look_after_package_jobs()
+    assert pj.to_tell_sender() == [], "told once"
+    # Its approval, signed with its own key, delivers it: on the Work
+    # item's Messages tab, as a message from the agent that asked, in the
+    # words JARVIS wrote, carrying the package JARVIS signed.
+    r = agent.post(client, f"{pr.ROUTE}/{job}/answer", {"answers": {"check": "approve"}})
+    assert r.status_code == 200, r.text
+    done = pj.get(job)
+    assert done["state"] == pj.DELIVERED and "deliver" in done["done"]
+    assert done["rounds"][-1]["approved_by"] == f"agent:{PLAN}"
+    [item] = [i for i in conversation_log.work_thread(work)
+              if i.carries == done["result"]["inbox"]]
+    assert item.sender == f"agent:{PLAN}" and item.text == \
+        "Friday's lunch has moved\n\nWhere do we eat?"
+    from jarvis import package_inbox
+    entry = package_inbox.get(done["result"]["inbox"])
+    assert entry.from_session == PLAN and entry.work_id == work
+
+
+def test_the_sender_s_words_of_what_is_wrong_start_a_new_run(wired, marks, tmp_path, spawned):
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    _checked(tmp_path, job)
+    r = agent.post(client, f"{pr.ROUTE}/{job}/answer",
+                   {"answers": {"check": "Approve, but the cost is missing."}})
+    assert r.status_code == 200 and r.json()["run"] == "run-2"
+    assert pj.get(job)["state"] == pj.FAILED, "only the one word approves"
+    assert spawned[-1] == r.json()["id"]
+
+
+def test_an_approved_package_that_cannot_be_delivered_is_in_error(wired, marks, tmp_path,
+                                                                   spawned):
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    sent = _checked(tmp_path, job)["rounds"][-1]["package"]
+    Path(sent["archive"]).unlink()
+    r = agent.post(client, f"{pr.ROUTE}/{job}/answer", {"answers": {"check": "approve"}})
+    assert r.status_code == 200
+    error = pj.get(job)["error"]
+    assert pj.get(job)["state"] == pj.ERROR and error["step"] == "deliver"
+    assert "could not be delivered" in error["reason"]

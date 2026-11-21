@@ -721,15 +721,20 @@ class BrainSwarmSession:
         self.state[question] = OPEN
         self.closed_by.pop(question, None)
 
-    async def reopen_changed(self, timeout: float) -> list[str]:
+    async def reopen_changed(self, timeout: float, only: Optional[set[str]] = None,
+                             what: str = "script") -> list[str]:
         """Each closed question cast on a script that is no longer the
         script: its voters, each in its own session, judge whether the
         change touched what the question was about (yes or no with a
         reason); a majority reopens it, a tie leaves it closed. Whether the
         script changed at all is a fact (its digest); whether the change
-        touched the question is their judgement. The ones reopened."""
+        touched the question is their judgement. `only`: the questions
+        looked at (the deck review's, on the deck's source; `what` names
+        it). The ones reopened."""
         reopened = []
         for qid, cast in list(self.closed_by.items()):
+            if only is not None and qid not in only:
+                continue
             if all(v.script == self.script for v in cast):
                 continue
             q = self.questions[qid]
@@ -737,8 +742,8 @@ class BrainSwarmSession:
             for name in self.voters(qid):
                 sent = "\n\n".join(t for t in (
                     self._new_for(name),
-                    f"This question was closed ({self.state[qid]}) on an earlier script, and "
-                    f"the script has changed since. Did the change touch what it was about?\n"
+                    f"This question was closed ({self.state[qid]}) on an earlier {what}, and "
+                    f"the {what} has changed since. Did the change touch what it was about?\n"
                     + _tag("question", q.asks, id=q.id)) if t)
                 reply = await self.participants[name].ask(sent, timeout,
                                                           answer_format=REOPEN_FORM)
@@ -772,7 +777,8 @@ class BrainSwarmSession:
             if state == OPEN:
                 await self.vote(qid, timeout)
 
-    def _script_now(self, text: str) -> None:
+    def script_now(self, text: str) -> None:
+        """What the votes from now on are cast on (its digest)."""
         self.script = script_digest(text)
 
     async def play_round(self, timeout: float, script: Path,
@@ -796,7 +802,7 @@ class BrainSwarmSession:
             text = script.read_text(encoding="utf-8")
         except OSError as e:
             raise SessionFailed(f"the author's turn left no script at {script}: {e}") from e
-        self._script_now(text)
+        self.script_now(text)
         marked = await mark(text)
         editing = self.editing(self.participants[self.editor])
         out = await editing.edit(text, marked, self.share_of(self.editor), timeout,
@@ -807,7 +813,7 @@ class BrainSwarmSession:
         if out["applied"]:
             text = out["text"]
             private_files.replace(script, text.encode("utf-8"))
-            self._script_now(text)
+            self.script_now(text)
             marked = await mark(text)
         await self._called(self.editor, out["call_vote"], timeout)
         for name in self.participants:

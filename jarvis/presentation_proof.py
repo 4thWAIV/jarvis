@@ -11,6 +11,8 @@ what can be computed is proven here:
 - Story targets. Every target the story points at (its beats' targets and
   actions, each waiting slide's question) is in the target index or one of
   the shared deck's own selectors.
+- Words' size. Every text style a deck draws in (layout_spec styles) is
+  at least the text floor at the smallest and the largest frame.
 - Templates. The renderer files in the built folder are byte for byte
   JARVIS's own (`template_hashes`), so no package carries a changed
   renderer.
@@ -20,7 +22,13 @@ computed: the character caps (decision_package.CAPS) keep a slide's words
 within reason.
 
 `record` is the proof, written as .jarvis/layout-proof.json in the
-built package; each `Failure` is said in the author's terms.
+built package; each `Failure` is said in the author's terms. It carries
+the layout data (`layout_data`): each slide as JARVIS lays it out, its
+title, its objects in reading order with their slot, box and size at the
+smallest and largest frame, each word with its style and size there, each
+picture's drawn size there, and its narration. The deck review of a
+package run reads it beside the passed script, with no browser
+(workflow.yaml deck deck_review).
 """
 from __future__ import annotations
 
@@ -30,7 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import layout_spec, picture_proof
-from jarvis.presentation_schema import ContentSlide, ImageObject
+from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, TableObject,
+                                        TextObject, VectorObject)
 
 PROOF_FILE = ".jarvis/layout-proof.json"
 VERSION = "presentation-proof/2"
@@ -44,6 +53,33 @@ class Failure:
 
 
 # -- the proof ------------------------------------------------------------------------
+
+def ordered_objects(slide: ContentSlide):
+    """The authored reading order governs every generated human traversal."""
+    objects = {obj.id: obj for obj in slide.objects}
+    return (objects[ident] for ident in slide.readingOrder)
+
+
+def sizes() -> dict[str, tuple[float, float]]:
+    """The two sizes a deck is drawn at, at the ends of the frame range."""
+    frame = layout_spec.spec()["frame"]
+    return {"smallest": tuple(frame["min"]), "largest": tuple(frame["max"])}
+
+
+def _style_px(style: str) -> dict[str, float]:
+    return {name: round(layout_spec.style_px(style, layout_spec.unit(frame)), 1)
+            for name, frame in sizes().items()}
+
+
+def prove_text() -> list[Failure]:
+    """Every text style at least the text floor at both sizes."""
+    floor = layout_spec.spec()["text"]["min_px"]
+    return [Failure(style, frame, f"Words in the {style} style are drawn at {px:g} px at "
+                                  f"{frame[0]:g} x {frame[1]:g}, under {floor} px.")
+            for style in layout_spec.spec()["styles"]
+            for name, frame in sizes().items()
+            if (px := layout_spec.style_px(style, layout_spec.unit(frame))) < floor]
+
 
 def prove_pictures(source, pictures: dict[str, picture_proof.Picture]) -> list[Failure]:
     """Every picture of every content slide, drawn in its slot at every
@@ -116,11 +152,82 @@ def prove_templates(folder: Path) -> list[Failure]:
     return failures
 
 
+# -- the layout data -------------------------------------------------------------------
+
+def _box_px(box) -> dict[str, list[float]]:
+    return {name: [round(v, 1) for v in layout_spec.frame_box(box, frame)]
+            for name, frame in sizes().items()}
+
+
+def _paragraph_style(role: str) -> str:
+    return "heading" if role == "heading" else "body"
+
+
+def _object_layout(obj, box, pictures: dict) -> dict:
+    out = {"id": obj.id, "type": obj.type, "slot": obj.slot, "box": list(box),
+           "size_px": _box_px(box)}
+    if isinstance(obj, TextObject):
+        out["paragraphs"] = [{"id": p.id, "role": p.role, "style": _paragraph_style(p.role),
+                              "text_px": _style_px(_paragraph_style(p.role)),
+                              "runs": [{"id": r.id, "text": r.text, "emphasis": r.emphasis}
+                                       for r in p.runs]} for p in obj.paragraphs]
+    elif isinstance(obj, ImageObject):
+        picture = pictures[obj.asset]
+        out.update(asset=obj.asset, alt=obj.alt, natural_px=[picture.width, picture.height],
+                   drawn_px={name: [round(v, 1) for v in picture_proof.drawn(
+                       picture, layout_spec.frame_box(box, frame))]
+                       for name, frame in sizes().items()})
+    elif isinstance(obj, TableObject):
+        out.update(alt=obj.alt, style="cell", text_px=_style_px("cell"), head=obj.head,
+                   rows=[{"id": r.id, "cells": r.cells} for r in obj.rows])
+    elif isinstance(obj, BarObject):
+        out.update(alt=obj.alt, units=obj.units, domain=obj.domain,
+                   bars=[{"id": b.id, "label": b.label, "value": b.value} for b in obj.bars])
+    elif isinstance(obj, VectorObject):
+        out.update(alt=obj.alt, members=[{"id": m.id, "type": m.type, "alt": m.alt}
+                                         for m in obj.members])
+    return out
+
+
+def layout_data(source) -> list[dict]:
+    """Each slide as JARVIS lays it out (layout_spec), worked out from the
+    source, its pictures and the spec alone: a content slide's title with
+    its size, its layout, its objects in reading order (each with its slot,
+    its box in deck units and its size in px at both sizes; a text's words
+    with their style and size; a picture's own and drawn size; a table's
+    cells; a bar's values) and its narration; a decision's question,
+    options and recommendation."""
+    decisions = {d.id: d for d in source.document.decisions}
+    out = []
+    for n, slide in enumerate(source.document.slides, 1):
+        if not isinstance(slide, ContentSlide):
+            d = decisions[slide.decision]
+            out.append({"slide": n, "id": slide.id, "type": "decision", "decision": d.id,
+                        "question": d.question, "context": d.context,
+                        "options": [{"id": o.id, "name": o.name, "says": o.says,
+                                     "picture": o.picture} for o in d.options],
+                        "recommended": d.recommended, "reason": d.reason})
+            continue
+        boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
+        out.append({"slide": n, "id": slide.id, "type": "content", "title": slide.title,
+                    "title_box": list(layout_spec.spec()["title"]),
+                    "title_px": _style_px("heading"),
+                    "title_size_px": _box_px(layout_spec.spec()["title"]),
+                    "layout": slide.layout,
+                    "objects": [_object_layout(obj, boxes[obj.slot], source.pictures)
+                                for obj in ordered_objects(slide)],
+                    "narration": [{"id": c.id, "say": c.say, "focus": list(c.focus)}
+                                  for c in slide.narration]})
+    return out
+
+
 def record(source, failures: list[Failure]) -> dict:
     return {"version": VERSION, "source_sha256": source.digest,
             "spec_sha256": hashlib.sha256(layout_spec.PATH.read_bytes()).hexdigest(),
             "frames": [list(f) for f in layout_spec.frames()], "templates": template_hashes(),
-            "language": source.language, "proven": not failures}
+            "language": source.language, "proven": not failures,
+            "sizes": {name: list(frame) for name, frame in sizes().items()},
+            "slides": layout_data(source)}
 
 
 def write(folder: Path, proof: dict) -> None:
@@ -146,6 +253,6 @@ def reprove(folder: Path) -> list[str]:
         return [f"Its layout proof cannot be made again: {error}"]
     if recorded.get("source_sha256") != source.digest:
         return ["Its layout proof is for another source than the one it carries."]
-    failures = prove_pictures(source, source.pictures)
+    failures = prove_pictures(source, source.pictures) + prove_text()
     failures += prove_targets(story, targets, deck) + prove_templates(folder)
     return [failure.message for failure in failures]

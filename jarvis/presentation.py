@@ -23,10 +23,7 @@ class CompiledDeck:
     target_index: Path
 
 
-def _ordered_objects(slide: ContentSlide):
-    """The authored reading order governs every generated human traversal."""
-    objects = {obj.id: obj for obj in slide.objects}
-    return (objects[ident] for ident in slide.readingOrder)
+_ordered_objects = presentation_proof.ordered_objects
 
 
 def _targets(source: Source) -> list[dict]:
@@ -119,6 +116,7 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
     targets and template bytes; written into the package as
     .jarvis/layout-proof.json, or DeckCompileError naming each failure."""
     failures = presentation_proof.prove_pictures(parsed, parsed.pictures)
+    failures += presentation_proof.prove_text()
     failures += presentation_proof.prove_targets(story, targets, deck)
     failures += presentation_proof.prove_templates(folder)
     if failures:
