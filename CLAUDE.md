@@ -3553,8 +3553,11 @@ JARVIS's own settings (`claude_provider.role_command`: `--restricted
 Codex 0.171.0): the lockdown is every feature off but
 `ROLE_KEEP_FEATURES` (no `code_mode_host`, so `exec` refuses to run),
 subagents off (`agents.enabled`), the role's prompt as `baseInstructions`,
-personality none, no project docs or web search, the brain's own server
-switched off, read-only, ephemeral for one-shot; a role with tools has the
+personality none, no project docs or web search, every MCP server the
+home's config.toml names (the brain's own among them) switched off for its
+app server as `-c mcp_servers.<name>.enabled=false` (`servers_off`;
+the same switch in the thread's own config does not take, and config.toml
+is never changed, since the brain runs on it), read-only, ephemeral for one-shot; a role with tools has the
 code-mode host on and its own tool server, the only one added (with the
 shell off, `exec` runs JavaScript with no file, process or network access
 and reaches only that server's tools, Codex's clock and MCP resource
@@ -3570,8 +3573,12 @@ marker file), read a file outside its tools (a secret looked for in the
 reply, every app-server message and its transcript) and make a network
 call (a loopback recorder, which also stands in for JARVIS behind its tool
 server); the verdict is the program's, and a role that reaches anything
-but its own tool server's tools fails. It has not yet been run: no Codex
-login in a temporary data folder yet.
+but its own tool server's tools, or is offered a tool by any other server,
+fails. Codex's own `list_mcp_resources` (an MCP call) counts as allowed
+only when what it named and listed is the role's own server alone
+(`listed_servers`; a listing not completed or not readable fails). Run on
+JARVIS's own Codex home (a temporary data folder whose `codex` is a link to
+it), every role passes.
 Retrieval runs on Codex as on Claude, with the code-mode host and its own
 tool server only. On Codex
 0.171.0 the live list holds every tier's model (GPT-6.2 Astra and Sol,

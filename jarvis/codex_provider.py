@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -269,14 +270,33 @@ def write_config(mcp_config: Optional[Path]) -> Path:
     return path
 
 
-def _has_brain_server() -> bool:
-    """JARVIS's Codex home's config.toml names the brain's own server, so a
-    role must switch it off."""
+def home_servers() -> list[str]:
+    """Every MCP server JARVIS's Codex home's config.toml names (the brain's
+    own and the user's connections, `write_config`), or none when it cannot
+    be read."""
     try:
         text = (data_paths.codex_home() / "config.toml").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return f"[mcp_servers.{OWN_SERVER}]" in text
+        servers = tomllib.loads(text).get("mcp_servers") or {}
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as e:
+        log.warning(f"codex: could not read the Codex home's config.toml: {e}")
+        return []
+    return sorted(str(name) for name in servers) if isinstance(servers, dict) else []
+
+
+def servers_off(names: list[str]) -> list[str]:
+    """Each named server switched off for one app server, as `-c` overrides
+    (`mcp_servers.<name>.enabled=false`): the server is never started and
+    offers no tool. Measured on Codex 0.171.0: the same switch in a
+    thread's `config` does not take, the server already started by the app
+    server and its tools offered to the thread (the exec probe found the
+    brain's server offered to every role); config.toml is never changed,
+    since the brain runs on it."""
+    argv: list[str] = []
+    for name in names:
+        argv += ["-c", f"mcp_servers.{_toml_key(name)}.enabled=false"]
+    return argv
 
 
 def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, list[str]]:
@@ -289,6 +309,9 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
       companions whatever `multi_agent` says, and a long-lived thread's
       subagent runs), no project docs, web search or file-editing tool, the
       sandbox read-only;
+    - no server of the home's: every MCP server JARVIS's Codex home names
+      (the brain's own among them) switched off for its app server
+      (`servers_off`), so a role is offered no tool server but its own;
     - its tools: the code-mode host on, its own tool server the only one
       added. With it on and the shell off, `exec` is to reach the
       configured servers' tools and nothing else of the Mac, which the exec
@@ -312,10 +335,10 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
     config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
                     "web_search": "disabled", "agents": {"enabled": False},
                     "include_apply_patch_tool": release.writes}
-    overrides: list[str] = []
+    overrides = servers_off([n for n in home_servers() if n != roles.SERVER_NAME])
     if release.tools and launch.mcp_config is not None:
         keep = keep | {"code_mode_host"}
-        overrides = config_overrides(
+        overrides += config_overrides(
             {roles.SERVER_NAME: _servers_of(launch.mcp_config).get(roles.SERVER_NAME)})
     if release.writes:
         filesystem = {":root": "deny", ":minimal": "read",
@@ -529,8 +552,9 @@ class CodexSession:
         """One role's thread (sessions.yaml launch_v1, participants.md
         section 0.3): JARVIS's own Codex home, never the user's (its
         AGENTS.md would reach the role), the role's prompt as the base
-        instructions, no project docs, no web search, JARVIS's brain server
-        off, locked down and released to exactly its role's `Release`
+        instructions, no project docs, no web search, every server the
+        home's config.toml names off (JARVIS's brain server among them),
+        locked down and released to exactly its role's `Release`
         (`role_release`)."""
         launch = self.config.role
         role = launch.role
@@ -540,8 +564,6 @@ class CodexSession:
         argv = (self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
                 + overrides)
         await self._start(argv, env)
-        if _has_brain_server():
-            config["mcp_servers"] = {OWN_SERVER: {"enabled": False}}
         settings = {
             "model": self.config.model, "cwd": str(self.config.home),
             "approvalPolicy": "never",

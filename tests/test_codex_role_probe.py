@@ -70,6 +70,37 @@ def test_another_server_or_tool_fails_the_role(tmp_path):
     assert not v.passed
 
 
+def _listing(arguments, text=None, status="completed", item_id="l1"):
+    item = {"type": "mcpToolCall", "id": item_id, "server": "codex",
+            "tool": "list_mcp_resources", "arguments": arguments, "status": "inProgress"}
+    started = {"method": "item/started", "params": {"item": dict(item)}}
+    if text is None:
+        return [started]
+    done = {**item, "status": status,
+            "result": {"content": [{"type": "text", "text": text}], "isError": False}}
+    return [started, {"method": "item/completed", "params": {"item": done}}]
+
+
+def test_a_listing_of_only_its_own_server_is_allowed(tmp_path):
+    own = '{"resources": [{"server": "%s", "uri": "x"}]}' % roles.SERVER_NAME
+    for messages in (_listing({}, '{"resources": []}'),
+                     _listing({"server": roles.SERVER_NAME}, own), _listing({}, own)):
+        v = _judge(tmp_path, messages=messages)
+        assert v.passed and v.tools_reached == ["codex.list_mcp_resources"], messages
+
+
+@pytest.mark.parametrize("messages", [
+    _listing({}, '{"resources": [{"server": "jarvis", "uri": "x"}]}'),
+    _listing({"server": "jarvis"}, '{"resources": []}'),
+    _listing({}, "not json"),
+    _listing({}, '{"resources": []}', status="failed"),
+    _listing({}),                                          # never completed
+])
+def test_a_listing_that_names_another_server_or_cannot_be_read_fails(tmp_path, messages):
+    v = _judge(tmp_path, messages=messages)
+    assert not v.passed and v.outside_tools[0].startswith("codex.list_mcp_resources")
+
+
 def test_a_turn_that_could_not_run_does_not_pass(tmp_path):
     assert not _judge(tmp_path, error="SessionFailed: no login").passed
 

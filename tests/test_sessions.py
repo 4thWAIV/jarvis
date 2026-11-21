@@ -382,7 +382,8 @@ async def test_codex_runs_a_role_locked_down_in_jarvis_s_own_home(tmp_path, code
     from jarvis import data_paths
     from tests.settings_fixtures import hold_setting
     hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
-    (data_paths.codex_home() / "config.toml").write_text("[mcp_servers.jarvis]\ncommand = \"x\"\n")
+    (data_paths.codex_home() / "config.toml").write_text(
+        "[mcp_servers.jarvis]\ncommand = \"x\"\n\n[mcp_servers.\"his drive\"]\ncommand = \"y\"\n")
     monkeypatch.setenv("FAKE_CODEX_ANSWER", json.dumps({"answer": "yes"}))
     pick = model_tiers.Pick("codex", "gpt-6-luna", 4, "fixed", ["gpt-6-luna"])
     form = {"type": "object", "properties": {"answer": {"type": "string"}}}
@@ -401,9 +402,11 @@ async def test_codex_runs_a_role_locked_down_in_jarvis_s_own_home(tmp_path, code
     assert thread["sandbox"] == "read-only" and thread["approvalPolicy"] == "never"
     assert thread["config"] == {"project_doc_max_bytes": 0, "project_root_markers": [],
                                 "web_search": "disabled", "agents": {"enabled": False},
-                                "include_apply_patch_tool": False,
-                                "mcp_servers": {"jarvis": {"enabled": False}}}
-    assert not any(a.startswith("mcp_servers.") for a in start["argv"]), "no server added"
+                                "include_apply_patch_tool": False}
+    servers = [start["argv"][i + 1] for i, a in enumerate(start["argv"]) if a == "-c"]
+    assert servers == ['mcp_servers."his drive".enabled=false',
+                       "mcp_servers.jarvis.enabled=false"], \
+        "every server of the home's off for its app server, none added"
     turn = next(e["turn"] for e in log if "turn" in e)
     assert turn["effort"] == "low" and turn["outputSchema"] == form
 
@@ -452,6 +455,23 @@ def test_codex_runs_retrieval_with_its_own_server_and_no_shell(tmp_path):
     assert keep == codex_provider.ROLE_KEEP_FEATURES | {"code_mode_host"}
     assert "shell_tool" not in keep and "default_permissions" not in config
     assert overrides and all("jarvis_role" in o for o in overrides if o != "-c")
+
+
+def test_codex_switches_off_every_server_of_the_home_for_a_role(tmp_path):
+    from jarvis import data_paths
+    launch, _ = _codex_role(tmp_path, "retrieval")
+    (data_paths.codex_home() / "config.toml").write_text(
+        "[mcp_servers.jarvis]\ncommand = \"x\"\n[mcp_servers.jarvis.env]\nA = \"1\"\n"
+        "[mcp_servers.jarvis_role]\ncommand = \"stale\"\n")
+    _, config, overrides = codex_provider.role_release(launch, tmp_path)
+    assert overrides[:2] == ["-c", "mcp_servers.jarvis.enabled=false"]
+    assert "mcp_servers.jarvis_role.enabled=false" not in overrides, "its own server stays"
+    assert 'mcp_servers.jarvis_role.command="py"' in overrides
+    assert "mcp_servers" not in config, "a thread's own switch does not take"
+    (data_paths.codex_home() / "config.toml").write_text("not = [toml")
+    assert codex_provider.home_servers() == []
+    (data_paths.codex_home() / "config.toml").unlink()
+    assert codex_provider.home_servers() == []
 
 
 @pytest.mark.asyncio
