@@ -1,13 +1,13 @@
 """The error package JARVIS makes for Tim when something comes signed by a
 key it does not know as an onboarded agent's (or, after the cut-over, comes
-unsigned), or an onboarded agent's package is not proven written by a
-fresh author (author_proof.py; each attempt's `why`): a page package saying
-which session and key tried, what it tried to send, when and why it is
-held, and offering his acts.
+unsigned): a page package saying which session and key tried, what it
+tried to send and when, and offering his acts.
 
   Switch it on    switching the agent on accepts its key, and what was held
                   goes on (only offered while its key waits for him)
-  Drop it         an onboarded key's: what was held is dropped, the key kept
+  Drop it         a hold kept from before with a reason of its own (each
+                  attempt's `why`), from an onboarded key: what was held is
+                  dropped, the key kept
   Refuse          refuse and revoke the key; what was held is dropped
 
 The page is JARVIS's own and sandboxed like every page package: its buttons
@@ -35,7 +35,7 @@ class Attempt:
     kind: str          # package, message, board, request
     what: str          # what it tried to send
     when: str          # a local time, already worded
-    why: str = ""      # why it is held, when not for its key (author_proof)
+    why: str = ""      # why it is held, when not for its key (a hold kept from before)
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,7 @@ _STATES = {
     "onboarded": "Its key is onboarded; what it sent is held for the reason beside it.",
 }
 HEADING = {False: "Held: signed by a key JARVIS does not know as an onboarded agent's",
-           True: "Held: not proven written by a fresh author"}
+           True: "Held: what an onboarded agent sent"}
 
 
 def _e(text: str) -> str:
@@ -89,9 +89,7 @@ def page(facts: Facts) -> str:
                    + (f"<br><span class=why>{_e(a.why)}</span>" if a.why else "") + "</li>"
                    for a in facts.attempts)
     if facts.onboarded:
-        onboard = (f'<button id=drop data-act="{DROP}">Drop what is held, keep its key</button>'
-                   '<p class=note>It goes on by itself if its author\'s proof checks within '
-                   'minutes of arriving; otherwise it waits for you.</p>')
+        onboard = f'<button id=drop data-act="{DROP}">Drop what is held, keep its key</button>'
     elif facts.can_onboard:
         onboard = (f'<button id=onboard data-act="{ONBOARD}">Switch {_e(who)} on and accept '
                    f'its key</button>')
@@ -151,8 +149,8 @@ def build(facts: Facts, version: str, out: Path) -> Path:
     """The zip of the error package for `facts`, at `out`."""
     name = name_for(facts.subject)
     manifest = {"name": name, "version": version, "runs": "page", "entry": "index.html",
-                "purpose": ("JARVIS holds what an onboarded agent sent, not proven written by "
-                            "a fresh author, until its proof checks or Tim drops it."
+                "purpose": ("JARVIS holds what an onboarded agent sent, for the reason beside "
+                            "it, until Tim drops it."
                             if facts.onboarded else
                             "JARVIS holds what an agent sent, signed by a key it does not know "
                             "as an onboarded agent's, until Tim switches the agent on or "

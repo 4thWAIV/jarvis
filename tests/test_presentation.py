@@ -192,18 +192,6 @@ def test_visible_source_ids_and_frozen_file_evidence(source, tmp_path):
     assert frozen.read_text()=='A frozen observation for this presentation.\n'
 
 
-def test_author_proof_includes_frozen_file_dependency(source):
-    from jarvis.author_proof import source_digest, source_files
-    evidence=source.parent/'observation.txt'
-    evidence.write_text('First observation.')
-    change(source,lambda d:d['references'][0].update(kind='file',locator='observation.txt'))
-    before=source_digest(source)
-    assert 'planted.svg' in source_files(source)
-    assert 'reference-evidence/sample-evidence.bin' in source_files(source)
-    evidence.write_text('Changed observation.')
-    assert source_digest(source)!=before
-
-
 @pytest.fixture
 def presentation_page(source, tmp_path):
     """Compile before opening the browser; compilation has its own layout check."""

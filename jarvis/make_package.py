@@ -33,17 +33,20 @@ docs/making-a-package.md is the whole of how to use it. In short:
   asked at the package view's Done, never as a slide. Got it is retired: a
   source that declares it (`understood`), or the vote itself, is refused.
   content.json decks are no longer made (JSON_DECK_RETIRED).
-- FOLDER is a hand-made package (a page of its own, an agent's brief or a
-  conversation's skill). Its package.json needs only `purpose`; the rest is
-  worked out from the files there. Every page carries the same vote,
-  named in its package.json (`vote`) and asked at Done. An agent or
-  conversation package cannot carry a vote, so it may not name a Work item.
+- FOLDER is a hand-made package (an agent's brief or a conversation's
+  skill). Its package.json needs only `purpose`; the rest is worked out
+  from the files there. An agent or conversation package cannot carry a
+  vote, so it may not name a Work item.
+- A deck or a page for Tim is a briefing: only JARVIS's package workflow
+  makes one, from a request (`--start`); the fresh author here writes
+  neither, and one it writes is refused (package_author.BRIEFING_BY_REQUEST;
+  workflow.yaml deliver only_way_in).
 - `--document ID --revision REV` is a canonical architecture document an
   agent checked with `python -m jarvis.language_document validate`: the
   package is JARVIS's projection of that exact checked revision
   (language_projection.project, the brain's publish shares it) around the
-  fresh author's plain explanation, `package/UNDERSTANDING.md`, which is
-  what the author proof covers. It goes on the document's own Work item.
+  fresh author's plain explanation, `package/UNDERSTANDING.md`. It goes on
+  the document's own Work item.
   Given more than once (each --document with its --revision, in order) it
   is a view set: one package of several checked views of the same system
   on the same Work item, the first its own revision, its story walking one
@@ -52,9 +55,7 @@ docs/making-a-package.md is the whole of how to use it. In short:
 The command launches a fresh author first, on the engine his package-author setting gives
 (the caller's own by default, engine_choice.py). Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
-The command builds the author's unchanged result (a deck is proven as it
-compiles; no browser runs anywhere in a package's path, and his JARVIS
-makes the proof again as it arrives), then signs it and sends it to the live JARVIS as a message carrying it (POST /api/messages,
+The command builds the author's unchanged result, then signs it and sends it to the live JARVIS as a message carrying it (POST /api/messages,
 messages_api.py): on the Work item `--work` names (else his Inbox), with
 words the command writes, unpacked in his package inbox (package_inbox.py), never shown and
 never spoken until he asks for it. `--session` is whose key signs it and
@@ -75,7 +76,7 @@ import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import (author_proof, data_paths, decision_package as dp, decision_stamp, env_names,
+from jarvis import (data_paths, decision_package as dp, decision_stamp, env_names,
                     package_signature)
 
 # The file each way of running needs, by its usual name: a folder holding
@@ -259,6 +260,20 @@ def _zipper():
     return module
 
 
+def is_page(folder: Path) -> bool:
+    """Whether the folder is a page package: its package.json says it runs
+    as a page, or names no way to run and the folder holds the page."""
+    try:
+        given = json.loads((folder / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        given = {}
+    if not isinstance(given, dict):
+        given = {}
+    if given.get("runs"):
+        return given["runs"] == "page"
+    return "entry" in given or (folder / USUAL_FILES["page"]).is_file()
+
+
 def manifest_of(folder: Path) -> dict:
     """The folder's package.json in full, everything but `purpose` worked
     out from the files there, or Refused with every problem."""
@@ -416,6 +431,34 @@ class Explanation:
     story: bytes | None
 
 
+def _plain_files(source: Path) -> dict[str, Path]:
+    """Every plain file of the folder `source`, by `<folder name>/<path>`,
+    macOS metadata left out; a link, or anything that is not a plain file,
+    is refused (ValueError)."""
+    import os
+    from jarvis import bundle_archive
+    if source.is_symlink():
+        raise ValueError(f"{source} is a link.")
+    if not source.is_dir():
+        return {source.name: source} if source.is_file() else {}
+    left_out = {bundle_archive.METADATA_FILE, bundle_archive.METADATA_FOLDER}
+    found: dict[str, Path] = {}
+    for root, dirs, names in os.walk(source, followlinks=False):
+        here = Path(root)
+        for d in list(dirs):
+            if (here / d).is_symlink():
+                raise ValueError(f"{here / d} is a link.")
+        dirs[:] = sorted(d for d in dirs if d not in left_out)
+        for name in sorted(names):
+            path = here / name
+            if name in left_out:
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(f"{path} is not a plain file.")
+            found[f"{source.name}/{path.relative_to(source).as_posix()}"] = path
+    return found
+
+
 def understanding_in(source: Path, views: tuple[str, ...] = ()) -> Explanation:
     """The fresh author's explanation of an architecture document: a folder
     holding UNDERSTANDING.md, readable author Markdown within 1 MiB, and
@@ -428,7 +471,7 @@ def understanding_in(source: Path, views: tuple[str, ...] = ()) -> Explanation:
     from jarvis import language_kit, language_projection, package_story, package_understanding
     member = language_projection.MEMBER
     try:
-        files = author_proof.source_files(source)
+        files = _plain_files(source)
     except ValueError as e:
         raise dp.Refused([str(e)]) from None
     allowed = {f"{source.name}/{member}", f"{source.name}/{STORY_FILE}"}
@@ -526,44 +569,10 @@ def make_architecture(envelope: dict, source: Path, out: Path, purpose: str,
 # -- signing --------------------------------------------------------------------------
 
 def sign(archive: Path, signer: tuple[Path, str], session: str,
-         statements: tuple[str, ...] = (), work_key: dict | None = None,
-         author: dict | None = None) -> None:
+         statements: tuple[str, ...] = (), work_key: dict | None = None) -> None:
     """Sign the zip in place with the session's own key (package_signature)."""
     package_signature.sign(archive, archive, signer[0], signer[1], session, statements,
-                           work_key, author)
-
-
-def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
-    """The fresh author's claim for this package: its authored source put in
-    the zip (`.jarvis/author/`) with its briefing (`.jarvis/briefing/`), and the claim checked here first exactly as
-    the receiving JARVIS checks it (author_proof.problem), so a source
-    changed after the author's own last check is never delivered."""
-    import time
-    from jarvis import package_author
-    claim = package_author.claim_of(source)
-    try:
-        author_proof.attach(made.archive, source)
-    except (OSError, ValueError) as e:
-        raise dp.Refused([f"The authored source could not be added: {e}"]) from None
-    # Its briefing travels with it: the prep, script and edits it was
-    # written from (briefing_prep), beside the author's source.
-    from jarvis import briefing_prep
-    briefing_prep.carry(made.archive, source.parent)
-    why = author_proof.problem(claim.as_dict(), session, made.archive, time.time())
-    if why:
-        raise dp.Refused([why])
-    if made.kind == ARCHITECTURE_KIND:
-        # The receiver's gate holds the attached source to the bound
-        # explanation and story; read the zip back as it will.
-        from jarvis import bundle_archive, work_packages
-        try:
-            with bundle_archive.open_archive(made.archive) as z:
-                recognised = work_packages.recognise(z, bundle_archive.list_members(z))
-        except bundle_archive.ArchiveError as e:
-            raise dp.Refused([f"JARVIS would refuse the zip: {e}"]) from None
-        if recognised.manifest is None:
-            raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
-    return claim
+                           work_key)
 
 
 def add_work_key(archive: Path, work_id: str) -> dict:
@@ -788,7 +797,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             named = " and ".join(f"architecture document {d} revision {r}" for d, r in views)
             print(f"The explanation is right: {source.name}/UNDERSTANDING.md{told}, for "
                   f"{named}.")
-            print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         if args.check_only:
             if is_presentation(source):
@@ -811,8 +819,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 manifest = manifest_of(source)
                 print(f"The folder is right: a {manifest['runs']} package, "
                       f"{manifest['name']}-{manifest['version']}.")
-            # What a fresh author's own last check shows (author_proof.MARK).
-            print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()
         out.mkdir(parents=True, exist_ok=True)
@@ -839,16 +845,19 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 for (d, r), found in zip(views, envelopes))
         from jarvis import agent_keys
         signer = agent_keys.signer_for(args.session)
-        made = author = None
+        made = None
 
         async def finish(authored_source, turn):
-            """Build the author's source: a deck is laid out and proven by
-            JARVIS (presentation_proof) as it compiles, with no browser and
-            no screenshot review. Its briefing was judged before it was
-            written (briefing_prep). Anything refused is said."""
-            nonlocal made, author, built
+            """Build the author's source: an agent's or conversation's
+            folder, or an architecture document's explanation. A deck or a
+            page is a briefing, made only by the package workflow, and is
+            refused (package_author.BRIEFING_BY_REQUEST). Anything refused
+            is said."""
+            nonlocal made, built
             if envelope is None:
                 refuse_json_deck(authored_source)
+                if is_presentation(authored_source) or is_page(authored_source):
+                    raise dp.Refused([package_author.BRIEFING_BY_REQUEST])
             built = True        # the author's source is taken: a refusal now is reported on --work
             if envelope is not None:
                 # The package states the handoff's question as its purpose:
@@ -859,23 +868,20 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 made = make_architecture(envelope, authored_source, out,
                                          package_request.questions_text(handed),
                                          handed["approval"], more)
-            elif is_presentation(authored_source):
-                made = make_presentation(authored_source, out)
             else:
                 made = make_folder(authored_source, out)
-            author = with_author(made, authored_source, args.session)
             print(f"Built a {made.kind}: {made.archive}")
             if signer is None:
                 raise dp.Refused(["There is no key to sign it with. Give --session for your onboarded key."])
-            return {"status": "built", "archive_sha256": author_proof._sha(made.archive)}
+            import hashlib
+            return {"status": "built",
+                    "archive_sha256": hashlib.sha256(made.archive.read_bytes()).hexdigest()}
 
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
                                         session=args.session, work=args.work, workflow=args.workflow,
                                         document=document, finish=finish)
-        if made is None or author is None:
+        if made is None:
             raise dp.Refused(["The fresh author's source was not built."])
-        if author_proof.source_digest(source) != author.source:
-            raise dp.Refused(["The source changed after it was built; build it again."])
     except dp.Refused as e:
         print("Not delivered. These need changing:" if built else "Not built. These need changing:")
         for line in e.problems:
@@ -892,17 +898,11 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         return 1
     try:
         # Signed with the session's own key (package_signature.py): who sent
-        # it and that these are its files. A deck carries its own layout
-        # proof, which his JARVIS makes again as it arrives. An agent
-        # package for a Work item carries a key for that item alone.
+        # it and that these are its files. An agent package for a Work item
+        # carries a key for that item alone.
         grant = (add_work_key(made.archive, args.work) if args.work and
                  made.kind == "agent package" and args.session else None)
-        # A deck JARVIS laid out and proved also says it passed its check
-        # (DECISION_CHECKED), so a JARVIS from before the proof, which
-        # admits a deck only on that statement, admits it too; one with the
-        # proof makes the proof again and needs no statement.
-        statements = (package_signature.DECISION_CHECKED,) if made.deck is not None else ()
-        sign(made.archive, signer, args.session, statements, grant, author.as_dict())
+        sign(made.archive, signer, args.session, (), grant)
         delivered = dp.deliver(made.archive, args.deliver_to,
                                dp.says_of(made.title, made.kind),
                                project=args.project, workflow=args.workflow, work=args.work,
@@ -912,16 +912,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(f"Not delivered: {e}")
         return 1
     package_id, inbox_id = delivered.package["id"], delivered.inbox["id"]
-    answers = (data_paths.packages_dir() / package_id / "results" / "decisions.json"
-               if made.deck is not None and made.deck.get("decisions") else None)
     record = {"package": package_id, "inbox": inbox_id, "message": delivered.message.get("id"),
               "title": made.title, "kind": made.kind,
               "project": args.project, "session": args.session, "workflow": args.workflow,
               "work": args.work, "zip": str(made.archive),
               "document": args.document[0] if views else None,
               "revision": args.revision[0] if views else None,
-              "views": [{"document": d, "revision": r} for d, r in views] if len(views) > 1 else None,
-              "answers": str(answers) if answers else None}
+              "views": [{"document": d, "revision": r} for d, r in views] if len(views) > 1 else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(ARRIVED_AS.format(message=delivered.message.get("id"), inbox_id=inbox_id)
           + f" (package {package_id})"
@@ -934,8 +931,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
              + (" and to the workflow as its decisions" if args.workflow else "") + "."
              if args.session or args.workflow else
              "Give --session next time so his answers come back to you."))
-    if answers:
-        print(f"The answers are recorded in {answers}.")
     return 0
 
 

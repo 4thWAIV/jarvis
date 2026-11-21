@@ -197,9 +197,9 @@ def test_only_an_agent_s_own_key_sends_and_a_work_key_only_about_its_own_item(wi
     other = _start_work(client, agent, folder)
     raw = tmp_path / "agent.zip"
     raw.write_bytes(make_zip({"BRIEF.md": "Build it."}, AGENT_PKG))
-    from tests.author_fixtures import sign_authored
+    from tests.signing_fixtures import sign_as_agent
     grant = make_package.add_work_key(raw, wid)
-    sign_authored(raw, raw, agent, PLAN, work_key=grant)
+    sign_as_agent(raw, raw, agent, PLAN, work_key=grant)
     assert send(client, agent, raw.read_bytes(), session=PLAN, work=wid).status_code == 200
     package = work_packages.find(AGENT_PKG["name"])
     worker = WorkKeyAgent(*agent_keys.work_key(package.folder))
@@ -320,8 +320,8 @@ def test_a_package_for_a_work_item_is_a_message_about_it_carrying_it_done_once_c
     wid = _start_work(client, agent, folder)
     raw = tmp_path / "agent.zip"
     raw.write_bytes(make_zip({"BRIEF.md": "Build it."}, AGENT_PKG))
-    from tests.author_fixtures import sign_authored
-    sign_authored(raw, raw, agent, PLAN)
+    from tests.signing_fixtures import sign_as_agent
+    sign_as_agent(raw, raw, agent, PLAN)
     r = send(client, agent, raw.read_bytes(), session=PLAN, work=wid)
     assert r.status_code == 200, r.text
     inbox = r.json()["inbox"]["id"]

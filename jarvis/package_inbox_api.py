@@ -10,7 +10,11 @@ server's one function for it, which the brain's tool calls too.
                                      which make_package sends and which
                                      receives it through the same
                                      function), so a request an agent's key
-                                     signed is refused here
+                                     signed is refused here; and a
+                                     briefing (a deck) is refused here
+                                     whoever sends it: only the package
+                                     workflow makes one, and delivers it
+                                     as a message (BRIEFING_REFUSED)
   GET  /api/packages/inbox           the open packages, newest first, and how
                                      many are closed (?closed=1 lists those)
   GET  /api/packages/inbox/{id}      one, with its questions and answers
@@ -63,6 +67,10 @@ SIGN_OFF_PATH = "/api/packages/{package_id}/signoff"
 # What an agent posting a package here is told.
 SEND_AS_MESSAGE = ("A package goes to Tim as a message: python -m jarvis.make_package sends it "
                    "(POST /api/messages). Nothing was delivered.")
+# What a briefing posted here is told (workflow.yaml deliver only_way_in).
+BRIEFING_REFUSED = ("This is a briefing (a deck): only JARVIS's package workflow makes one, from "
+                    "an agent's request (python -m jarvis.make_package --start), and delivers it "
+                    "as a message. Nothing was delivered.")
 # The most a package zip may be: a received file's limit.
 MAX_BYTES = messaging_wire.FILE_MAX_BYTES
 
@@ -133,7 +141,7 @@ def mount(app: FastAPI, calls: Calls) -> None:
             return _refused("There is no zip in the request.", 400)
         arrival, package, problem = await calls.receive(
             data, Sender(project=project, claimed=session), workflow, work, source,
-            reporters.of_scope(request.scope))
+            reporters.of_scope(request.scope), direct=True)
         if arrival is None:
             return _refused(problem)
         return {"inbox": entry_json(arrival.entry), "arrived": arrival.fresh,

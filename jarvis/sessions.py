@@ -898,8 +898,7 @@ class BrainSwarmSession:
 # ── DecisionSession ───────────────────────────────────────────────────────
 
 YES_NO, CHOICE, SCALE = "yes_no", "choice", "scale"
-# A Brain decision asks each question this many times (today's
-# briefing_prep.decide).
+# A Brain decision asks each question this many times.
 ASKS = 3
 
 

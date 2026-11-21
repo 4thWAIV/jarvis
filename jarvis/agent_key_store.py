@@ -596,30 +596,6 @@ def work_keys(work_id: Optional[str] = None) -> list[AgentKey]:
     return [_key(k) for k in sorted(keys, key=lambda k: k["submitted_at"])]
 
 
-# -- fresh authors (author_proof.py) -----------------------------------------------------
-
-def bind_author(author: str, package_sha: str, now: Optional[float] = None) -> str:
-    """Bind one author session to one package's bytes, the first time it
-    vouches; the SHA-256 it is bound to (this one, or the earlier package's)."""
-    now = time.time() if now is None else now
-    session = agent_record.author_session(author)
-    doc = CACHE.get(agent_record.agent_path(session)) or {}
-    bound = next((p for p in doc.get("author_proofs") or () if p.get("author") == author), None)
-    if bound is not None:
-        return bound["package_sha"]
-
-    def run(w: agent_record.Writer) -> str:
-        doc = w.agent(session)
-        found = next((p for p in doc["author_proofs"] if p.get("author") == author), None)
-        if found is not None:
-            return found["package_sha"]
-        doc["author_proofs"].append({"author": author, "package_sha": package_sha,
-                                     "bound_at": float(now)})
-        w.changed(agent_record.agent_path(session), "author_bound")
-        return package_sha
-    return agent_record.change(run, by=records.by(AGENT + session))
-
-
 # -- the cut-over guard's record (legacy_access.py) --------------------------------------
 
 def setting(name: str) -> Optional[tuple[str, float]]:

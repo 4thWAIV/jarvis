@@ -100,7 +100,7 @@ from jarvis import package_inbox, package_inbox_api
 from jarvis import package_jobs, package_jobs_api, package_request, sessions, work_research
 from jarvis import wait_links
 from jarvis import session_message_sender
-from jarvis import agent_key_store, agent_keys, author_proof, package_signature
+from jarvis import agent_key_store, agent_keys, package_signature
 from jarvis import bundle_archive
 from jarvis import reporters
 from jarvis import agent_rights
@@ -4623,7 +4623,6 @@ def _look_after_agent_keys(now: Optional[float] = None) -> None:
     the keys of agents dropped from the list. Blocking."""
     for key in agent_key_store.to_prove(now):
         _prove_agent_key(key)
-    _recheck_author_holds(now)
     agent_key_store.drop_unproven(now)
     listed = run_store.agent_names()
     gone = [k.session_id for k in agent_key_store.by_session().values()
@@ -9374,17 +9373,14 @@ def _package_opened(package: "work_packages.Package", fresh: bool, what_next: st
 def _local_package_problem(zip_path: Path) -> Optional[str]:
     """Why a zip on this Mac may not be unpacked, or None:
     `_decision_problem` (its signature, if an onboarded agent's or JARVIS's
-    own), then, for one
-    an onboarded agent signed, `_admit_agent_package`. Refused rather than
-    held: the zip stays where it is on his Mac, and opening it again looks
-    again."""
+    own). Refused rather than held: the zip stays where it is on his Mac,
+    and opening it again looks again."""
     try:
         signed = package_signature.read(zip_path)
     except package_signature.SignatureError as e:
         return str(e)
     _, key, status = _package_signer(signed)
-    return (_decision_problem(zip_path, signed, status in _VOUCHED)
-            or _admit_agent_package(zip_path, signed, status))
+    return _decision_problem(zip_path, signed, status in _VOUCHED)
 
 
 async def _open_local_package(path: str, show: bool
@@ -9989,11 +9985,13 @@ def _inbox_sender(project: str, claimed: str,
 async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", workflow_id: str,
                                  work_id: str, source: str = "",
                                  reporter: "Optional[reporters.Reporter]" = None,
-                                 held_key: str = "", carried: bool = False):
+                                 held_key: str = "", carried: bool = False,
+                                 direct: bool = False):
     """A package for his inbox, from its zip's bytes: written to a private
     file among the packages, then `_receive_package_zip`. `carried`: a
-    message carries it (`_send_message`), which is its message. (the
-    arrival, the package, "") or (None, None, why not)."""
+    message carries it (`_send_message`), which is its message. `direct`:
+    it came by JARVIS's own path, POST /api/packages/inbox, which takes no
+    briefing. (the arrival, the package, "") or (None, None, why not)."""
     problem = await asyncio.to_thread(_check_inbox_links, workflow_id, work_id)
     if problem:
         return None, None, problem
@@ -10004,7 +10002,7 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
         with os.fdopen(fd, "wb") as f:
             await asyncio.to_thread(f.write, data)
         return await asyncio.to_thread(_receive_package_zip, temp, sender, workflow_id, work_id,
-                                       source, reporter, held_key, None, carried)
+                                       source, reporter, held_key, carried, direct)
     except OSError as e:
         return None, None, str(e)
     finally:
@@ -10014,7 +10012,7 @@ async def _receive_inbox_package(data: bytes, sender: "package_inbox.Sender", wo
 def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflow_id: str,
                          work_id: str, source: str = "",
                          reporter: "Optional[reporters.Reporter]" = None, held_key: str = "",
-                         at: Optional[float] = None, carried: bool = False):
+                         carried: bool = False, direct: bool = False):
     """A package zip for his inbox, checked and unpacked exactly as a zip
     on this Mac is, recorded with its sender as proven, then its attention
     item and hints. Nothing is shown. Its sender is its signature's
@@ -10022,11 +10020,18 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     signed by a key not onboarded, or unsigned on a request signed by one,
     is held (`_unrecognised_key`), never unpacked; an unsigned one by the
     tool token keeps its claim unproven (`_package_sender`). A decision
-    package only with its check's statement (`_decision_problem`). An
-    agent's only once a fresh author is proven to have written it
-    (`_admit_agent_package`, as of `at`, when it first arrived), else held
-    the same way. Blocking. (the arrival, the package, "") or (None, None,
-    why not)."""
+    package only with its check's statement (`_decision_problem`). One
+    that came `direct`ly (POST /api/packages/inbox) is refused when it is a
+    briefing, a deck, which only the package workflow makes and delivers
+    as a message (workflow.yaml deliver only_way_in).
+    Blocking. (the arrival, the package, "") or (None, None, why not)."""
+    if direct:
+        try:
+            briefing = decision_stamp.is_decision_package(zip_path)
+        except (OSError, ValueError, bundle_archive.ArchiveError) as e:
+            return None, None, f"It could not be read: {e}"
+        if briefing:
+            return None, None, package_inbox_api.BRIEFING_REFUSED
     try:
         signed = package_signature.read(zip_path)
     except package_signature.SignatureError as e:
@@ -10041,11 +10046,6 @@ def _receive_package_zip(zip_path: Path, sender: "package_inbox.Sender", workflo
     problem = _decision_problem(zip_path, signed, status in _VOUCHED)
     if problem:
         return None, None, problem
-    unproven = _admit_agent_package(zip_path, signed, status, at)
-    if unproven:
-        why = _hold_package(zip_path, signed, key, sender, workflow_id, work_id, source,
-                            reason=unproven)
-        return None, None, why
     sha = _file_sha256(zip_path)
     try:
         package, fresh = work_packages.unpack(zip_path, work_packages.LOCAL_SOURCE + sha[:27])
@@ -10261,33 +10261,6 @@ def _deck_proof_problem(zip_path: Path) -> Optional[str]:
     return ("Its layout does not prove here: " + " ".join(problems[:3])) if problems else None
 
 
-def _admit_agent_package(zip_path: Path, signed, status: str,
-                         at: Optional[float] = None) -> Optional[str]:
-    """THE admission check for an agent-signed package (Tim's decision
-    `receiver-check`: verify), for every route that admits one: the inbox
-    (`_receive_package_zip`, and through it a held package released or
-    looked at again), and a zip on this Mac (`_local_package_problem`).
-    Why it is not proven written by a fresh author, in words Tim reads, or
-    None: its signature's `author` claim names a fresh author session
-    other than the sender, whose own transcript shows it checking exactly
-    the source the zip carries, within author_proof.WINDOW_SEC before `at`
-    (author_proof.problem); one author session vouches for one package's
-    bytes (agent_key_store.bind_author), so a new revision needs a new
-    author. Not affected: an unsigned or held package (their own rules), a
-    person's (`_open_received_package` never asks), JARVIS's own (signed
-    with its own key: the sender only asked, so no sender wrote it), the
-    same bytes already unpacked here, and the isolated
-    JARVIS of the page tests (tests/isolated_jarvis_server). Blocking."""
-    if status != _GOOD_SIGNER or signed is None or \
-            env_names.read("JARVIS_DECISION_CHECK_SERVER") == "1" or \
-            work_packages.already_here(zip_path):
-        return None
-    sha = _file_sha256(zip_path)
-    return author_proof.problem(
-        signed.author, signed.session, zip_path, time.time() if at is None else at,
-        used=lambda c: agent_key_store.bind_author(f"{c.engine}:{c.session}", sha) != sha)
-
-
 def _manifest_of_zip(zip_path: Path):
     """The package.json a zip carries, or None."""
     try:
@@ -10298,11 +10271,9 @@ def _manifest_of_zip(zip_path: Path):
 
 
 def _hold_package(zip_path: Path, signed, key, sender, workflow_id: str, work_id: str,
-                  source: str, reason: str = "") -> str:
-    """Keep a package signed by a key that is not an onboarded agent's, or
-    (with `reason`) one an onboarded agent signed that is not proven
-    written by a fresh author (`_admit_agent_package`), until he chooses
-    (`_unrecognised_key`). What to tell the agent."""
+                  source: str) -> str:
+    """Keep a package signed by a key that is not an onboarded agent's
+    until he chooses (`_unrecognised_key`). What to tell the agent."""
     manifest = _manifest_of_zip(zip_path)
     what = (f"the package {manifest.name.replace('-', ' ')} ({manifest.name} "
             f"{manifest.version})" if manifest else f"a package ({zip_path.name})")
@@ -10315,15 +10286,11 @@ def _hold_package(zip_path: Path, signed, key, sender, workflow_id: str, work_id
         "package", what, fingerprint=(signed.fingerprint if signed else "")
         or (key.fingerprint if key else ""),
         session=(key.session_id if key else "") or (signed.session if signed else "")
-        or sender.claimed, work_id=work_id, path=str(kept), reason=reason,
+        or sender.claimed, work_id=work_id, path=str(kept),
         detail={"project": sender.project, "claimed": sender.claimed, "workflow": workflow_id,
                 "work": work_id, "source": source})
     if held.path != str(kept):
         kept.unlink(missing_ok=True)        # the same package was already held
-    if reason:
-        return (f"Held: {reason} Tim has been told; it goes on if its author's proof checks "
-                f"within {int(author_proof.RECHECK_SEC // 60)} minutes, else it waits for him. "
-                "Make it again with python -m jarvis.make_package --handoff.")
     return ("Held: it is signed by a key JARVIS does not know as an onboarded agent's. "
             "Tim has been told; it goes on once he switches your agent on "
             "(python -m jarvis.agent_key status says where your key stands).")
@@ -10334,22 +10301,17 @@ def _hold_package(zip_path: Path, signed, key, sender, workflow_id: str, work_id
 # ---------------------------------------------------------------------------
 
 def _unrecognised_key(kind: str, what: str, *, fingerprint: str = "", session: str = "",
-                      work_id: str = "", path: str = "", detail: Optional[dict] = None,
-                      reason: str = ""):
+                      work_id: str = "", path: str = "", detail: Optional[dict] = None):
     """THE one place (Tim's answer to Q3) for anything sent signed by a key
     JARVIS does not know as an onboarded agent's (or, after the cut-over,
-    unsigned), and for an onboarded agent's package not proven written by
-    a fresh author (`reason`, from `_admit_agent_package`, kept in the
-    hold's detail): it is held (agent_key_store.hold), the Work item it is
-    for goes to Error with the reason (work_store.ERROR), and JARVIS makes
-    Tim an error package, delivered unshown to his inbox like any package,
-    saying which session and key tried, what it tried to send and why it
-    is held, and offering his acts: switch the agent on (which accepts its
-    key), drop what is held (an onboarded key's), or refuse and revoke the
-    key (`_key_error_act`). The same thing again while it is held changes
-    nothing. The held row. Blocking."""
-    if reason:
-        detail = {**(detail or {}), "reason": reason}
+    unsigned): it is held (agent_key_store.hold), the Work item it is for
+    goes to Error (work_store.ERROR), and JARVIS makes Tim an error
+    package, delivered unshown to his inbox like any package, saying which
+    session and key tried and what it tried to send, and offering his acts:
+    switch the agent on (which accepts its key), or refuse and revoke the
+    key (`_key_error_act`); a hold kept from before with a reason of its
+    own (an onboarded key's) also offers Drop. The same thing again while
+    it is held changes nothing. The held row. Blocking."""
     held, fresh = agent_key_store.hold(kind, what, fingerprint=fingerprint, session_id=session,
                                        path=path, detail=detail, work_id=work_id)
     if not fresh:
@@ -10370,10 +10332,8 @@ def _raise_work_error(work_id: str, held) -> None:
     try:
         item = work_store.record(work_store.WorkEvent(
             work_id, work_store.ERROR_RAISED,
-            (f"Error: JARVIS holds {held.what} from {who}: {held.detail['reason']} It waits "
-             f"for its author's proof or Tim's choice." if held.detail.get("reason") else
-             f"Error: JARVIS holds {held.what} from {who}, signed by a key it does not know "
-             f"as an onboarded agent's, until Tim switches that agent on or refuses its key."),
+            f"Error: JARVIS holds {held.what} from {who}, signed by a key it does not know "
+            f"as an onboarded agent's, until Tim switches that agent on or refuses its key.",
             {"held": held.id}, reporter="jarvis"))
     except work_store.WorkRefused as e:
         log.info("agent keys: work item %s not put in Error (%s)", work_id, e)
@@ -10460,8 +10420,7 @@ def _release_held(key) -> None:
 
 def _release(holds, how: str) -> None:
     """Each hold goes on as if it had just come: a package is received
-    again from the copy kept, as of when it first came (and so checked
-    again: one still unproven is held again); a message is recorded as
+    again from the copy kept (and so checked again); a message is recorded as
     sent (`_record_message`); a report needs nothing (the agent reports
     again). An error package with nothing left
     held closes, else is made again; Work items with nothing held leave
@@ -10474,8 +10433,7 @@ def _release(holds, how: str) -> None:
                 d = h.detail
                 _receive_package_zip(Path(h.path), package_inbox.Sender(
                     project=d.get("project", ""), claimed=d.get("claimed", "")),
-                    d.get("workflow", ""), d.get("work", ""), d.get("source", ""),
-                    at=h.held_at)
+                    d.get("workflow", ""), d.get("work", ""), d.get("source", ""))
                 Path(h.path).unlink(missing_ok=True)
             elif h.kind == "message" and "says" in h.detail:
                 _record_message(agent_key_store.agent_principal(h.session_id), h.session_id,
@@ -10489,27 +10447,6 @@ def _release(holds, how: str) -> None:
         else:
             _close_key_error_package(subject)
     _clear_work_errors({h.work_id for h in holds}, how)
-
-
-def _recheck_author_holds(now: Optional[float] = None) -> None:
-    """A package held only for its author's proof is looked at again for
-    author_proof.RECHECK_SEC after it came (a transcript written late, a
-    Codex thread not yet recorded), as of when it came: released
-    (`_release`) once `_admit_agent_package` admits it. Blocking."""
-    now = time.time() if now is None else now
-    for h in agent_key_store.held():
-        if h.kind != "package" or not h.detail.get("reason") or not h.path or \
-                now - h.held_at > author_proof.RECHECK_SEC or not Path(h.path).is_file():
-            continue
-        try:
-            signed = package_signature.read(Path(h.path))
-        except package_signature.SignatureError:
-            continue
-        _, _, status = _package_signer(signed)
-        if status == _GOOD_SIGNER and \
-                _admit_agent_package(Path(h.path), signed, status, h.held_at) is None:
-            log.info("agent keys: %s's author proof now checks; released", h.id)
-            _release([h], "its author's proof checked")
 
 
 def _refuse_held(fingerprint: str, session: str) -> None:

@@ -528,10 +528,6 @@ EXEMPT = {
         "nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
     "work_research.refresh": (
         "it writes a Work item's research files from what was looked up; never a brain header, never said"),
-    "package_author.claim_of": (
-        "it builds the author claim from the receipt's engine and session id, both checked by "
-        "author_proof.Claim.of against fixed values and a fixed pattern; its refusal names only "
-        "the source's path, printed to the agent running make_package, never a brain header"),
     "package_author.author": (
         "it records provider model/session metadata and raw author text in local source/provenance "
         "files for the originating factory command. It does not create a trusted JARVIS header or "
@@ -1739,6 +1735,8 @@ EXEMPT = {
         "it names who tried to send a held thing for the Work item's Error line and the error package, which the page shows as text and the brain reads only through work_status's wall"),
     "server._hold_package": (
         "it keeps a package's zip and records the hold; its words (the package's name and version) go to the error package as escaped text and to the agent's refusal, never a brain header"),
+    "server._receive_package_zip": (
+        "it checks and records a package for his inbox; a zip that cannot be read is refused with the archive's own error as the route's or the agent's refusal, never a brain header, and the inbox row reaches the brain only walled"),
     "server._make_key_error_package": (
         "it builds the error package from the holds; every word of the agent's is escaped into its page (key_error_package._e) and the inbox row reaches the brain only walled"),
     "server._request_from_unrecognised": (

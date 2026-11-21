@@ -1,13 +1,10 @@
 """A stand-in `claude` that authors an architecture document's explanation
-the way the real fresh author is told to (package_author._assignment): its
-first turn writes the briefing's prep and script, an ask of the briefing's
-editors and judges is answered passing (author_fixtures.passing_reply), and
-the deck turn reads the document folder the prompt names (a view set's
-first view's), writes package/UNDERSTANDING.md
-(and package/story.json, copied from `AUTHOR_TEST_STORY` when it is set),
-runs the exact check command the prompt gives as a real subprocess, and
-records that call and its real output in its own transcript under
-`AUTHOR_TEST_CLAUDE_ROOT` (which the receiver reads, author_proof.py).
+the way the real fresh author is told to (package_author._assignment): in
+its first turn it reads the document folder the prompt names (a view set's
+first view's), writes package/UNDERSTANDING.md (and package/story.json,
+copied from `AUTHOR_TEST_STORY` when it is set) and runs the exact check
+command the prompt gives as a real subprocess, keeping its output in
+check-output.txt.
 
 Built from tests/fixtures/fake_brain.py, as test_package_author's engines are.
 """
@@ -20,25 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 FAKE_BRAIN = Path(__file__).parent / "fixtures" / "fake_brain.py"
 
 ACTION = '''
-    _sys = __import__('sys')
-    _sys.path.insert(0, {root!r})
-    from tests.author_fixtures import passing_reply as _passing, write_prep as _prep
-    # The session's first prompt, which its transcript begins with (the
-    # fresh author's, author_proof.fresh), kept for the turn that checks.
-    if not os.path.exists('first-prompt.txt'):
-        open('first-prompt.txt', 'w').write(text)
-    if 'prep.md and script.md now' in text:
-        from pathlib import Path as _P
-        _prep(_P('.'))
-    elif _passing(text) is not None:
-        text = _passing(text)       # an editor's or judge's ask: echoed back as its answer
     if '--check-only --document' in text:
-        import json as _json, re as _re, subprocess as _sp, time as _time
+        import json as _json, re as _re, subprocess as _sp
         from pathlib import Path as _P
-        _sys = __import__('sys')
-        _sys.path.insert(0, {root!r})
-        from jarvis import session_watch as _sw
-        from tests.author_fixtures import lines as _lines
         _cmd = _re.search(r"exact command: (.*--revision [0-9a-f]{{64}})", text).group(1)
         # One document's folder, or a view set's first ("view 1, document D, in F;").
         _doc = _P((_re.search(r"Its exact revision is in (\\S+?): source.yaml", text)
@@ -54,12 +35,6 @@ ACTION = '''
             _P('package/story.json').write_bytes(_P(os.environ['AUTHOR_TEST_STORY']).read_bytes())
         _run = _sp.run(['/bin/sh', '-c', _cmd], capture_output=True, text=True)
         _P('check-output.txt').write_text(_run.stdout + _run.stderr)
-        _at = (_P(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'
-               / _sw.encode_cwd(os.getcwd()) / (SESSION_ID + '.jsonl'))
-        _at.parent.mkdir(parents=True, exist_ok=True)
-        _at.write_text(''.join(_json.dumps(o) + '\\n' for o in _lines(
-            'claude', SESSION_ID, '', _time.time(), prompt=open('first-prompt.txt').read(),
-            printed=_run.stdout.strip(), ran=_cmd)))
 '''
 
 
@@ -71,6 +46,6 @@ def install(folder: Path, session: str = "fake-author-0001") -> Path:
     fake = folder / "claude"
     fake.write_text(original.replace("#!/usr/bin/env python3", "#!" + sys.executable)
                     .replace('SESSION_ID = "fake-session-0001"', f"SESSION_ID = {session!r}")
-                    .replace(start, start + ACTION.format(root=str(ROOT))))
+                    .replace(start, start + ACTION.format()))
     fake.chmod(0o755)
     return fake

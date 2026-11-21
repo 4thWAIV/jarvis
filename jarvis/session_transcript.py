@@ -2,10 +2,9 @@
 by its engine and id, and the tool calls, their results and what the
 assistant said on each line.
 
-The one reader of a session's transcript by id for what it did, shared by
-the author proof (author_proof.py) and the package's gather step, which
-collects the sending session's commands, their results and its final
-messages (package_gather.sender_session; workflow.yaml gather
+The one reader of a session's transcript by id for what it did: the
+package's gather step collects the sending session's commands, their
+results and its final messages (package_gather.sender_session; workflow.yaml gather
 gather_jarvis_material). Claude Code's transcript is
 `<config root>/projects/*/<session>.jsonl`, Codex's its thread's rollout;
 no link is followed, and a long transcript (screenshots make one tens of

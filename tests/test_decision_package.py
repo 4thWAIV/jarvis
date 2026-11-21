@@ -178,30 +178,25 @@ class _Delivery:
                 "arrived": True, "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}
 
 
-def test_refused_content_is_not_built_or_delivered(tmp_path, monkeypatch, capsys):
+def test_refused_content_is_not_built(tmp_path):
+    from jarvis import make_package as mp
     from tests.deck_fixtures import write_yaml
     deck = small_deck()
     deck["decisions"][0]["recommended"] = "elsewhere"
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
-    assert dp.main([str(write_yaml(tmp_path / "in", deck)), "--out", str(tmp_path / "out")]) == 1
-    assert "does not belong to this decision" in capsys.readouterr().out
-    assert delivery.calls == [] and not list((tmp_path / "out").glob("*.zip"))
+    with pytest.raises(dp.Refused) as refused:
+        mp.make_presentation(write_yaml(tmp_path / "in", deck), tmp_path / "out")
+    assert "does not belong to this decision" in " ".join(refused.value.problems)
+    assert not list((tmp_path / "out").glob("*.zip"))
 
-
-def test_a_deck_whose_picture_cannot_be_read_delivers_nothing(tmp_path, monkeypatch, capsys):
+def test_a_deck_whose_picture_cannot_be_read_is_not_built(tmp_path):
+    from jarvis import make_package as mp
     from tests.deck_fixtures import write_yaml
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
     banner = ('<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="20">'
               '<rect width="4000" height="20" fill="#38bdf8"/></svg>\n')
-    _key()
-    assert dp.main([str(write_yaml(tmp_path / "in", small_deck(), svg=banner)),
-                    "--out", str(tmp_path / "out"), "--session", "abc"]) == 1
-    said = capsys.readouterr().out
-    assert "cannot be read" in said
-    assert delivery.calls == []
-
+    with pytest.raises(dp.Refused) as refused:
+        mp.make_presentation(write_yaml(tmp_path / "in", small_deck(), svg=banner),
+                             tmp_path / "out")
+    assert "cannot be read" in " ".join(refused.value.problems)
 
 def _key(session="abc"):
     """The session's own key, made as `agent_key init` makes it."""
@@ -209,44 +204,45 @@ def _key(session="abc"):
     return agent_keys.make_pair(agent_keys.key_folder(session), f"jarvis-agent {session}")
 
 
+def _agent_folder(root: Path) -> Path:
+    folder = root / "Count Words"
+    folder.mkdir(parents=True)
+    (folder / "BRIEF.md").write_text("Count the words.\n")
+    (folder / "package.json").write_text(json.dumps({"purpose": "Count the words."}))
+    return folder
+
+
 def test_nothing_is_delivered_without_the_session_s_own_key(tmp_path, monkeypatch, capsys):
-    from tests.deck_fixtures import write_yaml
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    assert dp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert dp.main([str(_agent_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
                     "--session", "nokey"]) == 1
     assert "no key to sign it with" in capsys.readouterr().out and delivery.calls == []
 
-
-def test_a_proven_deck_delivers_once_signed_with_the_session_s_key(tmp_path, monkeypatch,
-                                                                  capsys):
+def test_a_package_delivers_once_signed_with_the_session_s_key(tmp_path, monkeypatch):
     from jarvis import package_signature
-    from tests.deck_fixtures import write_yaml
     private, public = _key()
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    assert dp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert dp.main([str(_agent_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
                     "--project", "lunch", "--session", "abc",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, signer, body)] = delivery.calls
     assert url.startswith("http://127.0.0.1:19999/api/messages?project=lunch"), \
         "a message carrying it"
     assert signer == (private, public), "the request is signed with the session's own key"
-    archive = tmp_path / "out" / "lunch-decisions-1.0.0.zip"
+    archive = tmp_path / "out" / "count-words-1.0.0.zip"
     assert base64.b64decode(body["package"]) == archive.read_bytes()
-    assert body["says"] == "Decision package: Team lunch"
-    assert decision_stamp.carries_proof(archive), "its source and layout proof go with it"
+    assert body["says"] == "Agent package: count words"
     signed = package_signature.read(archive)
     assert signed.session == "abc" and signed.checks(public)
-    package = json.loads(zipfile.ZipFile(archive).read("package.json"))
-    assert package["name"] == "lunch-decisions" and package["runs"] == "page"
-    story = json.loads(zipfile.ZipFile(archive).read("story.json"))
-    assert [s["title"] for s in story["slides"]][-1] == "Your answers"
-    said = capsys.readouterr().out
-    assert "lunch-decisions-1.0.0-local1" in said and "pkg-0123456789ab" in said
-    record = json.loads((tmp_path / "out" / "delivery.json").read_text())
-    assert record["project"] == "lunch" and record["session"] == "abc"
 
+
+def test_a_built_deck_carries_its_source_and_layout_proof(tmp_path):
+    from jarvis import make_package as mp
+    from tests.deck_fixtures import write_yaml
+    made = mp.make_presentation(write_yaml(tmp_path / "in", small_deck()), tmp_path / "out")
+    assert decision_stamp.carries_proof(made.archive), "its source and layout proof go with it"
 
 def test_the_deck_given_is_not_changed(tmp_path):
     deck = small_deck()

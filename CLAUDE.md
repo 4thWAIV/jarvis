@@ -182,7 +182,7 @@ Each agent makes its own Ed25519 key pair with the Mac's `ssh-keygen`
 file in `<its config home>/jarvis/agent-keys/<session id>/` and never
 leaves it, never the Keychain or `ssh-agent`, no passphrase. JARVIS keeps
 only public keys (`agent_key_store.py` over `agent_record.py`'s documents:
-an agent's keys, rights, author proofs and steers are its one `agent`
+an agent's keys, rights, author proofs (kept from before) and steers are its one `agent`
 document, `/agents/<session id>.agent`, with its list row as `agent` and
 each key change one version's `events`; a work-item key is
 `/keys/work/<fingerprint>.workkey`; the held things and error package are
@@ -1418,12 +1418,16 @@ SVG's size read from its width and height, else its viewBox) and a story of
 about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
-`work_packages.recognise`) is for a working tool. No package goes through
-a browser on its way to Tim: make_package builds the author's source once
-(no screenshot review), from a briefing that passed its editors and
-judges before the deck was written (`briefing_prep.py`, below). Only then
-is it signed with the session's key and
-delivered unshown to his package inbox. Every unpack
+`work_packages.recognise`) is for a working tool. A deck or a page for Tim
+is a briefing, and only the package workflow makes one, from a request
+(see "Package requests"; workflow.yaml deliver `only_way_in`): the old
+fresh author (`make_package --handoff` without `--start`) writes an agent's
+or conversation's folder or an architecture document's explanation, and a
+deck or a page it writes is refused (`package_author.BRIEFING_BY_REQUEST`,
+`make_package.is_page`). No package goes through a browser on its way to
+Tim: make_package builds the author's source once (no screenshot review),
+signs it with the session's key and delivers it unshown to his package
+inbox. Every unpack
 (`server._decision_problem`) refuses a deck (`deck-data.js` and
 `scripts/decide.py`, the shared deck's, `decision_stamp.MARKS`) not signed
 by an onboarded agent's key, and makes a carried proof again from the
@@ -1447,48 +1451,15 @@ says the same).
 `python -m jarvis.decision_package` is the command's old name.
 The sender's handoff is the one form a package request takes (see
 "Package requests"), read and checked by the same code
-(`package_author.read_handoff` over `package_request.read` and `check`). The fresh author writes the briefing before any
-slide (`briefing_prep.py`): `prep.md` (does Tim care; what he knows, from
-his record; the background he lacks; his first ten questions, sourced or
-UNANSWERED; every fact scored 1-5) and `script.md` (ordered by those
-scores), or `not-for-tim.md`, which sends nothing. At most `ROUNDS` (3)
-rounds: three editors (`EDITORS`: cut, tighten, specifics; each one call
-to the author's engine, each edit held to its rule, applied and logged
-before/after in `edits.md`) then four judges (`JUDGES`: cares, decision
-ready, background, order), each a typed question through `decide(question_id,
-text, context) -> {answer, probability}` (yes/no, choice or 0-10, asked
-`ASKS` times; the probability the share that agreed; every call recorded at
-`/briefing/decisions/<id>.decision` with its input digest and the package by
-its author session); findings go back to the same author session, and a
-script that still fails is refused with them. Each ask is a juror that
-keeps its own session across the rounds (`briefing_prep.Seat`, resumed in
-its own folder): from round 2 it is shown what it said and the author's
-reply, judges first whether its earlier ask was met (`earlier_met`), and
-never fails the script for a problem that would reverse its own earlier
-ask, quoting it instead (`reverses`), which goes back to the author as an
-ask it may keep its answer to. Only then is the deck
-written, from the script alone; `prep.md`, `script.md` and `edits.md` go in
-the zip under `.jarvis/briefing/` (`briefing_prep.carry`, from
-`make_package.with_author`).
-An agent's package proves a fresh author wrote it (Tim's decision
-`receiver-check`, `author_proof.py`): make_package's fresh author
-(`package_author.py`) ends with its own `--check-only`, which prints the
-source's digest (`author_proof.MARK`); the factory puts that source in the
-zip (`.jarvis/author/`) and the signature names the claim (`author`:
-engine, author session, digest), checked first by make_package itself
-(`make_package.with_author`). `server._admit_agent_package` is the one
-admission check for an onboarded agent's signed package, on every route
-that admits one (the inbox, a held package released or looked at again,
-a zip on this Mac through `_local_package_problem`): the digest
-recomputed from the zip's own bytes, the author session's own transcript
-(Claude Code's `projects/*/<id>.jsonl` or Codex's rollout, no link
-followed, read whole, a line at a time) begun with the author prompt
-(`author_proof.PROMPT_HEAD`), not the sender, and its own check-only call
-printing exactly that digest within `WINDOW_SEC` (6 h) before arrival; one
-author session vouches for one package's bytes
-(`agent_key_store.bind_author`, migration 4), so a new revision needs a new
-author. A person's package, JARVIS's own, the same bytes already here and
-the isolated check JARVIS are not asked.
+(`package_author.read_handoff` over `package_request.read` and `check`).
+The fresh author writes its package in its first turn. The old briefing
+pipeline (its editors and judges, their wording and pass mark) is gone,
+replaced by the swarm (see "Package requests"), and so is the
+transcript-reading author proof: by construction the sender cannot write
+a briefing, since it only asks (workflow.yaml deliver, decided "proof that
+a fresh author wrote it"). A signature made with an author claim before
+still checks, and an agent's documents keep the `author_proofs` they
+recorded, which nothing reads.
 ## Package requests
 The package system's new way in (`.agents` design, workflow.yaml steps
 `request` and `record_and_start`; the steps that make the package come
@@ -1554,12 +1525,11 @@ A package's next run (`server._new_package_run`,
 a signature `Signed.by_jarvis` (JARVIS's own public key,
 `agent_keys.jarvis_public_key`, never the one the file names) as
 `_JARVIS_SIGNER`, its sender the agent `requested_by` names; the unpack
-checks take it (`_decision_problem`'s `vouched`, `_VOUCHED`), and
-`_admit_agent_package` asks no author proof of it. A relative `file` path
+checks take it (`_decision_problem`'s `vouched`, `_VOUCHED`). A relative `file` path
 is taken from the handoff file's folder (`package_request.read`). The old
 `make_package --handoff` without `--start` (the fresh author in the
-sender's process, "Work packages") reads the same one form and is what
-this replaces.
+sender's process, "Work packages") reads the same one form; this replaces
+it for every briefing, which it refuses.
 The Error state (design: deliver `error_state`): a run that cannot go on
 (a sender that does not answer within `SENDER_WAIT_SEC`, 2 hours, swept by
 `package_jobs.overdue`; a step's `Blocked`; a step that fails; a run whose
@@ -1614,7 +1584,7 @@ handoff is about) as `jarvis/work-item.md` (its pieces, notes, evidence,
 decisions and every event), the PRs and CI runs recorded against it (its
 pieces' evidence), the sending session's commands with their results and
 each turn's final message from its own transcript
-(`session_transcript.py`, the one reader the author proof shares) as
+(`session_transcript.py`) as
 `jarvis/sender-session.md`, and Tim's record on it (his messages, his
 answers, his note, his answers on its earlier packages) as `jarvis/tim.md`.
 Each row's knowledge state is set by program from where it came
@@ -1820,14 +1790,17 @@ evidence (`sender-answers/<n>.md`, n counting across the package's runs).
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
-jarvis.make_package` checks, builds and proves it (a deck laid out and
-proven by JARVIS from a judged briefing, see "Work packages"), then sends it as a message
+jarvis.make_package` checks and builds it (an agent's or conversation's
+folder, or an architecture package; a briefing is made only by the
+package workflow, see "Package requests"), then sends it as a message
 carrying it, `POST /api/messages?work=&project=&workflow=&source=`
 (`decision_package.deliver`, signed with the sending session's key; see
 "One channel"), whose route hands the bytes to `_receive_inbox_package`;
 the `packages` right is what lets a key carry one. `POST
 /api/packages/inbox` is JARVIS's own path (the tool token) and refuses an
-agent's signed request. Its sender is its
+agent's signed request, and a briefing (a deck) from anyone
+(`package_inbox_api.BRIEFING_REFUSED`, `_receive_package_zip`'s `direct`):
+only the package workflow makes one and delivers it as a message. Its sender is its
 signature's (`agent-signature.json`, `package_signature.py`;
 `server._package_signer`): the onboarded agent whose key signed it, its
 answers going to that session (`from_session`, `sender_evidence`
@@ -1835,11 +1808,9 @@ answers going to that session (`from_session`, `sender_evidence`
 running make_package on that `source`, `subagent:<name>`, shown "name
 (parent)"). One signed by a key that is not an onboarded
 agent's, or sent unsigned on a request signed by one, is held
-(`_unrecognised_key`), never unpacked, until he onboards it; one an
-onboarded agent signed without a fresh author's proof
-(`_admit_agent_package`) is held the same way, its reason in the hold and
-on the error package, released once the proof checks within
-`author_proof.RECHECK_SEC` (`_recheck_author_holds`) or dropped by his Drop
+(`_unrecognised_key`), never unpacked, until he onboards it; a hold kept
+from before with a reason of its own (an onboarded agent's package once
+held for its author's proof) is shown with that reason and offers his Drop
 (`key_error_package.DROP`, the key kept). One unsigned
 on the tool token keeps `?session=` as a claim that only the signed request
 proves (`server._package_sender`: the calling agent's own session);
@@ -3724,13 +3695,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `legacy_access.py` — The cut-over guard: old access keys accepted until
   none has been used for seven days, then never again
 - `package_signature.py` / `key_error_package.py` — A package's signature
-  (who sent it, what it vouches for, a work-item key grant, its fresh
-  author), and the error package for something held
-- `author_proof.py` — Proof that a fresh author session wrote an agent's
-  package: the source digest, the claim and the author's own transcript
-- `briefing_prep.py` — The forced briefing pipeline: the typed questions
-  (`decide`), the editors, the judges and their rounds over the author's
-  prep.md and script.md, and carrying them in the package
+  (who sent it, what it vouches for, a work-item key grant), and the error
+  package for something held
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   the one way to reach Tim (a signed message, every decision a package)
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
@@ -3866,7 +3832,7 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   with (see `docs/making-a-package.md`); `presentation.py` /
   `presentation_source.py` / `presentation_proof.py` / `layout_spec.py` /
   `picture_proof.py` compile, lay out and prove a deck without a browser;
-  `briefing_prep.py` the briefing before it; `decision_package.py` reads,
+  `decision_package.py` reads,
   expands, checks, builds and delivers the shared deck's data
 - `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
   record, a deck's questions and answers read as data, and its routes (see

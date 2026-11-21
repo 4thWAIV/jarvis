@@ -545,23 +545,16 @@ async def page_playwright(request, _chromium_for_the_session):
 def authored_package_source(monkeypatch):
     """Exercise factory rendering/delivery after authorship in existing tests.
 
-    test_package_author separately exercises the mandatory gate and both real
+    test_package_author separately exercises the fresh author and both real
     provider adapters. This fixture is opt-in, never a global author bypass:
-    the source is left as a fresh author leaves it, its receipt beside it
-    and its own transcript showing its last check, with its briefing's
-    prep, script and edits (tests/author_fixtures); what the factory asks
-    the author again is in the list this returns.
+    the given source is handed to the build as a fresh author's; what the
+    factory asks the author again is in the list this returns.
     """
     from jarvis import package_author
-    from tests.author_fixtures import authored
 
     asked: list[str] = []
 
     def prepare(handoff, engine, out, **kw):
-        try:
-            authored(kw["source"], engine or "claude")
-        except ValueError:
-            pass        # a source its own check refuses: the build says why
         if kw.get("finish"):
             import asyncio
 
@@ -571,15 +564,3 @@ def authored_package_source(monkeypatch):
         return kw["source"]
     monkeypatch.setattr(package_author, "prepare", prepare)
     return asked
-
-
-@pytest.fixture
-def briefing_passes(monkeypatch):
-    """Every editor of a briefing proposes nothing and every judge passes
-    (briefing_prep.ASK): for tests of what happens after the briefing. The
-    stand-in, with the prompts it was given, is what this returns."""
-    from jarvis import briefing_prep
-    from tests.author_fixtures import passing_judges
-    ask = passing_judges()
-    monkeypatch.setattr(briefing_prep, "ASK", ask)
-    return ask

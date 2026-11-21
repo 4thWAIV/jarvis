@@ -52,8 +52,8 @@ def deck_zip(tmp_path: Path, version: str = "1.0.0", session: str = "sess-tea") 
     raw = tmp_path / f"raw-{version}-{session}.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
     agent = onboarded_auth(session=session).agent
-    from tests.author_fixtures import sign_authored
-    sign_authored(raw, signed, agent, session, (package_signature.DECISION_CHECKED,))
+    from tests.signing_fixtures import sign_as_agent
+    sign_as_agent(raw, signed, agent, session, (package_signature.DECISION_CHECKED,))
     return signed.read_bytes()
 
 
@@ -61,9 +61,56 @@ def page_zip(version: str = "1.0.0") -> bytes:
     return make_zip({"index.html": "<p>notes</p>"}, {**PAGE, "version": version})
 
 
+def _is_deck(data: bytes) -> bool:
+    import io
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            return any(n == "deck-data.js" or n.endswith("/deck-data.js") for n in z.namelist())
+    except zipfile.BadZipFile:
+        return False
+
+
+def carry(server, data: bytes, **query) -> tuple[int, dict]:
+    """A deck into his inbox the one way left to it, carried as the package
+    workflow delivers it (server._receive_inbox_package, not `direct`):
+    (status, body) in POST /api/packages/inbox's shape."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from jarvis import package_inbox_api, packages_api
+    received = server._receive_inbox_package(
+        data, package_inbox.Sender(project=query.get("project", ""),
+                                   claimed=query.get("session", "")),
+        query.get("workflow", ""), query.get("work", ""), query.get("source", ""))
+    with ThreadPoolExecutor(1) as pool:     # its own loop, whether or not one runs here
+        arrival, package, problem = pool.submit(asyncio.run, received).result()
+    if arrival is None:
+        return 409, {"error": problem}
+    return 200, {"inbox": package_inbox_api.entry_json(arrival.entry), "arrived": arrival.fresh,
+                 "superseded": [e.id for e in arrival.superseded],
+                 "package": packages_api.describe(package)}
+
+
 def send(w, data: bytes, headers=None, **query) -> "object":
-    return w.client.post(INBOX, content=data, params=query,
-                         headers={**(headers or token()), "Content-Type": "application/zip"})
+    """A package into his inbox. A deck is a briefing, which JARVIS's own
+    path (POST /api/packages/inbox) refuses: it comes the one way left
+    (`carry`), answered in the route's shape."""
+    if headers is not None or not _is_deck(data):
+        return w.client.post(INBOX, content=data, params=query,
+                             headers={**(headers or token()), "Content-Type": "application/zip"})
+    from types import SimpleNamespace
+    status, body = carry(w.server, data, **query)
+    return SimpleNamespace(status_code=status, json=lambda: body, text=json.dumps(body))
+
+
+def test_jarvis_s_own_path_refuses_a_briefing(wired, tmp_path):
+    """A deck is a briefing: only the package workflow makes one and
+    delivers it as a message, so POST /api/packages/inbox refuses it."""
+    from jarvis import package_inbox_api
+    r = wired.client.post(INBOX, content=deck_zip(tmp_path),
+                          headers={**token(), "Content-Type": "application/zip"})
+    assert r.status_code == 409 and r.json()["error"] == package_inbox_api.BRIEFING_REFUSED
+    assert package_inbox.listing() == [], "nothing recorded"
 
 
 @pytest.fixture(autouse=True)
@@ -318,8 +365,8 @@ def presentation_zip(tmp_path) -> bytes:
     made = make_package.make_presentation(content, out)
     from tests.agent_key_fixtures import onboarded_auth
     agent = onboarded_auth(session="sess-1").agent
-    from tests.author_fixtures import sign_authored
-    sign_authored(made.archive, made.archive, agent, "sess-1")
+    from tests.signing_fixtures import sign_as_agent
+    sign_as_agent(made.archive, made.archive, agent, "sess-1")
     return made.archive.read_bytes()
 
 

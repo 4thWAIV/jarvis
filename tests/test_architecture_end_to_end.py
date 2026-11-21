@@ -1,7 +1,7 @@
 """The whole agent path, in a JARVIS of its own: an agent writes a small
 architecture YAML, validates it with its signed command, sends it with
 make_package --document, and the isolated JARVIS (isolated_jarvis.Isolated,
-admitting exactly as the live one does: signature and author proof) takes
+admitting exactly as the live one does: by its signature) takes
 it into the inbox as a message on its Work item; it opens from that message
 on a connected page, and ground by package id gives back the exact revision.
 
@@ -19,16 +19,14 @@ import threading
 import time
 import shutil
 import uuid
-import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from jarvis import (agent_keys, data_paths, language_kit as lk, package_inbox,
-                    package_signature, records, settings_service, work_store)
+                    records, settings_service, work_store)
 from tests import isolated_jarvis
-from jarvis import decision_package as dp
 from tests import architecture_author
 
 pytestmark = pytest.mark.ssh_keygen
@@ -105,16 +103,14 @@ def world(tmp_path):
             saved["codex_sessions_home"] = codex_home
     else:
         session, home = SESSION, tmp_path / "agent-home"
-        # Saved in the isolated JARVIS's Settings before it starts: its server
-        # reads the author's transcripts there, and make_package's author runs
-        # the stand-in Claude saved there.
+        # Saved in the isolated JARVIS's Settings before it starts:
+        # make_package's author runs the stand-in Claude saved there.
         saved = {"claude_config_dirs": [str(transcripts)],
                  "claude_path": str(architecture_author.install(
                      tmp_path / "bin", f"author-{uuid.uuid4().hex[:12]}"))}
         story = tmp_path / "authored-story.json"
         story.write_text(json.dumps(STORY))
-        env.update({"CLAUDE_CONFIG_DIR": str(home), "AUTHOR_TEST_CLAUDE_ROOT": str(transcripts),
-                    "AUTHOR_TEST_STORY": str(story)})
+        env.update({"CLAUDE_CONFIG_DIR": str(home), "AUTHOR_TEST_STORY": str(story)})
     keys = agent_keys.key_folder(session, home)
     private, public = agent_keys.make_pair(keys, f"jarvis-agent {session}")
     made = {}
@@ -200,15 +196,15 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     assert made.returncode == 0, made.stdout + made.stderr
     record = json.loads((out / "delivery.json").read_text())
 
-    # Admitted: in his inbox, its sender proven, its author proven (held
-    # otherwise), as a message on the document's Work item.
+    # Admitted: in his inbox, its sender proven by its signature, as a
+    # message on the document's Work item.
     with isolated_jarvis._data_dir(data):
         entry = package_inbox.get(record["inbox"])
     assert entry is not None and entry.from_session == session
     assert not entry.unproven_claim
     with isolated_jarvis._data_dir(data):
         from jarvis import agent_key_store
-        assert not agent_key_store.held(), "nothing was held for its key or its author"
+        assert not agent_key_store.held(), "nothing was held for its key"
 
     # Opened from the message carrying it, on a connected page.
     page = Page(jarvis.base)
@@ -323,22 +319,6 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
         assert json.loads(regrounded.stdout)["result"]["revision"] == checked["revision"], \
             "no architecture edit: the canonical revision is unchanged"
 
-    # The same package with an author proof naming a session that never
-    # checked it is held, not admitted: this JARVIS checks the proof.
-    with zipfile.ZipFile(record["zip"]) as z:
-        signed = json.loads(z.read(next(n for n in z.namelist()
-                                        if n.endswith(package_signature.FILE))))
-    forged = tmp_path / "forged.zip"
-    package_signature.sign(Path(record["zip"]), forged, private, public, session, (), None,
-                           {**signed["author"], "session": "author-that-never-ran"})
-    with pytest.raises(OSError):
-        dp.deliver(forged, jarvis.base, "Architecture package: forged", work=work.id,
-                   signer=(private, public))
-    with isolated_jarvis._data_dir(data):
-        from jarvis import agent_key_store
-        [held] = agent_key_store.held()
-    assert held.kind == "package" and held.session_id == session
-
     # The evidence, kept where a review asks for it (JARVIS_LANGUAGE_REVIEW_DIR):
     # the handoff, the author's own folder (receipt, source, its check's
     # output), the signed zip and what was observed.
@@ -348,17 +328,13 @@ def test_an_agent_s_architecture_document_reaches_tim_and_grounds(world, tmp_pat
     shutil.copy(handoff, keep / "handoff.json")
     shutil.copy(record["zip"], keep / Path(record["zip"]).name)
     receipt = json.loads(next((out / "author").glob("*/author-receipt.json")).read_text())
-    with zipfile.ZipFile(record["zip"]) as z:
-        claim = json.loads(z.read(next(n for n in z.namelist()
-                                       if n.endswith(package_signature.FILE))))["author"]
     (keep / "evidence.json").write_text(json.dumps({
         "engine": ENGINE, "real_author": REAL_AUTHOR,
         "delivery": record, "grounded": {k: result[k] for k in (
             "document_id", "revision", "source_revision")},
         "opened": frame["package"]["id"], "purpose": frame["package"]["purpose"],
-        "understanding": result["understanding"], "author": receipt, "author_claim": claim,
+        "understanding": result["understanding"], "author": receipt,
         "admission": {"inbox": record["inbox"], "from_session": entry.from_session,
                       "unproven_claim": entry.unproven_claim, "held_after": "none"},
         "answered_in_isolation": answered, "captures_after_sign_off": captures,
-        "approval_shown": approval_shown,
-        "held_forgery": held.what}, indent=2))
+        "approval_shown": approval_shown}, indent=2))

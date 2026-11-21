@@ -122,7 +122,8 @@ def test_the_moved_documents_read_as_the_store_reads_them(tmp_path):
                                                                    "onboarded"]
     assert [e["kind"] for e in agent_key_store.events("gone")] == ["submitted", "dropped"]
     assert [e["kind"] for e in agent_key_store.events("lost")] == ["dropped"]
-    assert agent_key_store.bind_author("claude:s1", "new") == "abc"
+    assert [p["package_sha"] for p in records.get(agent_record.agent_path("s1")).data[
+        "author_proofs"]] == ["abc"], "kept as written, read by nothing"
     assert [s["outcome"] for s in run_store.list_steers()] == ["refused", "no_session", "ran"]
     assert [h.id for h in agent_key_store.held()] == ["held-1"]
     assert agent_key_store.held()[0].detail == {"inbox": 1}
@@ -170,7 +171,6 @@ def test_the_store_s_documents_are_the_mapping_s_shape(tmp_path):
     agent_key_store.set_error_package("session:s2", "pkg", "inbox", now=3.0)
     agent_key_store.set_setting("cutover", "done", now=4.0)
     agent_key_store.count_legacy("lbl", now=5.0)
-    agent_key_store.bind_author("claude:s1", "sha", now=6.0)
     uds = records.uds()
     back = {}
     for m in agent_record.MAPPINGS:
