@@ -3515,13 +3515,16 @@ listing beside them), its file tools among them; the shell
 (`shell_tool`) stays off for every role, and a writer has the file-editing
 tool under the `ROLE_PROFILE` permission profile (reads denied everywhere
 but `:minimal` and its run folder, writes in its run folder only, no
-network). Proven 2026-11-20 with a real probe turn on Codex for every
-role, asked to run a shell command, read a file outside its tools and make
-a network call through `exec`: in a role with tools `exec` has no process,
-file or network API (`Deno`, `require`, `process`, `fetch`,
-`XMLHttpRequest` all undefined), in one without it refuses to run ("code-mode
-host is disabled"), no marker of a command, the file or the page came
-back, and only its own tool server's tools were reached.
+network). The exec probe (`codex_role_probe.py`, `JARVIS_DATA_DIR=<a
+temporary folder with its own Codex login> python -m
+jarvis.codex_role_probe`) proves it for every role: one real turn each,
+launched as it ships, asked through `exec` to run a shell command (a
+marker file), read a file outside its tools (a secret looked for in the
+reply, every app-server message and its transcript) and make a network
+call (a loopback recorder, which also stands in for JARVIS behind its tool
+server); the verdict is the program's, and a role that reaches anything
+but its own tool server's tools fails. It has not yet been run: no Codex
+login in a temporary data folder yet.
 Retrieval runs on Codex as on Claude, with the code-mode host and its own
 tool server only. On Codex
 0.171.0 the live list holds every tier's model (GPT-6.2 Astra and Sol,

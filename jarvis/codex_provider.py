@@ -290,10 +290,9 @@ def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, li
       subagent runs), no project docs, web search or file-editing tool, the
       sandbox read-only;
     - its tools: the code-mode host on, its own tool server the only one
-      added. With it on and the shell off, `exec` runs JavaScript with no
-      require, Deno, fetch or import: it reaches the configured servers'
-      tools and nothing else of the Mac (Codex's own clock and MCP resource
-      listing aside), and apply_patch, which the read-only sandbox refuses;
+      added. With it on and the shell off, `exec` is to reach the
+      configured servers' tools and nothing else of the Mac, which the exec
+      probe (codex_role_probe.py) proves for every role with a real turn;
       a role that reads files reads them with its file tools on that
       server (role_files.py), as it does on Claude;
     - a writer: the file-editing tool, under `ROLE_PROFILE`, so a write is
