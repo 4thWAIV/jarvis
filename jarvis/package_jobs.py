@@ -582,12 +582,23 @@ def rejected(job_id: str, words: str) -> dict:
         rejected={"words": words, "at": time.time()}))
 
 
+def _rejected_runs(where: list) -> list[dict]:
+    runs = sorted(_jobs(where), key=lambda d: (str(d["package"]),
+                                               int(str(d["run"]).rsplit("-", 1)[-1])))
+    return [{"package": d["package"], "run": d["run"], **d["rejected"]}
+            for d in runs if d.get("rejected")]
+
+
 def rejections(package: str) -> list[dict]:
-    """His Reject of each delivered run of a package, in run order: {run,
-    words, at}."""
-    runs = sorted(_jobs([["package", "=", package]]),
-                  key=lambda d: int(str(d["run"]).rsplit("-", 1)[-1]))
-    return [{"run": d["run"], **d["rejected"]} for d in runs if d.get("rejected")]
+    """His Reject of each delivered run of a package, in run order: {package,
+    run, words, at}."""
+    return _rejected_runs([["package", "=", package]])
+
+
+def rejections_on_work(work: str) -> list[dict]:
+    """His Reject of each delivered run of every package made for a Work
+    item, each package's in run order: {package, run, words, at}."""
+    return _rejected_runs([["work", "=", work]])
 
 
 def errored_work() -> set[str]:

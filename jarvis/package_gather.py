@@ -197,10 +197,14 @@ def _all(read: Callable[[Optional[int]], list]) -> list:
 
 
 def tim_text(work_ids: list[str]) -> str:
-    """Tim's record on these Work items: his messages on each, his answers
-    to its decisions, his note when he said it is not done, and his answers
-    on its earlier packages, his Reject words among them."""
-    from jarvis import conversation_log, package_inbox, work_store
+    """Tim's record on these Work items (workflow.yaml gather
+    gather_jarvis_material: his messages and answers on the Work item, his
+    answers on its earlier packages, his Reject words): his messages on
+    each, his answers to its decisions, his own acts on it (his review, his
+    note when he said it is not done, a hold he released, work he added),
+    his answers on every package sent for it, open or closed, with his own
+    words, and his Reject of its package runs, with his words."""
+    from jarvis import conversation_log, package_inbox, package_jobs, work_store
     parts = ["# Tim's record on this work", ""]
     for work_id in work_ids:
         item = work_store.get(work_id)
@@ -214,17 +218,29 @@ def tim_text(work_ids: list[str]) -> str:
         parts += ["### His answers to its decisions", ""] + \
             [f"- {a.key}: {a.question} His answer ({a.where}): {a.answer}" for a in answered] + \
             (["- none"] if not answered else []) + [""]
+        acts = work_store.events(work_id, kinds=set(work_store.HIS_KINDS)
+                                 - {work_store.DECISION_MADE}, limit=10_000)
+        parts += ["### His acts on it", ""] + \
+            [f"- {e.seq} {e.kind} ({e.at:.0f}): {e.summary}"
+             + (f" {json.dumps(e.detail, ensure_ascii=False)}" if e.detail else "")
+             for e in acts] + (["- none"] if not acts else []) + [""]
         if item.review_note:
             parts += ["### His note when he said it is not done yet", "", item.review_note, ""]
         parts += ["### His answers on its earlier packages", ""]
-        packages = package_inbox.for_work(work_id)
+        packages = package_inbox.every_for_work(work_id)
         for row in packages:
-            parts.append(f"- package {row.id} ({row.title}), {row.state}:")
-            for q in evidence_readers.package_questions(row):
-                if q.answer:
-                    parts.append(f"  - {q.id}: {q.question} His answer: {q.answered_id()}")
+            why = f" ({row.closed_why})" if row.closed_why else ""
+            parts.append(f"- package {row.id} ({row.title}), {row.state}{why}:")
+            answers = [q for q in evidence_readers.package_questions(row) if q.answer]
+            parts += [f"  - {q.id}: {q.question} His answer: {q.answered_id()}" for q in answers]
+            if not answers:
+                parts.append("  - nothing answered")
         if not packages:
             parts.append("- none")
+        parts += ["", "### His Reject of its package runs", ""]
+        rejected = package_jobs.rejections_on_work(work_id)
+        parts += [f"- {r['package']} {r['run']}: {r['words']}" for r in rejected] + \
+            (["- none"] if not rejected else [])
         parts.append("")
     return "\n".join(parts)
 
@@ -239,6 +255,18 @@ def rejections_text(package: str) -> str:
                      + [f"- {r['run']}: {r['words']}" for r in said] + [""])
 
 
+def tim_record(doc: dict) -> tuple[str, str]:
+    """Tim's record for a run (`jarvis/tim.md`) and its source: his record on
+    the run's Work items, his Reject of their package runs among it; with
+    no Work item, his Reject words on this package's earlier runs."""
+    from jarvis import package_jobs, work_store
+    ids = _work_ids(doc)
+    if ids:
+        return tim_text(ids), ", ".join(work_store.path_of(i) for i in ids)
+    return ("# Tim's record on this work\n\n" + rejections_text(doc["package"]),
+            package_jobs.path_of(doc))
+
+
 def refresh_tim(doc: dict) -> Row:
     """Tim's record in the package's evidence made again (`jarvis/tim.md`,
     gather_jarvis_material's), now holding his Reject words on its earlier
@@ -246,13 +274,8 @@ def refresh_tim(doc: dict) -> Row:
     so the next run reads them: its manifest row's hash and size made new,
     and indexed as it is written. The row."""
     g = Gathering(doc)
-    ids = _work_ids(doc)
-    text = tim_text(ids) if ids else "# Tim's record on this work\n"
-    text = text.rstrip("\n") + "\n\n" + rejections_text(doc["package"])
+    text, source = tim_record(doc)
     rows = [r for r in pe.read_manifest(g.place) if r.stored != pe.TIM_RECORD]
-    from jarvis import package_jobs, work_store
-    source = (", ".join(work_store.path_of(i) for i in ids) if ids
-              else package_jobs.path_of(doc))
     sha, size = g.place.write(pe.TIM_RECORD, text.encode("utf-8"))
     row = Row("tim", pe.JARVIS_TYPE, source, pe.TIM_RECORD, sha, size, origin="jarvis")
     row.knowledge_state = pe.knowledge_state(row)
@@ -342,7 +365,8 @@ def gather_jarvis_material(g: Gathering) -> None:
     else:
         g.jarvis(pe.SENDER_SESSION, text, source)
     if ids:
-        g.jarvis(pe.TIM_RECORD, tim_text(ids), ", ".join(work_store.path_of(i) for i in ids))
+        text, source = tim_record(g.doc)
+        g.jarvis(pe.TIM_RECORD, text, source)
 
 
 # ── the step ──────────────────────────────────────────────────────────────

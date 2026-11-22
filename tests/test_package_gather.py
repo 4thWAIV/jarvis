@@ -404,3 +404,39 @@ def test_knowledge_search_keeps_to_the_path_it_is_given_under():
     assert len(everywhere["hits"]) == 2
     with pytest.raises(knowledge_api.Refused):
         knowledge_api.search(ctx, "lighthouse", under="packages/../x")
+
+
+def test_tim_s_record_holds_his_answers_on_every_earlier_package_and_his_rejects(
+        tmp_path, transcript, monkeypatch):
+    """workflow.yaml gather gather_jarvis_material: "Tim's messages and
+    answers on this Work item, his answers on its earlier packages, his
+    Reject words -> evidence/jarvis/tim.md". A package he has signed off is
+    closed, and its answers are his record all the same."""
+    from jarvis import package_inbox
+    work = _work(tmp_path)
+    earlier = _job(tmp_path, work, [{"type": "content", "text": "Words."}])
+    pj.rejected(earlier["id"], "Lead with the cost.")
+    closed = {c: None for c in package_inbox.COLUMNS}
+    closed.update(id="pkg-0123456789ab", package_id="old-1.0.0-x", sha256="ab", name="old",
+                  version="1.0.0", title="The earlier plan", purpose="", runs="page",
+                  decisions_total=1, decisions_answered=1, from_project="", from_session="",
+                  from_agent="", work_id=work, state=package_inbox.CLOSED, revision=3,
+                  arrived_at=1.0, closed_at=2.0, closed_why=package_inbox.SIGNED_OFF)
+    records.update(package_inbox.path_of(closed["id"]), lambda _d: closed)
+
+    class Answered:
+        id, question = "approve-package", "Approve this package?"
+        answer = {"answer": "reject", "note": "Say what it costs first."}
+
+        def answered_id(self):
+            return f"{self.answer['answer']} (his words: {self.answer['note']})"
+    monkeypatch.setattr(evidence_readers, "package_questions",
+                        lambda row: [Answered()] if row.id == closed["id"] else [])
+    doc = _job(tmp_path, work, [{"type": "content", "text": "Words."}])
+    package_gather.gather(pj.get(doc["id"]))
+    text = (pe.place_of(doc).folder / pe.TIM_RECORD).read_text(encoding="utf-8")
+    assert "package pkg-0123456789ab (The earlier plan), closed (signed_off):" in text
+    assert "approve-package: Approve this package? His answer: reject (his words: Say what " \
+           "it costs first.)" in text
+    assert f"{earlier['package']} run-1: Lead with the cost." in text
+    assert "### His acts on it" in text

@@ -1133,6 +1133,11 @@ def for_package(package_id: str) -> list[Entry]:
                                       key=lambda d: d["arrived_at"])]
 
 
+def every_for_work(work_id: str) -> list[Entry]:
+    """Every package sent for this work item, open or closed, oldest first."""
+    return [_entry(d) for d in sorted(_scan(work_id=work_id), key=lambda d: d["arrived_at"])]
+
+
 def for_work(work_id: str) -> list[Entry]:
     """The open packages sent for this work item, oldest first."""
     return [_entry(d) for d in sorted(_open_ones(work_id=work_id),
