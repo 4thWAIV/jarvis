@@ -197,3 +197,15 @@ def test_a_rate_limited_call_pauses_every_worker_and_is_asked_again():
 
 async def _made(cls):
     return cls()
+
+
+def test_the_answers_are_shared_across_the_workers_but_never_below_a_minutes_worth():
+    room = pages.Budget(window=1_000_000, answer_most=1_000_000, expected=0.5)
+    docs = [pages.Doc(f"d{n}", [pages.Atom([f"d{n}"], 10, 20)]) for n in range(10_000)]
+    packed = pages.pack(docs, fixed=100, room=room, spread=10)
+    assert len(packed) == 10, "200,000 tokens of answer over ten workers"
+    assert all(p.answer <= 20_000 for p in packed)
+    small = [pages.Doc(f"s{n}", [pages.Atom([f"s{n}"], 10, 20)]) for n in range(50)]
+    assert len(pages.pack(small, fixed=100, room=room, spread=10)) == 1, \
+        "a thousand tokens of answer is one page: a minute's answer is the least share"
+    assert pages.share([pages.Atom([], 1, 5_000)], 10) == 5_000

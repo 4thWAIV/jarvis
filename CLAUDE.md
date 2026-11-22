@@ -1676,7 +1676,15 @@ one turn (`model_tiers.ANSWER_MOST`). The reserve is the expected sparse
 answer measured on the 2026-11-21 proof (`pages.EXPECTED_ANSWER`: 0.25
 output tokens per input token for marking, 0.5 for classification) times
 `pages.SAFETY` (2), never more than the most the page's answer can take
-(each sentence with its top 3), so pages fill toward half the window. Tokens are counted cheaply and high
+(each sentence with its top 3), so pages fill toward half the window;
+and the answers are shared across the workers that ask them
+(`pages.pack`'s `spread`, `pages.share`): no page's answer bound more
+than an even share of all of them, or one atom's, never below a minute's
+answer (`LEAST_SHARE`, at the measured `OUTPUT_PER_SEC`, 55 output tokens
+a second on Codex), since a call takes its time over its answer (the
+2026-11-21 proof: two pages filled to half the window were each answered
+with a few hundred tokens, not checked, asked again and halved, and each
+half took six minutes). Tokens are counted cheaply and high
 (`pages.tokens`, three bytes a token). Several files to a page, each given
 whole beside its parts; a file too long for one page split across pages,
 a piece ending at a section break (a heading, else a paragraph) where one

@@ -1134,8 +1134,9 @@ class _PagedRole:
         pick = first.pick
         fixed = (pages.tokens(system) + pages.tokens(fixed_material)
                  + pages.tokens(json.dumps(form)) + pages.starting_context(pick.engine))
+        parallel = model_tiers.PARALLEL.get(pick.engine, 1)
         try:
-            packed = pages.pack(docs, fixed, pages.budget(pick, self.role))
+            packed = pages.pack(docs, fixed, pages.budget(pick, self.role), spread=parallel)
         except pages.TooLarge as e:
             raise SessionFailed(f"{self.role}: {e}") from e
 
@@ -1152,7 +1153,7 @@ class _PagedRole:
         try:
             return await pages.run(
                 packed, first=first, make=lambda: self._session(system, form),
-                parallel=model_tiers.PARALLEL.get(pick.engine, 1), ask=ask_page,
+                parallel=parallel, ask=ask_page,
                 failed=lambda why: SessionFailed(f"{failed}: {why}"), report=report,
                 wait_most=wall)
         finally:

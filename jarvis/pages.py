@@ -266,20 +266,30 @@ def _cut(atoms: list[Atom], start: int, stop: int) -> int:
     return best if atoms[best].brk > NO_BREAK else stop
 
 
-def pack(docs: Sequence[Doc], fixed: int, room: Budget) -> list[Page]:
+def pack(docs: Sequence[Doc], fixed: int, room: Budget, spread: int = 1) -> list[Page]:
     """The docs, in order, packed into pages that fit `room` with `fixed`,
     the tokens every call holds (the instructions). A doc goes whole where
     it fits, on the page under way or else a new one; one too long for any
     page is split across pages, each piece ending at a section break where
-    one falls late enough, given with its context."""
+    one falls late enough, given with its context.
+
+    `spread`, the workers that ask the pages at once: the answer is what a
+    call takes its time over (measured 2026-11-21 on Codex: about 55
+    output tokens a second, so a page answering 18,000 tokens took six
+    minutes, and one asked to answer twice that gave up), so the most the
+    answers can take is shared evenly across the workers: no page's answer
+    more than its share (`share`), or one atom's where that is larger, and
+    never split below a minute's answer (LEAST_SHARE)."""
     if not room.fits(fixed, 0):
         raise TooLarge(f"the instructions alone ({fixed} tokens) do not fit half of the "
                        f"model's {room.window}-token window")
     pages: list[Page] = []
     page = Page()
+    limit = share([a for d in docs for a in d.atoms], spread)
 
     def fits(on: Page, given: int, answer: int) -> bool:
-        return room.fits(fixed + on.given + given, on.answer + answer)
+        return (on.answer + answer <= limit
+                and room.fits(fixed + on.given + given, on.answer + answer))
 
     def close() -> None:
         nonlocal page
@@ -325,6 +335,27 @@ def pack(docs: Sequence[Doc], fixed: int, room: Budget) -> list[Page]:
                 close()
     close()
     return pages
+
+
+# What a page's answer is written at, measured on Codex 2026-11-21 (the
+# proof's marking halves: 18,456 to 19,599 output tokens in 337 to 359 s),
+# and the least answer worth a page of its own: what is written in a minute.
+# Below it, splitting only sends the instructions again for nothing.
+OUTPUT_PER_SEC = 55
+LEAST_SHARE = OUTPUT_PER_SEC * 60
+
+
+def share(atoms: Sequence[Atom], spread: int) -> int:
+    """The most one page's answer may take when `spread` workers ask the
+    pages at once: an even share of every atom's answer, never less than
+    the largest one atom's or LEAST_SHARE."""
+    if not atoms:
+        return 0
+    largest = max(a.answer for a in atoms)
+    total = sum(a.answer for a in atoms)
+    if spread <= 1:
+        return max(largest, total)
+    return max(largest, min(total, LEAST_SHARE), math.ceil(total / spread))
 
 
 # ── asking the pages ──────────────────────────────────────────────────────
