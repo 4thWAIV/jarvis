@@ -607,9 +607,9 @@
   // What is recorded can take another line: the slides are fitted again.
   var refitting = 0;
   function refitSoon() {
-    if (typeof shrinkPictures !== "function") return;
+    if (typeof layOut !== "function") return;
     cancelAnimationFrame(refitting);
-    refitting = requestAnimationFrame(shrinkPictures);
+    refitting = requestAnimationFrame(layOut);
   }
 
   // ── moving between slides ─────────────────────────────────────────────
@@ -653,7 +653,7 @@
   window.addEventListener("resize", function () {
     fit();
     cancelAnimationFrame(refit);
-    refit = requestAnimationFrame(shrinkPictures);
+    refit = requestAnimationFrame(layOut);
   });
 
   // A decision slide's voting area is always in sight: its pictures give up
@@ -665,23 +665,77 @@
     return img.naturalWidth * img.naturalHeight * k * k;
   }
 
-  function cut(section) {
-    if (section.scrollHeight > section.clientHeight + 1) return true;
-    return [].slice.call(section.querySelectorAll(".option, .answer-list")).some(function (c) {
+  // Every box on a slide that can hold more than it shows: the slide, each
+  // part that clips or scrolls, and a presentation slide's title, whose box
+  // is fixed and whose words would run out of it.
+  function boxesOf(scope) {
+    return [scope].concat([].slice.call(scope.querySelectorAll("*")).filter(function (e) {
+      if (e.classList.contains("presentation-title")) return true;
+      var st = getComputedStyle(e);
+      return st.overflowX !== "visible" || st.overflowY !== "visible";
+    }));
+  }
+
+  function over(boxes) {
+    return boxes.some(function (c) {
       return c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1;
     });
   }
 
-  // The program's own fit (deck.css, "the program's own fit"): a decision
-  // slide or the answers slide that does not fit its frame is drawn
-  // tighter, one step at a time, until nothing is clipped and nothing needs
-  // scrolling; what still does not fit says so (data-fit="cut").
-  var FIT_STEPS = ["fit-1", "fit-2", "fit-3"];
+  function cut(section) { return over(boxesOf(section)); }
+
+  // The program's own fit (deck.css, "the program's own fit"; the bounds
+  // are layout-spec.json's "fit"): each slide's words drawn at the largest
+  // size at which nothing on it is clipped or needs scrolling, found by a
+  // binary search on the slide's scale (--fit) between FIT_MIN, where every
+  // word is at the 13 px floor, and FIT_MAX (1 for a slide with pictures in
+  // its flow, so they keep the room). A presentation slide's title has a
+  // scale of its own, in its own box, and its words are never drawn larger
+  // than its title. What does not fit at the floor is drawn tight and
+  // searched again; what still does not says so (data-fit="cut").
+  var FIT_MIN = 0.5, FIT_MAX = 3, FIT_STEPS = 12;
+  var BODY_UNITS = 18, HEADING_UNITS = 26;
+
+  function search(holder, boxes, hi) {
+    function fits(k) { holder.style.setProperty("--fit", String(k)); return !over(boxes); }
+    if (fits(hi)) return hi;
+    if (!fits(FIT_MIN)) return null;
+    var lo = FIT_MIN;
+    for (var i = 0; i < FIT_STEPS; i++) {
+      var mid = (lo + hi) / 2;
+      if (fits(mid)) lo = mid; else hi = mid;
+    }
+    fits(lo);
+    return lo;
+  }
+
   function fitSlide(section) {
-    FIT_STEPS.forEach(function (c) { section.classList.remove(c); });
-    var step = 0;
-    while (step < FIT_STEPS.length && cut(section)) section.classList.add(FIT_STEPS[step++]);
-    section.setAttribute("data-fit", cut(section) ? "cut" : step ? FIT_STEPS[step - 1] : "fits");
+    section.classList.remove("tight");
+    section.style.removeProperty("--fit");
+    var title = section.querySelector(".presentation-title");
+    if (title) title.style.removeProperty("--fit");
+    if (document.documentElement.classList.contains("presentation-linear")) {
+      section.setAttribute("data-fit", "linear");   // one column that scrolls: nothing to fit
+      return;
+    }
+    var pictured = section.classList.contains("fill") ||
+      (!title && !!section.querySelector(".picture img"));
+    var hi = pictured ? 1 : FIT_MAX;
+    var titleScale = title ? search(title, [title], FIT_MAX) : null;
+    var boxes = boxesOf(section).filter(function (b) { return b !== title; });
+    var scale = search(section, boxes, hi);
+    if (scale === null) {
+      section.classList.add("tight");
+      scale = search(section, boxesOf(section).filter(function (b) { return b !== title; }), hi);
+    }
+    if (scale !== null && titleScale !== null && scale * BODY_UNITS > titleScale * HEADING_UNITS) {
+      scale = titleScale * HEADING_UNITS / BODY_UNITS;
+      section.style.setProperty("--fit", String(scale));
+    }
+    section.setAttribute("data-fit", scale === null || titleScale === null && title ? "cut" :
+                         section.classList.contains("tight") ? "tight" : "fits");
+    if (scale === null) section.style.setProperty("--fit", String(FIT_MIN));
+    if (title && titleScale === null) title.style.setProperty("--fit", String(FIT_MIN));
   }
 
   // Try each way in turn and keep the one that shows the smallest picture
@@ -700,28 +754,35 @@
     box.classList.add(best);
   }
 
-  function shrinkPictures() {
-    DECISIONS.forEach(function (d) {
-      var section = views[d.id].section;
-      // Pictured options try each arrangement (picture above its words,
-      // beside them, or, for two options, one option a row) and keep the one
-      // that shows the smallest picture largest with nothing cut off.
-      var opts = section.querySelector(".options.has-pictures");
-      if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
-      var compare = section.querySelector(".compare");
-      if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
-      if (!section.classList.contains("fill")) {   // a filled slide's pictures already fit the space
-        var pics = [].slice.call(section.querySelectorAll(".picture img"));
-        var limit = 220;
-        while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {
-          limit -= 12;
-          pics.forEach(function (img) { img.style.maxHeight = limit + "px"; });
-        }
+  function shrinkPictures(section) {
+    // Pictured options try each arrangement (picture above its words,
+    // beside them, or, for two options, one option a row) and keep the one
+    // that shows the smallest picture largest with nothing cut off.
+    var opts = section.querySelector(".options.has-pictures");
+    if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
+    var compare = section.querySelector(".compare");
+    if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
+    if (!section.classList.contains("fill")) {   // a filled slide's pictures already fit the space
+      var pics = [].slice.call(section.querySelectorAll(".picture img"));
+      var limit = 220;
+      pics.forEach(function (img) { img.style.maxHeight = ""; });
+      while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {
+        limit -= 12;
+        pics.forEach(function (img) { img.style.maxHeight = limit + "px"; });
       }
+    }
+  }
+
+  // Every slide laid out for the frame as it is now: a decision's pictures
+  // arranged first (at the deck size), then every slide's words fitted.
+  function layOut() {
+    slides.forEach(function (s) {
+      var section = s.el;
+      section.style.removeProperty("--fit");
+      section.classList.remove("tight");
+      if (section.classList.contains("decision")) shrinkPictures(section);
       fitSlide(section);
     });
-    var answers = document.getElementById("answers");
-    if (answers) fitSlide(answers);
   }
 
   document.title = DECK.title || "Decisions";
@@ -730,8 +791,9 @@
   fit();
   show(0);
   render();
-  shrinkPictures();
-  window.addEventListener("load", shrinkPictures);   // once pictures have their sizes
+  layOut();
+  window.addEventListener("load", layOut);   // once pictures have their sizes
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(layOut);
   if (DECISIONS.length) loadRecorded().then(function (start) {
     if (start) { record = clean(start); render(); }
     say(inFrame ? (start ? "Read the answers recorded." : "Answers are saved in results.")

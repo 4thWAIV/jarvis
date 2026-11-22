@@ -84,3 +84,4 @@ def test_what_cannot_fit_is_measured_and_said(tmp_path):
     assert {"Decide later", "None of these"} <= parts
     [problem] = deck_fit.problems(fit)
     assert problem.startswith("Slide 3 (where) does not fit even after JARVIS's own fitting")
+    assert "Split it into two slides" in problem

@@ -1259,7 +1259,8 @@ reachable through its card, at the checker's sizes and a laptop's. For a
 deck the border is its one navigation: the shared deck
 (`examples/packages/decision-deck/`) lays every slide out to the frame's
 own width and height (`deck.css`'s deck unit `--u`, one 880th of the
-width or 640th of the height, the smaller; every word 13 to 25 px), never
+width or 640th of the height, the smaller; each slide's words at the
+largest size at which it fits, 13 to 64 px, deck.js `fitSlide`), never
 a canvas scaled into part of it, and in JARVIS's frame (`html.hosted`)
 draws no strip, Previous, Next or status of its own; it says each slide
 it shows, however it got there (`slide.shown` {opener: "#go-N"}), and the
@@ -1401,8 +1402,15 @@ theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
 named layouts from one spec (`presentation_assets/layout-spec.json`,
 `layout_spec.py`, which generates the deck's CSS; `--check` fails when they
 differ), its words in a designed system font stack (`presentation.css`:
-the system's interface font, no font shipped or served, so words are not
-measured; `decision_package.CAPS` keeps them within reason), and proves
+the system's interface font, no font shipped or served), each slide's
+words drawn at the largest size at which the slide fits its frame
+(deck.js `fitSlide`: in the page, a binary search on the slide's scale,
+`--fit`, and its title's, within layout-spec.json's `fit`, each style
+clamped between the 13 px floor and its ceiling, body 48 px, headings
+64 px; a slide with pictures in its flow kept at scale 1 for them; a slide
+not fitting at the floor drawn `tight`, else `data-fit="cut"`; run again on
+every resize; every style declared again on `.slide` and
+`.presentation-title` so the slide's own scale sizes it), and proves
 without a browser (`presentation_proof.py`) that every picture is real and
 readable from its bytes at every frame from 662 x 489 to 1600 x 900
 (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn size
@@ -1974,19 +1982,25 @@ program posts as its own turn, slide by slide, each script slide beside
 its deck slide's layout data (`presentation_proof.layout_data`, in the
 proof as `slides`: the title, each object in reading order with its slot,
 box and size in px at the smallest and largest frame, `sizes`, each word
-with its style and size, each picture's drawn size, the narration; a
-decision slide's question, context, options, reason and `say`, each word's
-size as the shared deck draws it, `presentation_proof.deck_words_px` read
-from its deck.css, and what JARVIS says on it from the story), and
-the questions (`review_turn`: does each slide say what the script says
-for it, is it visual where the script calls for it, does the narration say
-the substance, is every word readable at its size). The deck review is run by
+with its style and the range its slide's fit may draw it at
+(`text_px_range`, `layout_spec.style_range`), each picture's drawn size,
+the narration; a decision slide's question, context, options, reason and
+`say`, each word's range as the shared deck may draw it,
+`presentation_proof.deck_words_px` read from its deck.css, and what JARVIS
+says on it from the story; beside it the measured fit and the sizes drawn,
+`fit` and `drawn_px`), and the questions (`review_turn`: does each slide
+say what the script says for it, is it visual where the script calls for
+it, does the narration say the substance; is every word readable at its
+size, `deck-readable`, is the program's, `PROGRAM_QUESTIONS`, answered by
+the measure, `package_deck.readable`, the review's `program`, never a
+reviewer's concern, finding or a question for the sender, Tim
+2026-11-22). The deck review is run by
 the same owners, the same way (`package_swarm.fix_passes` with the `deck-`
 stages): Tim's reader, the context owner, the structure and decision owner
 and the editor, in parallel, each edit the deck source (`DeckSource`: each
 edit by its offsets in presentation.yaml, applied only where its old text
 is exactly there and only while the deck still builds and proves with it)
-and sign off each deck question (`DECK_CONCERNS`); what is left is merged
+and sign off each of its other questions (`DECK_CONCERNS`); what is left is merged
 into one list, the author revises the deck, and each owner re-checks its
 own items; never the author on its own deck. Passed
 (the job's `deck`: the zip, the built folder, `deck-review.json`), or after
@@ -1999,15 +2013,19 @@ frame) in headless Chromium at every frame the proof covers
 (`deck_fit.frames()`, layout_spec.frames(), 662 x 489 to 1600 x 900) and
 reads for each slide whether anything on it (words, pictures, a decision's
 options and Choose bars, Decide later, None of these, his words field and
-the recorded line) is clipped or needs scrolling (`.jarvis/fit.json`;
+the recorded line) is clipped or needs scrolling, and the size its words
+are drawn at (`drawn`: least, most and typical px, the scale chosen, how
+far down it reaches; `deck_fit.drawn_at_ends`) (`.jarvis/fit.json`;
 `package_deck.MEASURE`, faked outside the page tests). The shared deck fits
-its own decision and answers slides (deck.js `fitSlide`, deck.css "the
-program's own fit": tighter gaps, headings at the body size, shorter bars,
-never words under 13 px; `data-fit`); `tests/test_voice_page_deck_fit.py`
-holds a decision as long as the first real one at every frame. The fit is
-a fact beside each slide's layout data for the reviewers (`fit`), never a
-question for them or the sender. A slide that still does not fit does not
-build (`Problems.unfit`): told to the author, an owner's edit making one
+every slide (deck.js `fitSlide`, deck.css "the program's own fit": its
+words as large as it allows, down to the 13 px floor, then `tight`;
+`data-fit`); `tests/test_voice_page_deck_fit.py` holds a decision as long
+as the first real one at every frame and `test_voice_page_text_fit.py` a
+sparse slide's words well past the floor and a dense one's never under
+it. The fit and the sizes drawn are facts beside each slide's layout data
+for the reviewers (`fit`, `drawn_px`), never a question for them or the
+sender. A slide that does not fit with its words at the floor does not
+build (`Problems.unfit`): told to the author to split it, an owner's edit making one
 unfit not applied, and a deck JARVIS cannot make fit (or cannot measure,
 `deck_fit.Unavailable`) is the run's Error (`NOT_FIT_FIX`), never findings
 for the sender.

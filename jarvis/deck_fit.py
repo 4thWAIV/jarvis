@@ -1,20 +1,29 @@
-"""Whether every slide of a built deck fits its frame, measured by the
-program (Tim 2026-11-22, construction-drafts.md "Found on the first full
-run": the program measures every slide's fit at every frame size, gives it
-to the reviewers as fact, and fixes the layout itself, never the sender).
+"""Whether every slide of a built deck fits its frame, and the size its
+words are drawn at, measured by the program (Tim 2026-11-22,
+construction-drafts.md "Found on the first full run": the program measures
+every slide's fit at every frame size, gives it to the reviewers as fact,
+and fixes the layout itself, never the sender).
 
 How much room words take in the system font stack is only known where they
 are drawn, so the program draws the built deck as JARVIS's package frame
 does (inside a frame, `html.hosted`, the shared deck's own layout and its
-own fit, deck.js fitSlide) in headless Chromium, at every frame the layout
-proof covers (layout_spec.frames(), 662 x 489 to 1600 x 900), and reads,
-for every slide, whether anything on it is clipped or needs scrolling: its
-words, its pictures, and a decision's controls (the options and their
-Choose bars, Decide later, None of these, his words field and the line
-saying what is recorded). Nothing is looked at by a model and no
-screenshot is taken: it is a measurement, kept in the built folder as
-`.jarvis/fit.json` and given to the deck review beside each slide's layout
-data (package_deck.review_turn).
+own fit, deck.js fitSlide: each slide's words at the largest size at which
+it fits, between the 13 px floor and the ceiling) in headless Chromium, at
+every frame the layout proof covers (layout_spec.frames(), 662 x 489 to
+1600 x 900), and reads, for every slide, whether anything on it is clipped
+or needs scrolling (its words, its pictures, and a decision's controls: the
+options and their Choose bars, Decide later, None of these, his words field
+and the line saying what is recorded) and the size its words are drawn at
+(`drawn`: the least, the most and the one most of its characters are drawn
+at, the scale its fit chose and how far down the slide its words and
+pictures reach). Nothing is looked at by a model and no screenshot is
+taken: it is a measurement, kept in the built folder as `.jarvis/fit.json`
+and given to the deck review beside each slide's layout data
+(package_deck.review_turn).
+
+A slide that does not fit with its words at the floor goes back to the
+author to split (`problems`): type size and fit are the program's, never a
+reviewer's finding or a question for the sender.
 
 `measure` raises Unavailable when it cannot draw the deck (Playwright's
 Chromium missing): the deck step cannot know its fit and stops in Error
@@ -77,7 +86,29 @@ _MEASURE = r"""() => {
         if (by > 1) add(e, scrolls(own) ? "needs scrolling" : "clipped", by);
       }
     });
-    out.push({n: i + 1, id: s.dataset.sourceSlide || s.id, fit: s.getAttribute("data-fit") || "", cut});
+    // The size every word is drawn at: the smallest, the largest, and the
+    // one most of the slide's characters are drawn at; and how much of the
+    // slide's height its words and pictures reach down to.
+    const sizes = new Map();
+    let bottom = box.top;
+    s.querySelectorAll("*").forEach(e => {
+      if (!e.getClientRects().length) return;
+      for (let a = e; a && a !== s; a = a.parentElement) if (tiny(a.getBoundingClientRect())) return;
+      const chars = [...e.childNodes].filter(n => n.nodeType === 3)
+        .reduce((k, n) => k + n.textContent.replace(/\s+/g, "").length, 0);
+      const r = e.getBoundingClientRect();
+      if (chars || /^(IMG|SVG)$/i.test(e.tagName)) bottom = Math.max(bottom, Math.min(r.bottom, box.bottom));
+      if (!chars) return;
+      const px = Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10;
+      sizes.set(px, (sizes.get(px) || 0) + chars);
+    });
+    const drawn = [...sizes.keys()];
+    const most = drawn.reduce((a, b) => sizes.get(b) > sizes.get(a) ? b : a, drawn[0] || 0);
+    out.push({n: i + 1, id: s.dataset.sourceSlide || s.id, fit: s.getAttribute("data-fit") || "",
+              scale: Math.round(parseFloat(s.style.getPropertyValue("--fit")) * 1000) / 1000 || null,
+              text_px: drawn.length ? {least: Math.min(...drawn), most: Math.max(...drawn), typical: most} : null,
+              reaches: box.height ? Math.round((bottom - box.top) / box.height * 100) / 100 : 0,
+              cut});
   });
   return out;
 }"""
@@ -154,7 +185,9 @@ def measure(folder: Path, sizes: Optional[list[tuple[int, int]]] = None) -> dict
     for frame in got["seen"]:
         for s in frame["slides"]:
             one = slides.setdefault(s["id"], {"slide": s["n"], "id": s["id"], "fits": True,
-                                              "cut": []})
+                                              "cut": [], "drawn": []})
+            one["drawn"].append({"frame": frame["frame"], "text_px": s.get("text_px"),
+                                 "scale": s.get("scale"), "reaches": s.get("reaches")})
             if s["cut"]:
                 one["fits"] = False
                 one["cut"].append({"frame": frame["frame"], "fit": s["fit"],
@@ -165,12 +198,36 @@ def measure(folder: Path, sizes: Optional[list[tuple[int, int]]] = None) -> dict
             "fits": all(s["fits"] for s in ordered), "slides": ordered}
 
 
+def drawn_at_ends(slide: dict) -> dict[str, dict]:
+    """The size a slide's words are drawn at at the smallest and the largest
+    frame, as measured: {"smallest": {least, most, typical}, "largest": ...}."""
+    first, last = layout_spec.spec()["frame"]["min"], layout_spec.spec()["frame"]["max"]
+    out = {}
+    for name, frame in (("smallest", first), ("largest", last)):
+        seen = next((d for d in slide.get("drawn") or [] if d["frame"] == list(frame)), None)
+        if seen and seen.get("text_px"):
+            out[name] = seen["text_px"]
+    return out
+
+
+def _sizes_said(slide: dict) -> str:
+    first, last = layout_spec.spec()["frame"]["min"], layout_spec.spec()["frame"]["max"]
+    ends = drawn_at_ends(slide)
+    said_ = [f"at {f[0]} x {f[1]} most of its words at {t['typical']:g} px (the least "
+             f"{t['least']:g} px, the most {t['most']:g} px)"
+             for f, t in ((first, ends.get("smallest")), (last, ends.get("largest"))) if t]
+    return ("Its words are drawn as large as the slide allows: " + "; ".join(said_) + " "
+            "(measured).") if said_ else ""
+
+
 def said(slide: dict) -> str:
-    """One slide's fit in words, for the reviewers and the author."""
+    """One slide's fit and the size its words are drawn at, in words, for
+    the reviewers and the author."""
     first, last = layout_spec.spec()["frame"]["min"], layout_spec.spec()["frame"]["max"]
     if slide["fits"]:
-        return (f"Fits at every frame from {first[0]} x {first[1]} to {last[0]} x {last[1]}: "
-                f"nothing clipped, nothing to scroll (measured).")
+        return " ".join(filter(None, [
+            f"Fits at every frame from {first[0]} x {first[1]} to {last[0]} x {last[1]}: "
+            f"nothing clipped, nothing to scroll (measured).", _sizes_said(slide)]))
     worst = max(slide["cut"], key=lambda c: max(p["by_px"] for p in c["parts"]))
     parts = "; ".join(f"{p['part']!r} {p['how']} by {p['by_px']} px" for p in worst["parts"][:6])
     return (f"Does not fit at {len(slide['cut'])} frame(s), worst at {worst['frame'][0]} x "
@@ -179,8 +236,11 @@ def said(slide: dict) -> str:
 
 def problems(fit: dict) -> list[str]:
     """Each slide that does not fit, in the author's terms."""
-    return [f"Slide {s['slide']} ({s['id']}) does not fit even after JARVIS's own fitting: "
-            + said(s) + " Say it in fewer words." for s in fit["slides"] if not s["fits"]]
+    floor = layout_spec.spec()["text"]["min_px"]
+    return [f"Slide {s['slide']} ({s['id']}) does not fit even after JARVIS's own fitting, its "
+            f"words at the {floor} px floor: " + said(s) + " Split it into two slides, each "
+            f"with its share of the words (a decision's background on a content slide before "
+            f"it)." for s in fit["slides"] if not s["fits"]]
 
 
 def of_slide(fit: dict, slide_id: str) -> Optional[dict]:

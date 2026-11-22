@@ -440,3 +440,26 @@ def test_a_deck_carries_and_links_no_font(source, tmp_path):
     assert "@font-face" not in css and "-apple-system" in css
     assert not any(p.suffix in {".ttf", ".otf", ".woff", ".woff2"}
                    for p in made.package_source.rglob("*"))
+
+
+def test_the_shared_deck_fits_words_within_the_layout_spec_s_bounds():
+    """deck.js fitSlide searches each slide's scale between the bounds the
+    layout spec names ("fit"), its title and words by the spec's units, and
+    every style is declared again on each slide so the slide's own scale
+    sizes it."""
+    import re
+
+    from jarvis import decision_package, layout_spec
+    spec = layout_spec.spec()
+    js = (decision_package.BUILDER.parent / "deck.js").read_text(encoding="utf-8")
+    bounds = re.search(r"var FIT_MIN = ([\d.]+), FIT_MAX = ([\d.]+), FIT_STEPS = (\d+);", js)
+    assert bounds and [float(bounds[1]), float(bounds[2]), int(bounds[3])] == \
+        [spec["fit"]["scale_min"], spec["fit"]["scale_max"], spec["fit"]["steps"]]
+    units = re.search(r"var BODY_UNITS = (\d+), HEADING_UNITS = (\d+);", js)
+    assert [int(units[1]), int(units[2])] == [spec["styles"]["body"]["units"],
+                                              spec["styles"]["heading"]["units"]]
+    assert ":root, .slide, .presentation-title {" in layout_spec.generated_css()
+    assert layout_spec.stale() == []
+    for style in spec["styles"]:
+        low, high = layout_spec.style_range(style, layout_spec.unit((662, 489)))
+        assert low == spec["text"]["min_px"] and high > low

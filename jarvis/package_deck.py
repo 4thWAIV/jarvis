@@ -46,7 +46,8 @@ in the run's folder. A round:
                    offsets in presentation.yaml, applied by the program only
                    where its old text is exactly there and only when the
                    deck still builds and proves with it) and sign off each
-                   of the deck's questions (DECK_CONCERNS); what is left is
+                   of the deck's questions but deck-readable, the
+                   program's (DECK_CONCERNS); what is left is
                    merged by meaning into one list, the author works it, and
                    each owner re-checks its own items (package_swarm.
                    fix_passes).
@@ -54,12 +55,18 @@ in the run's folder. A round:
 Every build is measured too (deck_fit, Tim 2026-11-22): JARVIS draws the
 built deck as its package frame does, at every frame from 662 x 489 to
 1600 x 900, and reads for each slide whether anything on it is clipped or
-needs scrolling. The shared deck fits its slides itself (deck.js
-fitSlide); the fit goes to the reviewers beside each slide's layout data as
-a fact, never a question for them or the sender. A slide that still does
-not fit does not build: the author is told, an owner's edit that makes one
-unfit is not applied, and a deck JARVIS cannot make fit stops the step in
-Error (NOT_FIT_FIX), never findings for the sender.
+needs scrolling and the size its words are drawn at. The shared deck fits
+its slides itself (deck.js fitSlide): each slide's words at the largest
+size at which it fits its frame, between the 13 px floor and the ceiling.
+Type size and fit are the program's: the fit and the sizes drawn go to the
+reviewers beside each slide's layout data as facts (`drawn_px`), never a
+question for them or the sender, and whether every word is readable at its
+size (deck-readable, PROGRAM_QUESTIONS) is answered by that measure
+(`readable`, the review's `program`). A slide that does not fit with its
+words at the floor does not build: the author is told to split it, an
+owner's edit that makes one unfit is not applied, and a deck JARVIS cannot
+make fit stops the step in Error (NOT_FIT_FIX), never findings for the
+sender.
 
 The deck passes when every deck concern is signed off; after two fix passes
 without that, or a deck the author could not make build, nothing is
@@ -77,9 +84,9 @@ from typing import Callable, Optional
 
 import yaml
 
-from jarvis import (data_paths, deck_fit, decision_package as dp, make_package, package_jobs,
-                    package_evidence as pe, package_inbox, package_script, package_swarm as ps,
-                    presentation_proof, sessions, spoken_words)
+from jarvis import (data_paths, deck_fit, decision_package as dp, layout_spec, make_package,
+                    package_evidence as pe, package_inbox, package_jobs, package_script,
+                    package_swarm as ps, presentation_proof, sessions, spoken_words)
 from jarvis.presentation_schema import HIS_WORDS
 
 DECK = "deck"
@@ -105,11 +112,20 @@ DECK_QUESTIONS = (
     ("deck-readable", "Is every word on the slide readable at the size the layout data gives "
                       "it?"),
 )
+# Type size and fit are the program's (Tim 2026-11-22): whether every word
+# is readable at its size is answered by JARVIS's own measure of the built
+# deck (deck_fit: each slide's words drawn at the largest size at which it
+# fits its frame, never under the 13 px floor, nothing clipped or to
+# scroll), never signed off by a reviewer, never a finding or a question
+# for the sender. A slide that does not fit with its words at the floor
+# does not build and goes back to the author to split.
+PROGRAM_QUESTIONS = ("deck-readable",)
 # The deck review is run by the same owners, the same way (construction-
 # drafts.md "Cooperative swarm"): each owner and the editor signs off each
-# of the deck's questions.
+# of the deck's other questions.
 DECK_CONCERNS = tuple(sessions.Concern(f"{qid}:{owner}", asks, owner)
-                      for qid, asks in DECK_QUESTIONS for owner in ps.FIXERS)
+                      for qid, asks in DECK_QUESTIONS if qid not in PROGRAM_QUESTIONS
+                      for owner in ps.FIXERS)
 DECK_IDS = tuple(c.id for c in DECK_CONCERNS)
 
 
@@ -334,14 +350,18 @@ def review_turn(run: ps.Run, built: Built) -> str:
         "passed script beside the layout data JARVIS computed for its deck slide as it compiled "
         "and proved it (its text and pictures with their positions and sizes at the smallest "
         "and the largest frame, in deck units on the 880 x 640 canvas and in pixels) and its "
-        "narration, and its fit: JARVIS drew every slide at every frame from 662 x 489 to "
-        "1600 x 900 and measured that nothing on it, words, pictures or a decision's controls, "
-        "is clipped or needs scrolling. Fit is the program's to measure and to fix, a fact "
-        "here: it is not for the review or the sender. No screenshots. Compare each slide "
-        "with the script.",
+        "narration, and its fit and the size its words are drawn at: JARVIS drew every slide "
+        "at every frame from 662 x 489 to 1600 x 900, drawing each slide's words at the "
+        "largest size at which the slide fits, never under the 13 px floor, and measured that "
+        "nothing on it, words, pictures or a decision's controls, is clipped or needs "
+        "scrolling, and the size its words are drawn at (drawn_px). Type size and fit are the "
+        "program's to measure and to fix, facts here: they are not for the review or the "
+        "sender, and whether every word is readable at its size is answered by that measure. "
+        "No screenshots. Compare each slide with the script.",
         slides,
         "The deck's questions, by id:\n" + "\n".join(
-            sessions._tag("question", asks, id=qid) for qid, asks in DECK_QUESTIONS)])
+            sessions._tag("question", asks, id=qid) for qid, asks in DECK_QUESTIONS
+            if qid not in PROGRAM_QUESTIONS)])
 
 
 def _with_fit(layout: Optional[dict], fit: dict, slide_id: str) -> Optional[dict]:
@@ -349,7 +369,24 @@ def _with_fit(layout: Optional[dict], fit: dict, slide_id: str) -> Optional[dict
     measured = deck_fit.of_slide(fit, slide_id)
     if layout is None or measured is None:
         return layout
-    return {**layout, "fit": {"fits": measured["fits"], "said": deck_fit.said(measured)}}
+    return {**layout, "fit": {"fits": measured["fits"], "said": deck_fit.said(measured)},
+            "drawn_px": deck_fit.drawn_at_ends(measured)}
+
+
+def readable(fit: dict) -> dict:
+    """The program's answer to whether every word is readable at its size
+    (PROGRAM_QUESTIONS): the build's measure, each slide's words drawn at
+    the largest size at which it fits, at the floor at least."""
+    floor = layout_spec.spec()["text"]["min_px"]
+    least = [t["least"] for s in fit.get("slides") or [] for d in s.get("drawn") or []
+             if (t := d.get("text_px"))]
+    ok = bool(fit.get("fits")) and all(px >= floor for px in least)
+    return {"question": "deck-readable", "by": PROGRAM, "state": "resolved" if ok else "not_yet",
+            "reason": (f"Measured: every slide fits its frame at every frame, its words drawn "
+                       f"as large as it allows, the smallest word {min(least):g} px, never "
+                       f"under the {floor} px floor." if ok and least else
+                       "Measured: " + " ".join(deck_fit.problems(fit)) if not ok else
+                       "Measured: every slide fits its frame at every frame.")}
 
 
 class DeckSource:
@@ -488,11 +525,12 @@ def deck(doc: dict) -> Optional[str]:
         raise package_jobs.Blocked(
             DECK, "JARVIS could not make the deck fit its frame: "
                   + " ".join(state.get("problems") or []),
-            "JARVIS laid each slide out with its own fit (smaller gaps, headings at the body "
-            "size, shorter bars) and measured it at every frame from 662 x 489 to 1600 x 900; "
-            "the author was told and revised it.", NOT_FIT_FIX)
+            "JARVIS laid each slide out with its own fit (its words down to the 13 px floor, "
+            "then smaller gaps and shorter bars) and measured it at every frame from 662 x 489 "
+            "to 1600 x 900; the author was told to split it and revised it.", NOT_FIT_FIX)
     passed = outcome["result"] == "passed" and built is not None
     result = {**outcome["swarm"], "result": "passed" if passed else "not passed",
+              "program": [readable(built.fit)] if built is not None else [],
               "findings": [] if passed else (outcome["findings"] or _findings_of_build(
                   state.get("problems") or [])),
               "deck_passes": flow["pass"], "times": kept.get("times") or []}

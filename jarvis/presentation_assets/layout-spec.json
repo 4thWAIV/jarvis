@@ -2,12 +2,14 @@
   "about": "JARVIS's one layout spec for every deck it draws. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
   "frame": {"min": [662, 489], "max": [1600, 900]},
   "unit": {"width": 880, "height": 640},
-  "text": {"min_px": 13, "max_px": 25},
+  "text": {"min_px": 13, "max_px": 64},
   "styles": {
-    "body": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35},
-    "heading": {"units": 26, "min_px": 13, "max_px": 25, "line": 1.2},
-    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35}
+    "body": {"units": 18, "min_px": 13, "max_px": 48, "line": 1.35},
+    "heading": {"units": 26, "min_px": 13, "max_px": 64, "line": 1.2},
+    "cell": {"units": 18, "min_px": 13, "max_px": 48, "line": 1.35}
   },
+  "fit": {"about": "Each slide's words are drawn at the largest size at which its content fits its frame: one scale for the slide's words (and one for its title), found in the page by a binary search between scale_min and scale_max (deck.js fitSlide), each style then clamped to its min_px and max_px. A slide with pictures in its flow never grows its words past scale 1, so its pictures keep the room.",
+          "scale_min": 0.5, "scale_max": 3, "steps": 12},
   "control": {"min_px": 32},
   "picture": {"min_px": 60, "stretch_max": 2},
   "slide": {"width": 824, "gap": 8},

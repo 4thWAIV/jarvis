@@ -133,16 +133,28 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM
               and "built and proven" in m["text"]]
-    assert all(f'<question id="{qid}">' in turn["text"] for qid, _ in pd.DECK_QUESTIONS)
     assert [qid for qid, _ in pd.DECK_QUESTIONS] == ["deck-says", "deck-visual",
                                                      "deck-narration", "deck-readable"]
+    # Type size and fit are the program's: deck-readable is answered by its
+    # measure, never asked of a reviewer, and the sizes drawn are facts.
+    assert pd.PROGRAM_QUESTIONS == ("deck-readable",)
+    assert all(f'<question id="{qid}">' in turn["text"] for qid, _ in pd.DECK_QUESTIONS
+               if qid != "deck-readable")
+    assert '<question id="deck-readable">' not in turn["text"]
+    assert "Type size and fit are the program's" in turn["text"]
+    [answered] = review["program"]
+    assert answered["question"] == "deck-readable" and answered["state"] == "resolved"
+    assert "the smallest word 18 px" in answered["reason"]
     slides = turn["text"].split('<slide id="')[1:]
     assert [s.split('"')[0] for s in slides] == ["opening", "what-changed", "where"]
     assert '<script file="script.yaml">id: opening' in slides[0]
     layout = [json.loads(s.split('<layout file=".jarvis/layout-proof.json">')[1]
                          .split("</layout>")[0]) for s in slides]
     opening = layout[0]
-    assert opening["layout"] == "opening" and opening["title_px"]["smallest"] >= 13
+    assert opening["layout"] == "opening" and opening["title_px_range"]["smallest"][0] >= 13
+    assert opening["title_px_range"]["largest"][1] == 64
+    assert opening["drawn_px"]["smallest"] == {"least": 18.0, "most": 26.0, "typical": 18.0}
+    assert "most of its words at 18 px" in opening["fit"]["said"]
     words = opening["objects"][0]
     assert words["size_px"]["smallest"][0] > 0 and words["size_px"]["largest"][0] > \
         words["size_px"]["smallest"][0]
@@ -154,8 +166,9 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
         "Where do we eat on Friday?"
     # A decision slide's words are sized as the shared deck draws them, and
     # what JARVIS says on it is there too (deck_review needs both).
-    assert layout[-1]["text_px"]["question"] == {"smallest": 19.6, "largest": 25.0}
-    assert layout[-1]["text_px"]["says"]["smallest"] >= 13
+    assert layout[-1]["text_px_range"]["question"] == {"smallest": [13.0, 58.7],
+                                                        "largest": [18.3, 64.0]}
+    assert layout[-1]["text_px_range"]["says"]["smallest"][0] >= 13
     assert layout[-1]["narration"][0]["say"] == "Decision 1 of 1: Where do we eat on Friday?"
     # The same owners and the editor reviewed it in parallel, each signing
     # off each of the deck's questions; the author never on its own deck.
@@ -163,12 +176,13 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     assert after[:4] == ["tims_reader", "context_owner", "structure_owner", "editor"]
     signed = {(s["concern"], s["owner"]) for s in review["signoffs"]
               if s["stage"] == "deck-pass-1"}
-    assert signed == {(f"{qid}:{o}", o) for qid, _ in pd.DECK_QUESTIONS for o in ps.FIXERS}
+    assert signed == {(f"{qid}:{o}", o) for qid, _ in pd.DECK_QUESTIONS for o in ps.FIXERS
+                      if qid not in pd.PROGRAM_QUESTIONS}
     # The built deck is proven, carries his vote and the layout data.
     folder = Path(job["deck"]["folder"])
     proof = json.loads((folder / presentation_proof.PROOF_FILE).read_text())
     assert proof["proven"] and proof["slides"] == [
-        {k: v for k, v in one.items() if k != "fit"} for one in layout]
+        {k: v for k, v in one.items() if k not in ("fit", "drawn_px")} for one in layout]
     assert json.loads((folder / "package.json").read_text())["vote"] == "approve-package"
 
 
@@ -268,12 +282,17 @@ def test_each_slide_s_fit_is_a_fact_for_the_reviewers(marked, deck_plan):
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM
               and "built and proven" in m["text"]]
-    assert "Fit is the program's to measure and to fix" in turn["text"]
+    assert "Type size and fit are the program's to measure and to fix" in turn["text"]
     layout = [json.loads(s.split('<layout file=".jarvis/layout-proof.json">')[1]
                          .split("</layout>")[0]) for s in turn["text"].split('<slide id="')[1:]]
     assert all(one["fit"] == {"fits": True, "said": "Fits at every frame from 662 x 489 to "
-                              "1600 x 900: nothing clipped, nothing to scroll (measured)."}
+                              "1600 x 900: nothing clipped, nothing to scroll (measured). Its "
+                              "words are drawn as large as the slide allows: at 662 x 489 most "
+                              "of its words at 18 px (the least 18 px, the most 26 px); at "
+                              "1600 x 900 most of its words at 18 px (the least 18 px, the most "
+                              "26 px) (measured)."}
                for one in layout)
+    assert all(set(one["drawn_px"]) == {"smallest", "largest"} for one in layout)
     assert Path(pj.get(doc["id"])["deck"]["fit"]).is_file()
 
 
@@ -288,6 +307,7 @@ def test_a_slide_that_does_not_fit_goes_back_to_the_author_never_the_sender(
     said = _said_on_the_deck(review)
     assert "does not fit even after JARVIS's own fitting" in said[0]
     assert "'Decide later' clipped by 11 px" in said[0]
+    assert "Split it into two slides" in said[0], "the author splits what cannot fit"
     assert pj.get(doc["id"])["rounds"] == []
 
 

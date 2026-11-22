@@ -339,8 +339,9 @@ height at any size and shape: no fixed canvas is scaled into part of it.
 Its lengths are in deck units, one 880th of the frame's width or one 640th
 of its height, whichever is smaller, so a slide that fits one frame fits
 every frame, and a wider frame gives its pictures and words the extra room
-rather than a margin. Every word is 13 to 25 px (body text 13.5 px in a
-662 × 489 frame, 16.5 px in 809 × 589, 21 px at 1600 × 900). So a
+rather than a margin. Each slide's words are drawn at the largest size at
+which the slide fits its frame, never under 13 px (body text at most 48 px;
+a sparse slide's words large, a dense one's at the floor). So a
 decision slide shows its question, the recommendation and its reason, each
 option with its Choose button, Decide later, None of these, a words box and
 the recorded answer without scrolling, at the centre frame sizes (809 ×

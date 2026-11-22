@@ -141,7 +141,11 @@ def fitting_every_frame(folder: Path) -> dict:
     decks in Chromium themselves."""
     from jarvis import deck_fit, presentation_proof
     proof = json.loads((Path(folder) / presentation_proof.PROOF_FILE).read_text())
-    slides = [{"slide": s["slide"], "id": s["id"], "fits": True, "cut": []}
+    ends = [list(f) for f in (deck_fit.frames()[0], deck_fit.frames()[-1])]
+    slides = [{"slide": s["slide"], "id": s["id"], "fits": True, "cut": [],
+               "drawn": [{"frame": f, "scale": 1.5, "reaches": 0.8,
+                          "text_px": {"least": 18.0, "most": 26.0, "typical": 18.0}}
+                         for f in ends]}
               for s in proof.get("slides") or []]
     return {"version": deck_fit.VERSION, "frames": [list(f) for f in deck_fit.frames()],
             "fits": True, "slides": slides}

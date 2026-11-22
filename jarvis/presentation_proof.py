@@ -12,20 +12,25 @@ what can be computed is proven here:
   actions, each waiting slide's question) is in the target index or one of
   the shared deck's own selectors.
 - Words' size. Every text style a deck draws in (layout_spec styles) is
-  at least the text floor at the smallest and the largest frame.
+  at least the text floor at the smallest and the largest frame, at the
+  least the slide's fit may scale it to.
 - Templates. The renderer files in the built folder are byte for byte
   JARVIS's own (`template_hashes`), so no package carries a changed
   renderer.
 
 Words are drawn in a system font stack, so how much room they take is not
-computed: the character caps (decision_package.CAPS) keep a slide's words
-within reason.
+computed here: each slide's words are drawn at the largest size at which
+the slide fits its frame (deck.js fitSlide, within layout-spec.json's
+"fit"), so the proof records the range each style may be drawn in
+(`text_px_range`), and the size drawn is measured where it is drawn
+(deck_fit, `drawn` on each slide of .jarvis/fit.json).
 
 `record` is the proof, written as .jarvis/layout-proof.json in the
 built package; each `Failure` is said in the author's terms. It carries
 the layout data (`layout_data`): each slide as JARVIS lays it out, its
 title, its objects in reading order with their slot, box and size at the
-smallest and largest frame, each word with its style and size there, each
+smallest and largest frame, each word with its style and the range of sizes
+its slide's fit may draw it at there, each
 picture's drawn size there, and its narration. The deck review of a
 package run reads it beside the passed script, with no browser
 (workflow.yaml deck deck_review).
@@ -67,19 +72,23 @@ def sizes() -> dict[str, tuple[float, float]]:
     return {"smallest": tuple(frame["min"]), "largest": tuple(frame["max"])}
 
 
-def _style_px(style: str) -> dict[str, float]:
-    return {name: round(layout_spec.style_px(style, layout_spec.unit(frame)), 1)
+def _style_px(style: str) -> dict[str, list[float]]:
+    """The least and the most a style may be drawn at at both sizes: the
+    slide's fit (deck.js fitSlide) chooses within it, and deck_fit measures
+    what it chose."""
+    return {name: [round(px, 1) for px in layout_spec.style_range(style, layout_spec.unit(frame))]
             for name, frame in sizes().items()}
 
 
 def prove_text() -> list[Failure]:
-    """Every text style at least the text floor at both sizes."""
+    """Every text style at least the text floor at both sizes, at the least
+    the slide's fit may scale it to."""
     floor = layout_spec.spec()["text"]["min_px"]
     return [Failure(style, frame, f"Words in the {style} style are drawn at {px:g} px at "
                                   f"{frame[0]:g} x {frame[1]:g}, under {floor} px.")
             for style in layout_spec.spec()["styles"]
             for name, frame in sizes().items()
-            if (px := layout_spec.style_px(style, layout_spec.unit(frame))) < floor]
+            if (px := layout_spec.style_range(style, layout_spec.unit(frame))[0]) < floor]
 
 
 def prove_pictures(source, pictures: dict[str, picture_proof.Picture]) -> list[Failure]:
@@ -169,7 +178,7 @@ def _object_layout(obj, box, pictures: dict) -> dict:
            "size_px": _box_px(box)}
     if isinstance(obj, TextObject):
         out["paragraphs"] = [{"id": p.id, "role": p.role, "style": _paragraph_style(p.role),
-                              "text_px": _style_px(_paragraph_style(p.role)),
+                              "text_px_range": _style_px(_paragraph_style(p.role)),
                               "runs": [{"id": r.id, "text": r.text, "emphasis": r.emphasis}
                                        for r in p.runs]} for p in obj.paragraphs]
     elif isinstance(obj, ImageObject):
@@ -179,7 +188,7 @@ def _object_layout(obj, box, pictures: dict) -> dict:
                        picture, layout_spec.frame_box(box, frame))]
                        for name, frame in sizes().items()})
     elif isinstance(obj, TableObject):
-        out.update(alt=obj.alt, style="cell", text_px=_style_px("cell"), head=obj.head,
+        out.update(alt=obj.alt, style="cell", text_px_range=_style_px("cell"), head=obj.head,
                    rows=[{"id": r.id, "cells": r.cells} for r in obj.rows])
     elif isinstance(obj, BarObject):
         out.update(alt=obj.alt, units=obj.units, domain=obj.domain,
@@ -196,20 +205,24 @@ def _object_layout(obj, box, pictures: dict) -> dict:
 DECK_CSS = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "deck.css"
 DECISION_WORDS = {"question": "h2", "option_name": ".option h3", "context": "--body",
                   "reason": "--body", "says": "--body"}
-_CLAMP = r"\s*clamp\(([\d.]+)px,\s*calc\(([\d.]+) \* var\(--u\)\),\s*([\d.]+)px\)"
+_CLAMP = (r"\s*clamp\(([\d.]+)px,\s*calc\(([\d.]+) \* var\(--u\) \* var\(--fit, 1\)\),"
+          r"\s*([\d.]+)px\)")
 
 
-def deck_words_px(rule: str) -> dict[str, float]:
-    """The px size at the smallest and the largest frame of the words a
-    deck.css rule sizes (a selector's font-size, or a custom property), as
-    the shared deck draws them: clamp(min, units x the deck unit, max)."""
+def deck_words_px(rule: str) -> dict[str, list[float]]:
+    """The least and the most px size at the smallest and the largest frame
+    of the words a deck.css rule sizes (a selector's font-size, or a custom
+    property), as the shared deck may draw them: clamp(min, units x the deck
+    unit x the slide's fit, max), the fit within layout-spec.json's."""
     css = DECK_CSS.read_text(encoding="utf-8")
     found = (re.search(re.escape(rule) + r":" + _CLAMP, css) if rule.startswith("--") else
              re.search(r"(?m)^" + re.escape(rule) + r"\s*\{[^}]*?font-size:" + _CLAMP, css))
     if found is None:
         raise ValueError(f"deck.css sizes no words by {rule!r}")
     low, units, high = (float(g) for g in found.groups())
-    return {name: round(min(max(units * layout_spec.unit(frame), low), high), 1)
+    fit = layout_spec.spec()["fit"]
+    return {name: [round(min(max(units * layout_spec.unit(frame) * k, low), high), 1)
+                   for k in (fit["scale_min"], fit["scale_max"])]
             for name, frame in sizes().items()}
 
 
@@ -225,12 +238,12 @@ def _story_of(story: dict | None, decision: str) -> list[dict]:
 def layout_data(source, story: dict | None = None) -> list[dict]:
     """Each slide as JARVIS lays it out (layout_spec), worked out from the
     source, its pictures and the spec alone: a content slide's title with
-    its size, its layout, its objects in reading order (each with its slot,
+    the range of its size, its layout, its objects in reading order (each with its slot,
     its box in deck units and its size in px at both sizes; a text's words
-    with their style and size; a picture's own and drawn size; a table's
+    with their style and the range of their size; a picture's own and drawn size; a table's
     cells; a bar's values) and its narration; a decision's question,
-    options and recommendation, the size of each of its words as the shared
-    deck draws them (`deck_words_px`) and, given the deck's `story`, what
+    options and recommendation, the range of sizes the shared deck may draw
+    each of its words at (`deck_words_px`) and, given the deck's `story`, what
     JARVIS says on its slide."""
     decisions = {d.id: d for d in source.document.decisions}
     out = []
@@ -242,14 +255,14 @@ def layout_data(source, story: dict | None = None) -> list[dict]:
                         "options": [{"id": o.id, "name": o.name, "says": o.says,
                                      "picture": o.picture} for o in d.options],
                         "recommended": d.recommended, "reason": d.reason, "say": d.say,
-                        "text_px": {k: deck_words_px(rule)
+                        "text_px_range": {k: deck_words_px(rule)
                                     for k, rule in DECISION_WORDS.items()},
                         "narration": _story_of(story, d.id)})
             continue
         boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
         out.append({"slide": n, "id": slide.id, "type": "content", "title": slide.title,
                     "title_box": list(layout_spec.spec()["title"]),
-                    "title_px": _style_px("heading"),
+                    "title_px_range": _style_px("heading"),
                     "title_size_px": _box_px(layout_spec.spec()["title"]),
                     "layout": slide.layout,
                     "objects": [_object_layout(obj, boxes[obj.slot], source.pictures)

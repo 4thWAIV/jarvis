@@ -46,10 +46,18 @@ def corners() -> list[tuple[int, int]]:
     return [(w0, h0), (w0, h1), (w1, h0), (w1, h1)]
 
 
-def style_px(style: str, u: float) -> float:
-    """A text style's size in px at deck unit `u`: its units, clamped."""
+def style_px(style: str, u: float, scale: float = 1.0) -> float:
+    """A text style's size in px at deck unit `u` and the slide's fit
+    `scale`: its units times both, clamped to its floor and ceiling."""
     s = spec()["styles"][style]
-    return min(max(s["units"] * u, s["min_px"]), s["max_px"])
+    return min(max(s["units"] * u * scale, s["min_px"]), s["max_px"])
+
+
+def style_range(style: str, u: float) -> tuple[float, float]:
+    """The least and the most a text style can be drawn at at deck unit
+    `u`, whatever the slide's fit (the page chooses within it)."""
+    fit = spec()["fit"]
+    return style_px(style, u, fit["scale_min"]), style_px(style, u, fit["scale_max"])
 
 
 def picture_box(role: str, count: int = 1) -> tuple[float, float]:
@@ -133,10 +141,12 @@ def frame_box(box, frame: tuple[float, float]) -> tuple[float, float]:
 
 def generated_css() -> str:
     s = spec()
-    lines = [GENERATED_BEGIN, ":root {"]
+    # Every style is declared again on each slide and its title, so the
+    # slide's own fit (--fit, set by deck.js fitSlide) sizes its words.
+    lines = [GENERATED_BEGIN, ":root, .slide, .presentation-title {"]
     for name, style in s["styles"].items():
-        lines.append(f"  --deck-{name}: clamp({style['min_px']}px, {_length(style['units'])}, "
-                     f"{style['max_px']}px);")
+        lines.append(f"  --deck-{name}: clamp({style['min_px']}px, calc({style['units']:g} * "
+                     f"var(--u) * var(--fit, 1)), {style['max_px']}px);")
         lines.append(f"  --deck-{name}-line: {style['line']:g};")
     lines += ["}",
               ".presentation-canvas { position: absolute; inset: 0; }",

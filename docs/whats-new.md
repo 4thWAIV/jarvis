@@ -2,6 +2,20 @@
 
 Updated 2026-11-17. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## A slide's words are as large as the slide allows
+
+Every slide of a deck now draws its words at the largest size at which the
+slide still fits its frame, measured in the page and worked out again
+whenever the frame changes: a slide with two lines of text fills its space
+with large words, and a dense one comes down to the 13 px floor, never
+under it, nothing cut off. A slide with pictures among its words keeps the
+words at the deck size so the pictures have the room. The size each
+slide's words are drawn at is measured with its fit and given to the
+deck's reviewers as a fact: type size and fit are JARVIS's own to fix,
+never a question sent back to the agent that asked for the package, and
+a slide that cannot fit even at the floor goes back to the author to be
+split in two.
+
 ## No more word counts on what agents write you
 
 JARVIS no longer refuses a package for the length of a title, a question,
