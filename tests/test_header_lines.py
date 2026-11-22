@@ -551,6 +551,23 @@ EXEMPT = {
         "the sender as data; what it writes into the swarm's conversation is the program's fixed "
         "words, the run's own paths and the deck's layout data, a turn between role sessions, "
         "never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_swarm.go": (
+        "the swarm step's own flow: in a revision it reads the run's own revision record (the "
+        "run id before, who said what is wrong, the slide ids that changed) to say the program's "
+        "fixed words, those ids and the slides kept into the package swarm's own conversation "
+        "between role sessions and to keep what was redone on the job record; never a brain "
+        "header, never said. Driven by tests/test_package_resume.py"),
+    "package_deck.go": (
+        "the deck step's own flow: in a revision it reads the run's own revision record (the run "
+        "id before, the slide ids that changed) to say the program's fixed words and those ids "
+        "into the package swarm's own conversation between role sessions and to keep what was "
+        "redone on the job record; never a brain header, never said. Driven by "
+        "tests/test_package_resume.py"),
+    "package_resume.revise": (
+        "it copies the run before's work into the next run's folder and says, as JARVIS's own "
+        "turn in the package's role conversation, which run it revises, then the sender's words "
+        "of what is wrong in their own tagged element or Tim's Reject words as his, word for "
+        "word; never a brain header, never said. Driven by tests/test_package_resume.py"),
     "package_deck.review_turn": (
         "the deck review's program turn in the package swarm's own conversation between role "
         "sessions: each script slide and its deck slide's layout data inside its own <slide>, "
@@ -592,8 +609,10 @@ EXEMPT = {
         "tests/test_package_jobs.py"),
     "server._rejected_starts_new_run": (
         "his Reject words on a package go onto the run's record and into Tim's record in the "
-        "package's evidence (read by the role sessions as evidence, never a brain header); the "
-        "log line names only JARVIS's own ids. Driven by tests/test_package_jobs.py"),
+        "package's evidence (read by the role sessions as evidence, never a brain header), and "
+        "into the next run's swarm conversation as his revision (read by the role sessions, "
+        "never a brain header); the log line names only JARVIS's own ids. Driven by "
+        "tests/test_package_jobs.py"),
     "work_research.refresh": (
         "it writes a Work item's research files from what was looked up; never a brain header, never said"),
     "package_author.author": (

@@ -68,6 +68,17 @@ owner's edit that makes one unfit is not applied, and a deck JARVIS cannot
 make fit stops the step in Error (NOT_FIT_FIX), never findings for the
 sender.
 
+A revision (package_resume.revise: the sender said what is wrong at its
+check, or Tim rejected the package; Tim 2026-11-22, never throw away what
+worked) starts the deck step at `deck-revise` with the run before's deck
+source kept: the author revises only the deck slides whose script slide
+changed and what the words name (`revise_deck_note`); the program builds
+and proves the whole deck, finds which deck slides differ from the source
+before (package_resume.changed_slides), and the review turn and the fix
+passes cover only those and the slides whose script changed
+(`flow["slides"]`); the rest of the deck source stays as it was. The job
+records what was redone (package_resume.record "deck").
+
 The deck passes when every deck concern is signed off; after two fix passes
 without that, or a deck the author could not make build, nothing is
 delivered: the sender is sent what is left (package_jobs.failed_swarm) and
@@ -85,8 +96,9 @@ from typing import Callable, Optional
 import yaml
 
 from jarvis import (data_paths, deck_fit, decision_package as dp, layout_spec, make_package,
-                    package_evidence as pe, package_inbox, package_jobs, package_script,
-                    package_swarm as ps, presentation_proof, sessions, spoken_words)
+                    package_evidence as pe, package_inbox, package_jobs, package_resume,
+                    package_script, package_swarm as ps, presentation_proof, sessions,
+                    spoken_words)
 from jarvis.presentation_schema import HIS_WORDS
 
 DECK = "deck"
@@ -183,6 +195,20 @@ def write_note(run: ps.Run) -> str:
 def revise_note(run: ps.Run) -> str:
     return (f"Revise the deck in {source_of(run)}, or answer each point raised. Say what you "
             f"changed and why.")
+
+
+def revise_deck_note(run: ps.Run, rev: dict, script_changed: list[str]) -> str:
+    """The author's words for a revision's deck: the deck source the run
+    before made stands; only the slides the revision touches change."""
+    touched = ", ".join(script_changed) or "none"
+    return "\n\n".join([
+        f"Revise the deck in {source_of(run)} for this revision of {rev.get('run')}: the deck "
+        f"source there is the one {rev.get('run')} made. Change only the deck slides whose "
+        f"script slide changed (the script changed on: {touched}) and what "
+        f"{ps._who(rev)}'s words, above, name about the deck; every other slide stays exactly "
+        f"as it is. Each script slide is still one deck slide, in the same order and with the "
+        f"same id. Say which slides you changed.",
+        sessions._tag("script", ps._read(run.script), file=ps.SCRIPT)])
 
 
 def _findings_of_build(problems: list[str]) -> list[dict]:
@@ -332,11 +358,14 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
 
 # ── the review ────────────────────────────────────────────────────────────
 
-def review_turn(run: ps.Run, built: Built) -> str:
+def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> str:
     """The program's own turn in the conversation: slide by slide, each
     slide of the passed script beside the layout data of its deck slide,
-    then the questions (workflow.yaml deck deck_review how)."""
-    script = package_script.read(run.script) or {}
+    then the questions (workflow.yaml deck deck_review how). With `only` (a
+    revision), only those slides."""
+    script = dict(package_script.read(run.script) or {})
+    if only:
+        script["slides"] = [s for s in script.get("slides") or [] if s.get("id") in only]
     layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     slides = "\n".join(sessions._tag("slide", "\n".join([
         sessions._tag("script", package_script.dump(s), file=ps.SCRIPT),
@@ -358,6 +387,9 @@ def review_turn(run: ps.Run, built: Built) -> str:
         "program's to measure and to fix, facts here: they are not for the review or the "
         "sender, and whether every word is readable at its size is answered by that measure. "
         "No screenshots. Compare each slide with the script.",
+        *([f"Only the slides this revision changed are below ({', '.join(only)}); every "
+           f"other slide of the deck is as the run before made it and was reviewed then."]
+          if only else []),
         slides,
         "The deck's questions, by id:\n" + "\n".join(
             sessions._tag("question", asks, id=qid) for qid, asks in DECK_QUESTIONS
@@ -456,6 +488,26 @@ def deck(doc: dict) -> Optional[str]:
         last["built"] = built
         return built
 
+    rev = kept.get("revision") or {}
+    before = run.folder / package_resume.BEFORE / package_resume.DECK_SOURCE
+    if flow["stage"] == package_resume.DECK_REVISE_STAGE and not before.is_file():
+        flow["stage"] = "deck-write"        # no deck to revise: written from the script
+
+    def revised_slides() -> Optional[list[str]]:
+        """In a revision, the slides to review: those whose script slide
+        changed and the deck slides that differ from the source before, in
+        the deck's order; None when not a revision or nothing changed."""
+        if not rev or not before.is_file():
+            return None
+        try:
+            now = yaml.safe_load(source_of(run).read_text(encoding="utf-8")) or {}
+            was = yaml.safe_load(before.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            return None
+        changed = set(package_resume.changed_slides(was, now)) | set(
+            rev.get("slides_changed") or [])
+        return [i for i in package_resume.slide_ids(now) if i in changed] or None
+
     async def go():
         swarm_ = ps.build(run, kept, DECK_CONCERNS)
         source = DeckSource(run, build_now)
@@ -463,13 +515,16 @@ def deck(doc: dict) -> Optional[str]:
         async def written(note: str) -> bool:
             """The author writes or revises the deck until it builds and
             proves, at most ROUNDS_MAX more times; the review said once it
-            does."""
+            does (in a revision, of the slides that changed)."""
             for attempt in range(ROUNDS_MAX + 1):
                 await swarm_.answer(ps.AUTHOR, ps.TIMEOUT, note if attempt == 0 else
                                     revise_note(run), ps.TALK)
                 built = build_now()
                 if built is not None:
-                    swarm_.say(PROGRAM, review_turn(run, built))
+                    only = revised_slides()
+                    if rev:
+                        flow["slides"] = only
+                    swarm_.say(PROGRAM, review_turn(run, built, only))
                     return True
                 swarm_.say(PROGRAM, build_problems_note(state["problems"]))
             return False
@@ -478,12 +533,36 @@ def deck(doc: dict) -> Optional[str]:
             return None
 
         def given(name: str) -> str:
-            return ("Review the deck, above, against the passed script, for your concerns.\n"
+            slides = flow.get("slides")
+            return ((f"This run revises {rev.get('run')}: review only the slides that changed, "
+                     f"{', '.join(slides)}; every other slide is as {rev.get('run')} made it.\n"
+                     if slides else "")
+                    + "Review the deck, above, against the passed script, for your concerns.\n"
                     + sessions._tag(DeckSource.key, source.text(), file=SOURCE))
         try:
             await swarm_.open()
             ps._take_answers(run, swarm_, kept)
-            if flow["stage"] == "deck-write":
+            if flow["stage"] == package_resume.DECK_REVISE_STAGE:
+                with clock("deck-revise"):
+                    if not await written(revise_deck_note(run, rev,
+                                                          rev.get("slides_changed") or [])):
+                        outcome.update(result="not passed",
+                                       findings=_findings_of_build(state["problems"]))
+                        return
+                try:
+                    was = yaml.safe_load(before.read_text(encoding="utf-8")) or {}
+                    now = yaml.safe_load(source_of(run).read_text(encoding="utf-8")) or {}
+                except (OSError, yaml.YAMLError):
+                    was, now = {}, {}
+                changed = package_resume.changed_slides(was, now)
+                reviewed = flow.get("slides") or []
+                package_resume.record(doc["id"], DECK, {
+                    "slides_changed": changed, "slides_reviewed": reviewed,
+                    "slides_kept": [i for i in package_resume.slide_ids(now)
+                                    if i not in changed]})
+                flow["stage"] = "deck-pass"
+                ps._keep(run, swarm_, kept)
+            elif flow["stage"] == "deck-write":
                 with clock("deck-write"):
                     if not await written(write_note(run)):
                         outcome.update(result="not passed",

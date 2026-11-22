@@ -18,7 +18,7 @@ from tests.test_agent_keys import PLAN, keygen, wired  # noqa: F401
 from tests.test_package_deck import deck_plan, _passed  # noqa: F401
 from tests.test_package_gather import checkout, gh, indexing, transcript  # noqa: F401
 from tests.test_package_jobs import ask, handoff, spawned  # noqa: F401
-from tests.test_package_swarm import LEFT, marked  # noqa: F401
+from tests.test_package_swarm import LEFT, Marking, marked  # noqa: F401
 
 
 def _deck_failed(doc, deck_plan):  # noqa: F811
@@ -180,3 +180,115 @@ def test_make_package_rerun_and_the_tool_ask_jarvis(monkeypatch, capsys):
     ok, text, _ = agent_mcp.call("package_rerun", {"job": "job-1", "as_session": "sess-b"})
     assert ok and json.loads(text)["id"] == "job-2"
     assert asked == [("job-1", "sess-a"), ("job-1", "sess-b")]
+
+
+# ── a change at the check, or Tim's Reject: the kept work revised ─────────
+
+class _Recorded:
+    """The marking session, recording which slides it was given."""
+    slides: list[set] = []
+
+    async def mark_slides(self, units, context, labels, knowledge, timeout):
+        _Recorded.slides.append({u.slide for u in units})
+        return await Marking().mark_slides(units, context, labels, knowledge, timeout)
+
+
+def _delivered_deck(marked, deck_plan):  # noqa: F811
+    doc = _passed(marked)
+    assert pd.deck(pj.get(doc["id"])) is None
+    return pj.get(doc["id"])
+
+
+def test_a_change_that_names_one_slide_redoes_only_that_slide(marked, deck_plan,
+                                                              monkeypatch):  # noqa: F811
+    before = _delivered_deck(marked, deck_plan)
+    old = Path(before["folder"])
+    words = "The second slide should say who brings the food."
+    later = pj.new_run(before["id"], "the sender said what is wrong",
+                       revision={"words": words, "by": pr_.SENDER})
+    new = Path(later["folder"])
+    # Research is done and kept; the swarm starts at its revision.
+    assert later["done"] == ["research"]
+    assert later["reused"]["step"] == "swarm" and later["reused"]["stage"] == "revise-outline"
+    assert later["reused"]["revision"] == {"by": "sender", "words": words}
+    for name in ("research.md", "prep.md", "outline.yaml", "script.yaml", "swarm.json", "deck/"):
+        assert name in later["reused"]["files"]
+    assert (new / pr_.BEFORE / "script.yaml").read_text() == (old / "script.yaml").read_text()
+    kept = json.loads((new / ps.STATE).read_text())
+    said = kept["swarm"]["conversation"][-2:]
+    assert said[0]["from"] == "jarvis" and "It revises run-1" in said[0]["text"]
+    assert said[1]["from"] == "sender" and words in said[1]["text"]
+
+    # The author changes one slide of the script.
+    deck_plan.folder = new
+    script = json.loads(json.dumps(deck_plan.script))
+    script["slides"][1]["on_screen"][0]["text"] = "Food is brought in by the caterer."
+    script["slides"][1]["facts"][0]["fact"] = "Food is brought in by the caterer."
+    deck_plan.script = script
+    _Recorded.slides = []
+    monkeypatch.setattr(ps.package_mark, "MARKING", lambda doc: _Recorded())
+    sent = {name: len(texts) for name, texts in deck_plan.sent.items()}
+    assert ps.swarm(pj.get(later["id"])) is None
+    assert _Recorded.slides and all(s == {"what-changed"} for s in _Recorded.slides), \
+        "only the slide that changed is marked again"
+    revision = pj.get(later["id"])["revision"]["swarm"]
+    assert revision["slides_changed"] == ["what-changed"]
+    assert revision["slides_kept"] == ["opening", "where"]
+    assert revision["research_redone"] is False and revision["searches"] == 0
+    author = deck_plan.sent["author"][sent["author"]:]
+    assert not any("Write your research in" in t for t in author), "research is not rerun"
+    assert any("This run revises run-1" in t and words in t for t in author)
+    assert "changed" in deck_plan.forms["author"][sent["author"]]["properties"]
+    rechecks = [t for name in ps.FIXERS for t in deck_plan.sent[name][sent.get(name, 0):]]
+    assert rechecks and all("Re-check only the slides that changed: what-changed" in t
+                            for t in rechecks)
+
+    # The deck: only that slide is revised and reviewed; the rest is kept.
+    from tests.test_package_deck import deck_with_his_words
+    deck = deck_with_his_words()
+    deck["slides"][1]["narration"][0]["say"] = "Food is brought in by the caterer."
+    deck_plan.decks = [deck]
+    wrote = len(deck_plan.sent["author"])
+    assert pd.deck(pj.get(later["id"])) is None
+    told = deck_plan.sent["author"][wrote:]
+    assert not any("Now write the deck" in t for t in told)
+    assert any("Revise the deck" in t and "the script changed on: what-changed" in t
+               for t in told)
+    import yaml
+    was = yaml.safe_load((new / pr_.BEFORE / pr_.DECK_SOURCE).read_text())
+    now = yaml.safe_load((new / pd.FOLDER / pd.SOURCE).read_text())
+    assert [s for s in now["slides"] if s["id"] != "what-changed"] == \
+        [s for s in was["slides"] if s["id"] != "what-changed"], "the rest of the deck is kept"
+    job = pj.get(later["id"])
+    assert job["deck"]["result"] == "passed"
+    assert job["revision"]["deck"]["slides_changed"] == ["what-changed"]
+    assert job["revision"]["deck"]["slides_reviewed"] == ["what-changed"]
+    review = json.loads((new / pd.REVIEW).read_text())
+    start = max(i for i, m in enumerate(review["conversation"])
+                if m["from"] == "author" and m["text"] == "author writes the deck")
+    turns = [m["text"] for m in review["conversation"][start:] if m["from"] == pd.PROGRAM
+             and "built and proven" in m["text"]]
+    assert turns and '<slide id="what-changed">' in turns[0]
+    assert '<slide id="opening">' not in turns[0] and '<slide id="where">' not in turns[0]
+
+
+def test_tim_s_reject_reaches_the_author_as_a_revision(marked, deck_plan):  # noqa: F811
+    before = _delivered_deck(marked, deck_plan)
+    later = pj.new_run(before["id"], "Tim rejected it",
+                       revision={"words": "Lead with the cost.", "by": pr_.TIM})
+    deck_plan.folder = Path(later["folder"])
+    sent = len(deck_plan.sent["author"])
+    assert ps.swarm(pj.get(later["id"])) is None
+    first = deck_plan.sent["author"][sent]
+    assert "tim:\nLead with the cost." in first and "what Tim said is wrong" in first
+    kept = json.loads((Path(later["folder"]) / ps.STATE).read_text())
+    assert {"from": "tim", "text": "Lead with the cost."} in kept["swarm"]["conversation"]
+    # Nothing changed in the script: the owners re-check it whole.
+    assert pj.get(later["id"])["revision"]["swarm"]["slides_changed"] == []
+
+
+def test_a_run_with_no_passed_script_starts_from_research_saying_why(marked):  # noqa: F811
+    later = pj.new_run(marked["id"], "Tim rejected it",
+                       revision={"words": "Lead with the cost.", "by": pr_.TIM})
+    assert later["done"] == [] and later["reused"]["step"] == "research"
+    assert later["reused"]["why"] == "run-1 has no passed script to revise"

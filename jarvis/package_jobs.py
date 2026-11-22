@@ -34,16 +34,18 @@ The finished package goes back to the sender before delivery
 (`ask_check`; workflow.yaml deliver sender_check), with the pre-written
 instructions (SENDER_CHECK): it answers `check` APPROVE, and JARVIS
 delivers it (server._deliver_package_run), or CHANGE with `what_is_wrong`,
-which ends the run `failed` and starts a new run with its words
-(check_answer). Every round asked of the sender (questions, findings, its
+which ends the run `failed` and starts a new run revising it with its
+words (check_answer; `new_run`'s `revision`, package_resume.revise: the
+work kept, only what the words change done again). Every round asked of the sender (questions, findings, its
 check) is told to it once in a message to its session (`to_tell_sender`).
-Tim's Reject of a delivered package starts a new run too (`delivered_as`,
-`rejected`; server._rejected_starts_new_run).
+Tim's Reject of a delivered package starts a new run too, a revision with
+his words (`delivered_as`, `rejected`; server._rejected_starts_new_run).
 At most MAX_ROUNDS rounds of questions are asked. A swarm that fails
 (`failed_swarm`) sends the sender its findings, through the same waiting:
 the server tells it once (`findings_to_tell`) and puts them on the Work
-item; its answer ends the run `failed` and a new run of the package starts
-from the kept research (server._answer_package_job, `new_run`). A sender
+item; its answer ends the run `failed` and a new run of the package goes
+on from the step that failed (server._answer_package_job, `new_run`'s
+`resume`, package_resume.carry). A sender
 that does not answer within
 SENDER_WAIT_SEC, a step that cannot go on (Blocked), a step that fails
 unexpectedly, and a run whose process ended without finishing it, each put
@@ -294,13 +296,19 @@ def _record_run(package: str, run: str, request: dict, *, session: str, work: st
     return doc
 
 
-def new_run(job_id: str, why: str, resume: bool = False) -> dict:
+def new_run(job_id: str, why: str, resume: bool = False,
+            revision: Optional[dict] = None) -> dict:
     """The next run of the same package (the sender answered a failed run's
     findings or asked for it again, said what is wrong at its check, or Tim
     rejected it): the package keeps its id, a new job names the next run id,
     asked as the first was. With `resume`, a run that failed at a step goes
     on from that step, reusing what the run before kept
-    (package_resume.carry, Tim 2026-11-22: only what failed is run again)."""
+    (package_resume.carry, Tim 2026-11-22: only what failed is run again).
+    With `revision` ({"words", "by": "sender" or "tim"}: its check said
+    what is wrong, or Tim rejected it), the run before's work is revised
+    with those words, never started over (package_resume.revise, Tim
+    2026-11-22: never throw away what worked); a run before with no passed
+    script to revise starts from research, and the job says why."""
     before = get(job_id)
     runs = _jobs([["package", "=", before["package"]]])
     n = 1 + max(int(str(d["run"]).rsplit("-", 1)[-1]) for d in runs)
@@ -311,6 +319,15 @@ def new_run(job_id: str, why: str, resume: bool = False) -> dict:
                       source=before["source"], documents=tuple(map(tuple, before["documents"])),
                       submitted=before["submitted"], change=f"new run: {why}", after=before)
     from jarvis import package_resume
+    if revision is not None:
+        if not package_resume.revisable(before):
+            return _change(doc["id"], "starts from research", lambda d: d.update(reused={
+                "from": before["id"], "run": before["run"], "step": "research",
+                "revision": {"by": revision["by"], "words": revision["words"]},
+                "steps": [], "files": [], "fresh_sessions": [],
+                "why": f"{before['run']} has no passed script to revise"}))
+        carried = package_resume.revise(before, doc, revision["words"], revision["by"])
+        return _change(doc["id"], f"revises {before['run']}", lambda d: d.update(carried))
     step = package_resume.failed_at(before) if resume else None
     if step is None:
         return doc

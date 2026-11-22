@@ -1550,8 +1550,33 @@ then the findings' answers as the sender's; a Codex participant's thread is
 resumed, a Claude one (its session found only in its own folder) starts
 anew with the whole conversation; the job records `reused` (from, run,
 step, stage, steps, files, fresh sessions). Gather and mark are once a
-package. A check answered with what is wrong and Tim's Reject start from
-research, with the earlier research carried (`_carry_earlier`). The sender
+package. A check answered with what is wrong and Tim's Reject are a
+revision of the kept work, never a start over (Tim 2026-11-22, never throw
+away what worked; `package_resume.revise`, `new_run`'s `revision`, words and
+`by` `sender` or `tim`, from `server._answer_package_job` and
+`_rejected_starts_new_run`): what the run made is copied in (and the outline,
+script and deck source it had kept apart in `revision-before/` to compare
+with), `research` is `done`, the program says into the conversation which
+run it revises and then the words, word for word, as the sender's (its
+check answer, tagged) or Tim's (`tim`); the swarm starts at
+`revise-outline`: the author revises the outline, then (`revise-script`)
+the script, with the words, naming in `changed` the slides it changes, and
+researches again only where the words say something is missing, with its
+tools in that turn; the program finds the slides that changed against the
+script before (`package_resume.changed_slides`), marks only those, and the
+fix passes have the owners and the editor re-check only them
+(`flow["slides"]`, `revision_given`; with none changed, the whole script);
+the deck step starts at `deck-revise` with the kept deck source: the author
+changes only the deck slides whose script slide changed and what the words
+name (`revise_deck_note`), and the review turn and the passes cover only
+those and the deck slides that differ from the source before
+(`review_turn`'s `only`); the rest of the deck source stays. The job
+records `reused` (with `revision`) and, as each step ends, what was redone
+(`revision`: `swarm`'s slides changed and kept, the author's named slides,
+`research_redone` and its `searches`; `deck`'s slides changed, reviewed and
+kept; `package_resume.record`). A run before with no passed script starts
+from research, with the earlier research carried (`_carry_earlier`), the
+job's `reused` saying why. The sender
 asks for its package again, without new answers, after a run that ended in
 Error or failed (`make_package --rerun <job> --session <id>`, the agent
 tool `package_rerun`, `POST /api/packages/requests/<job>/rerun`, the
@@ -2049,12 +2074,14 @@ recorded `approved_by`) delivers it at once (`server._deliver_package_run`, from
 agent that asked, on the Work item's Messages tab (his Inbox with none),
 the job `delivered` with its inbox id and message (`result`); what stops it
 is the run's Error on the Work item. `{"check": "change", "what_is_wrong":
-<its words>}` ends the run `failed` and starts the next with its words,
-which are kept in the package's evidence (`sender-answers/<n>.md`, n
-counting across the package's runs); any other answer is refused, saying
-the form. His Reject of a delivered package (the standard vote, at sign-off)
-starts the package's next run too (`server._rejected_starts_new_run`,
-`package_jobs.delivered_as`, `rejected`): his words are kept on the run and
+<its words>}` ends the run `failed` and starts the next as a revision of
+it with its words (see "Package requests"), which are also kept in the
+package's evidence (`sender-answers/<n>.md`, n counting across the
+package's runs); any other answer is refused, saying the form. His Reject
+of a delivered package (the standard vote, at sign-off) starts the
+package's next run too, a revision with his words
+(`server._rejected_starts_new_run`, `package_jobs.delivered_as`,
+`rejected`): his words are kept on the run and
 in Tim's record in the evidence (`package_gather.refresh_tim`,
 `jarvis/tim.md`'s Part 1, "His Reject of its package runs", or with no
 Work item "His Reject of this package's earlier runs").
@@ -3942,7 +3969,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   role makes logged, and the hits the passed script used (see "A package's
   evidence")
 - `package_resume.py` — A package's next run going on from the step and
-  stage the run before failed at, reusing what it kept (see "Package
+  stage the run before failed at, reusing what it kept, or revising the
+  kept work with the sender's check or Tim's Reject (see "Package
   requests")
 - `deck_fit.py` — Each slide of a built deck measured at every frame in
   headless Chromium: what is clipped or needs scrolling (see "A package's

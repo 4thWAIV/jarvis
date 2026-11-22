@@ -861,6 +861,9 @@ def test_the_sender_s_words_of_what_is_wrong_start_a_new_run(wired, marks, tmp_p
     assert pj.get(job)["state"] == pj.FAILED
     assert pj.get(job)["rounds"][-1]["answers"] == {"check": "change",
                                                     "what_is_wrong": "The cost is missing."}
+    # A revision of the run with the sender's words; this run never passed
+    # its swarm, so its next run starts from research, saying why.
+    assert r.json()["reused"]["revision"] == {"by": "sender", "words": "The cost is missing."}
     assert spawned[-1] == r.json()["id"]
 
 
@@ -931,6 +934,7 @@ def test_tim_s_reject_of_a_delivered_package_starts_a_new_run(wired, marks, tmp_
     later = pj.later_run(job)
     assert later is not None and later["package"] == pj.get(job)["package"]
     assert later["run"] == "run-2" and spawned[-1] == later["id"]
+    assert later["reused"]["revision"] == {"by": "tim", "words": "Lead with the cost."}
     assert pj.get(job)["rejected"]["words"] == "Lead with the cost."
     place = pe.place_of(later)
     text = (place.folder / pe.TIM_RECORD).read_text(encoding="utf-8")
