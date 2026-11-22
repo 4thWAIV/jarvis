@@ -3,6 +3,7 @@ package_jobs_api.py): the sender's typed handoff, checked at once; JARVIS
 taking a signed request, recording who asked and the job with its run, and
 running it itself; and the Error state, with everyone told."""
 import json
+import os
 import time
 from pathlib import Path
 
@@ -442,6 +443,41 @@ def test_a_blocked_run_is_in_error_with_everyone_told(wired, tmp_path, spawned, 
     assert (after["package"], after["run"]) == (doc["package"], "run-2")
     assert work_store.get(work).state != work_store.ERROR
     assert store.get("package_job", job).state != "pending"
+
+
+def gather_failing(doc):
+    """A gather step that logs as it goes and then fails deep down (named in
+    PRODUCERS by a test)."""
+    import logging
+    logging.getLogger("jarvis.package_gather").info("gathering %s", doc["id"])
+    logging.getLogger("jarvis.package_gather").debug("not at INFO, not kept")
+
+    def deep():
+        raise ValueError("the manifest had no rows")
+    deep()
+
+
+def test_the_run_s_process_writes_its_own_log_with_every_traceback(wired, tmp_path, spawned,
+                                                                   monkeypatch):
+    # An Error says "Read the run's log for the cause": the process writes
+    # it, jarvis.* at INFO and each exception with its traceback.
+    import logging
+    server, *_, home = wired
+    client = TestClient(server.app)
+    agent = Agent(home, PLAN).onboarded()
+    job = ask(client, agent, {"handoff": handoff(tmp_path)}).json()["job"]
+    monkeypatch.setitem(pj.PRODUCERS, "gather", f"{__name__}:gather_failing")
+    assert pj.main(["run", job]) == 1
+    written = Path(pj.get(job)["log"]).read_text(encoding="utf-8")
+    assert f"INFO jarvis.package_jobs: the run's process {os.getpid()} runs job {job}" in written
+    assert f"INFO jarvis.package_gather: gathering {job}" in written
+    assert "not at INFO" not in written
+    assert "ERROR jarvis.package_jobs: the gather step failed" in written
+    assert "Traceback (most recent call last):" in written and "in deep" in written
+    assert "ValueError: the manifest had no rows" in written
+    assert pj.get(job)["error"]["step"] == "gather"
+    assert not [h for h in logging.getLogger("jarvis").handlers
+                if isinstance(h, logging.FileHandler)], "the process's handler is removed"
 
 
 def gather_done(doc):

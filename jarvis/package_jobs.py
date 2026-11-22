@@ -59,6 +59,7 @@ import argparse
 import asyncio
 import contextlib
 import importlib
+import logging
 import os
 import secrets
 import subprocess
@@ -68,6 +69,8 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional, TypeVar
 
 from jarvis import data_paths, env_names, records
+
+log = logging.getLogger("jarvis.package_jobs")
 
 TYPE = "job"
 RECORD_NAME = f"run.{TYPE}"
@@ -714,9 +717,12 @@ def run(job_id: str) -> int:
                           "JARVIS ran every step.", "The deliver step must record the delivery.")
         return 0
     except Blocked as blocked:
+        log.error("the %s step cannot go on: %s", blocked.step, blocked.reason,
+                  exc_info=blocked)
         error(job_id, blocked.step, blocked.reason, blocked.tried, blocked.fix)
         return 1
     except BaseException as failed:    # noqa: BLE001 - the job must end, whatever ended it
+        log.error("the %s step failed", step, exc_info=failed)
         with contextlib.suppress(Exception):
             error(job_id, step, f"The {step} step failed: {type(failed).__name__}: {failed}",
                   f"JARVIS ran the {step} step (log: {doc['log']}).",
@@ -759,6 +765,33 @@ def _map_his_words(doc: dict) -> None:
               flush=True)
 
 
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+@contextlib.contextmanager
+def logging_to(path: Path):
+    """The run's process logging to its own log (`LOG`, job.log in the run's
+    folder): every jarvis.* logger at INFO, each exception with its
+    traceback, so an Error's "read the run's log" has the cause to read."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.setLevel(logging.INFO)
+    root = logging.getLogger("jarvis")
+    level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    try:
+        yield handler
+    except BaseException:
+        log.exception("the run's process ended on an exception")
+        raise
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
+        handler.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jarvis.package_jobs")
     parser.add_argument("action", choices=("run",))
@@ -766,7 +799,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     from jarvis import settings_service
     settings_service.load_once()
-    return run(args.job)
+    with logging_to(Path(get(args.job)["log"])):
+        log.info("the run's process %d runs job %s", os.getpid(), args.job)
+        return run(args.job)
 
 
 if __name__ == "__main__":
