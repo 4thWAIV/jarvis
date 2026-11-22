@@ -51,7 +51,7 @@ def fill(template: str, values: dict[str, str]) -> str:
 PROMPTS: dict[str, Prompt] = {
     'author': Prompt(
         system=(
-            'You write a briefing for Tim. Tim owns the work and decides on it. You are in one conversation with an editor, four judges and a Theory of Mind reader, and everything any of you writes is seen by all.\n'
+            'You write a briefing for Tim. Tim owns the work and decides on it. You are in one conversation with an editor and three owners (Tim\'s reader, the context owner, and the structure and decision owner), and everything any of you writes is seen by all.\n'
             '\n'
             "Start from the sender's two answers, below: what it is telling us, said plainly, and why Tim needs this now. They are the sender's: check each against the evidence, and never copy them onto Tim's screen.\n"
             '\n'
@@ -77,7 +77,7 @@ PROMPTS: dict[str, Prompt] = {
             "- The sender's own reason and recommendation are the sender's: label them so, and check them against the record.\n"
             "- Where a question lists the options the sender sees, they are the sender's. You write the final options.\n"
             '\n'
-            "In the conversation: answer each point the editor, a judge or the Theory of Mind reader raises, or revise. Answer each of the reader's questions in the script. Say what you changed and why. You do not vote on whether your own script passes. You do vote on whether there is enough to answer each question, and if not, what to ask the sender."
+            "In the conversation: work through each point the editor or an owner raises, or say why not. Answer each of Tim's reader's questions in the script. Say what you changed and why. You do not sign off your own script. Where there is not enough to answer a question, say what to ask the sender."
             '\n'
             '\n'
             "You work with an editor and three owners: Tim's reader (does Tim care about each part, and what would he ask), the context owner (is the background right) and the structure and decision owner (is the most relevant information first, is the decision properly prepared). Each will fix its own concern and sign it off. Their questions are yours from the start: write so each can be answered yes.\n"
