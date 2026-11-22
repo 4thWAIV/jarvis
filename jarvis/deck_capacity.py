@@ -23,13 +23,17 @@ are proven by picture_proof.
 an object over its slot's capacity, naming the slot and how much over; a
 title over its place; and a slide of only prose over the capacity of one
 paragraph (`capacity.prose_paragraph_lines` lines of its widest text
-slot), each said so the author can split it or show it as a visual. The
+slot), each said so the author can split it or show it as a visual.
+`decision_problems` and `answers_problems` hold a decision's slide and the
+answers slide, the shared deck's own, to what they hold the same way,
+worked out from its layout in deck.css (below). The
 deck.js text fit (each slide's words grown to fill it, never under the
 floor) stays as rendering: within capacity, it always finds a size.
 """
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 from jarvis import layout_spec
@@ -329,4 +333,330 @@ def object_capacity(obj, box) -> dict | None:
         # What its slot holds of a diagram of its kind (diagram_layout.holds),
         # beside the nodes it has.
         out.update(kind=obj.kind, nodes=len(obj.nodes), holds=drawn_diagram(obj, box)["holds"])
+    return out
+
+
+# ── a decision's slide and the answers slide ─────────────────────────────
+# JARVIS's own slides, drawn by the shared deck (examples/packages/
+# decision-deck, deck.js decisionSlide and answersSlide) in its own layout
+# (deck.css). Their capacity is worked out the same way, from deck.css's
+# lengths in deck units at the smallest frame, every word at its floor and
+# the slide's fit at the least the deck draws it at (layout-spec `fit`
+# `scale_min`), in the tight spacing the deck falls back to there (deck.js
+# fitSlide: a slide that fits so is drawn whole, nothing clipped and
+# nothing to scroll, and the deck's own fit draws it larger wherever it has
+# room). Where a rule of the decision's own layout outranks the tight one
+# (a filled decision's gaps), the larger length is counted.
+
+def _deck_css() -> str:
+    from jarvis import data_paths
+    path = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "deck.css"
+    return path.read_text(encoding="utf-8")
+
+
+def _rule(selector: str) -> str:
+    """The declarations of deck.css's rule for exactly `selector`."""
+    found = re.search(r"(?m)^" + re.escape(selector) + r"\s*\{([^}]*)\}", _deck_css())
+    if found is None:
+        raise ValueError(f"deck.css has no rule for {selector!r}")
+    return found.group(1)
+
+
+def css_units(selector: str, prop: str) -> list[float]:
+    """The deck-unit lengths (calc(N * var(--u)...)) of `prop` in deck.css's
+    rule for `selector`, in order."""
+    found = re.search(r"(?:^|[;{\s])" + re.escape(prop) + r"\s*:([^;]*)", _rule(selector))
+    if found is None:
+        raise ValueError(f"deck.css's {selector!r} sets no {prop}")
+    numbers = [float(n) for n in re.findall(r"calc\(\s*([\d.]+)\s*\*\s*var\(--u\)", found.group(1))]
+    if not numbers:
+        raise ValueError(f"deck.css's {selector!r} {prop} is in no deck units")
+    return numbers
+
+
+def css_line(selector: str) -> float:
+    found = re.search(r"line-height:\s*([\d.]+)", _rule(selector))
+    if found is None:
+        raise ValueError(f"deck.css's {selector!r} sets no line-height")
+    return float(found.group(1))
+
+
+def css_control(selector: str) -> float:
+    """A control's least height in px at the smallest frame:
+    max(N px, M deck units)."""
+    found = re.search(r"min-height:\s*max\(\s*([\d.]+)px,\s*calc\(\s*([\d.]+)\s*\*\s*var\(--u\)",
+                      _rule(selector))
+    if found is None:
+        raise ValueError(f"deck.css's {selector!r} sets no min-height of max(px, units)")
+    return max(float(found.group(1)), float(found.group(2)) * _u())
+
+
+def css_px(selector: str, prop: str) -> float:
+    found = re.search(r"(?:^|[;{\s])" + re.escape(prop) + r"\s*:\s*([\d.]+)px", _rule(selector))
+    if found is None:
+        raise ValueError(f"deck.css's {selector!r} sets no {prop} in px")
+    return float(found.group(1))
+
+
+TIGHT_CONTROLS = ".slide.tight .choose, .slide.tight .vote button, .slide.tight .vote .words"
+TIGHT_GROUPS = ".slide.tight .decide, .slide.tight .main, .slide.tight .context"
+
+
+class _Deck:
+    """The shared deck's decision layout at the smallest frame, the words
+    at their floor and the slide's fit at its least."""
+
+    def __init__(self):
+        self.u, self.fit = _u(), layout_spec.spec()["fit"]["scale_min"]
+        self.px = floor_px("body")
+        self.body_line = self.px * layout_spec.spec()["styles"]["body"]["line"]
+        self.question_line = floor_px("heading") * css_line("h2")
+        self.name_line = self.px * css_line(".option h3")
+        self.char = char_px(self.px)
+        pad = css_units(".slide.tight", "padding")
+        w, h = frame()
+        self.width = w - 2 * pad[1] * self.u
+        self.height = h - (pad[0] + pad[2]) * self.u
+        self.gap = css_units(".slide.tight", "gap")[0] * self.u
+        button = css_units(".slide.tight button", "padding")
+        self.button_pad = button[1] * self.u
+        self.button_h = self.body_line + 2 * button[0] * self.u + 2
+        self.control = max(css_control(TIGHT_CONTROLS), self.button_h)
+
+    def at(self, units: float, fitted: bool = False) -> float:
+        return units * self.u * (self.fit if fitted else 1)
+
+    def lines(self, text: str, width: float) -> int:
+        return lines_of(" ".join(text.split()), width, self.px)
+
+    def button_w(self, label: str) -> float:
+        return len(label) * self.char + 2 * self.button_pad + 2
+
+
+def _row(items: list[tuple[float, bool]], width: float, gap: float) -> list[list[tuple[int, float]]]:
+    """A flex-wrap row: each item (basis, grows) placed while it fits, the
+    free space of each row shared by the items that grow; each row as
+    (item, width) pairs."""
+    rows, current, used = [], [], 0.0
+    for n, (basis, _) in enumerate(items):
+        if current and used + gap + basis > width:
+            rows.append(current)
+            current, used = [], 0.0
+        used += (gap if current else 0) + basis
+        current.append(n)
+    if current:
+        rows.append(current)
+    out = []
+    for row in rows:
+        used = sum(items[n][0] for n in row) + gap * (len(row) - 1)
+        growing = [n for n in row if items[n][1]]
+        share = max(0.0, width - used) / len(growing) if growing else 0.0
+        out.append([(n, items[n][0] + (share if items[n][1] else 0)) for n in row])
+    return out
+
+
+def _parents(decisions) -> dict[str, tuple]:
+    """Each child decision's parent and the options that open it (deck.js
+    PARENT)."""
+    out: dict[str, tuple] = {}
+    for d in decisions:
+        for o in d.options:
+            for child in o.opens:
+                parent, opened = out.get(child, (d, []))
+                opened.append(o)
+                out[child] = (parent, opened)
+    return out
+
+
+def _opens_text(parents, decision) -> str:
+    parent, opened = parents[decision.id]
+    return f"{parent.id} is " + " or ".join(o.name for o in opened)
+
+
+@dataclass(frozen=True)
+class Part:
+    """One field's share of a decision slide: its name in the source, the
+    lines it takes, its width in px and its characters."""
+    field: str
+    said: str
+    lines: int
+    px: float
+    width: float
+    chars: int
+
+
+def _decision_parts(deck: _Deck, decision, index: int, decisions, parents) -> tuple[float, list[Part]]:
+    """The height of a decision's slide (deck.js decisionSlide in deck.css's
+    layout) and the parts its words take."""
+    d, u = decision, deck.u
+    by_id = {x.id: x for x in decisions}
+    parts: list[Part] = []
+    total = len(decisions)
+
+    def part(field, said, text, width, line):
+        n = deck.lines(text, width) if text else 0
+        parts.append(Part(field, said, n, n * line, width, len(text or "")))
+        return n * line
+
+    kicker = f"Decision {index + 1} of {total} · {d.id}"
+    if d.id in parents:
+        kicker += " · asked when " + _opens_text(parents, d)
+    kicker += f" · {total} of {total} answered"
+    heights = [deck.lines(kicker, deck.width) * deck.body_line,
+               part("question", "the question", d.question, deck.width, deck.question_line)]
+    rec = next((o for o in d.options if o.id == d.recommended), None)
+    recommends = (f"Recommended: {rec.name}. " if rec else "") + d.reason
+    heights.append(part("reason", "the recommendation and its reason", recommends, deck.width,
+                        deck.body_line))
+    if d.context and not d.picture:
+        heights.append(part("context", "the context", d.context, deck.width, deck.body_line))
+    # The options, a grid of cards (deck.js picks the columns).
+    n = len(d.options)
+    pictured = any(o.picture for o in d.options)
+    columns = min(4, n) if pictured else min(2, n) if d.picture else 2 if n == 4 else min(3, n)
+    side = deck.at(css_units(".decide.with-context", "grid-template-columns")[0], True)
+    side_gap = max(css_units(".decide.with-context", "gap")[0],
+                   css_units(".slide.decision.fill .decide", "gap")[0]) * u
+    main = deck.width - (side + side_gap if d.picture else 0)
+    grid_gap = css_units(".slide.tight .options", "gap")[0] * u
+    column = (main - (columns - 1) * grid_gap) / columns
+    pad = css_units(".slide.tight .option", "padding")
+    border = css_px(".option", "border")
+    inner = column - 2 * border - 2 * pad[1] * u
+    card_gap = css_units(".slide.tight .option", "gap")[0] * u
+    text_gap = css_units(".slide.tight .option-text", "gap")[0] * u
+    badge = css_units(".option h3 .badge", "margin-left")[0] + 2 * css_units(".badge", "padding")[0]
+    badge_word = "R" * (len("Recommended") + math.ceil(badge * u / deck.char))
+    choose = deck.control
+    cards = []
+    for i, o in enumerate(d.options):
+        name = f"{'ABCDEFGHIJ'[i]}. {o.name}" + (f" {badge_word}" if o.id == d.recommended else "")
+        h = 2 * border + (pad[0] + pad[2]) * u
+        if o.picture:
+            h += css_units(".options.has-pictures .option .picture", "min-height")[0] * u + card_gap
+        h += part(f"options[{i}].name", f"option {o.id}'s name", name, inner, deck.name_line)
+        h += text_gap + part(f"options[{i}].says", f"option {o.id}'s text", o.says, inner,
+                             deck.body_line)
+        if o.opens:
+            opens = "Then asks: " + ", ".join((by_id[c].short or c) if c in by_id else c
+                                              for c in o.opens)
+            h += text_gap + deck.lines(opens, inner) * deck.body_line
+        h += text_gap + choose
+        cards.append(h)
+    rows = [max(cards[r:r + columns]) for r in range(0, n, columns)]
+    options = sum(rows) + (len(rows) - 1) * grid_gap
+    if pictured:
+        options += css_units(".options.has-pictures", "padding-top")[0] * u
+    if d.compare:
+        options += css_units(".decide .compare", "min-height")[0] * u \
+            + css_units(".slide.decision.fill .decide", "gap")[0] * u
+    body = options
+    if d.picture:
+        context = 0.0
+        if d.context:
+            context = css_units(TIGHT_GROUPS, "gap")[0] * u + part(
+                "context", "the context", d.context, side, deck.body_line)
+        body = max(body, context)
+    heights.append(body)
+    # The vote row: Decide later, None of these, his words, what is recorded.
+    words = deck.at(css_units(".vote .words", "flex")[0], True)
+    said = deck.at(css_units(".vote .recorded", "flex")[0], True)
+    recorded = max([f"Recorded: {o.name}" + (", the recommended option." if o.id == d.recommended
+                                             else ".") for o in d.options]
+                   + [f"{o.name} needs your words: say what to change." for o in d.options
+                      if o.id in d.needs_words]
+                   + ["Not answered yet.", "Recorded: None of these.", "Recorded: Decide later."]
+                   + ([f"Not asked yet: it applies when {_opens_text(parents, d)}."]
+                      if d.id in parents else []), key=len)
+    vote_gap = css_units(".slide.tight .vote", "gap")[0] * u
+    control = deck.control
+    items = [(deck.button_w("Decide later"), False), (deck.button_w("None of these"), False),
+             (words, True), (said, True)]
+    vote = 0.0
+    for row in _row(items, deck.width, vote_gap):
+        h = control
+        for item, width in row:
+            if item == 3:
+                h = max(h, deck.lines(recorded, width) * deck.body_line)
+        vote += h
+    vote += vote_gap * (len(_row(items, deck.width, vote_gap)) - 1)
+    heights.append(vote)
+    return sum(heights) + deck.gap * (len(heights) - 1), parts
+
+
+def decision_problems(decision, index: int, decisions, slide_id: str) -> list[tuple[str, str]]:
+    """What does not fit on a decision's slide, each (member, words for the
+    author): the slide over what it holds at the smallest frame, naming its
+    longest fields, the lines each takes and how much less would fit."""
+    deck = _Deck()
+    needed, parts = _decision_parts(deck, decision, index, decisions, _parents(decisions))
+    if needed <= deck.height + 0.5:
+        return []
+    over_px = needed - deck.height
+    longest = sorted((p for p in parts if p.lines), key=lambda p: -p.px)
+    named = "; ".join(f"{p.said} (`{p.field}`) {p.lines} line{'s' if p.lines != 1 else ''}"
+                      for p in longest[:4])
+    top = longest[0]
+    per = max(1, int(top.width // deck.char))
+    less = min(top.chars, math.ceil(over_px / deck.body_line) * per)
+    where = "662 x 489, every word at its floor"
+    return [(decision.id, f"The decision {decision.id} (slide {slide_id}) is over what its slide "
+                          f"holds at {where}: it needs {_over(needed, deck.height)}. Its "
+                          f"longest parts: {named}. Say less in {top.said} (`{top.field}`, about "
+                          f"{less} characters less), give fewer options, or put the background "
+                          f"on a content slide before it.")]
+
+
+def answers_problems(decisions) -> list[tuple[str, str]]:
+    """What does not fit on the answers slide (deck.js answersSlide): every
+    decision a row of its name, the answer chosen and its state, then
+    Approve all recommended and its confirmation."""
+    if not decisions:
+        return []
+    deck, u = _Deck(), _u()
+    parents = _parents(decisions)
+    where = "662 x 489, every word at its floor"
+    out: list[tuple[str, str]] = []
+    first, last = css_units(".answer-list li", "grid-template-columns")
+    first, last = deck.at(first, True), deck.at(last, True)
+    col_gap = css_units(".answer-list li", "gap")[0] * u
+    middle = deck.width - first - last - 2 * col_gap
+    pick_pad = 2 * css_units(".pick", "padding")[0] * u + 2 + 2 * deck.px   # its arrow
+    indent = css_units(".answer-list li.child .go", "margin-left")[0] * u
+    rows = []
+    for d in decisions:
+        labels = [o.name + (" (recommended)" if o.id == d.recommended else "") for o in d.options]
+        widest = max(labels + ["Not answered", "Decide later", "None of these"], key=len)
+        need = len(widest) * deck.char + pick_pad
+        # The answer's list may run on into the state's column while that
+        # is empty; a child question's says it is not asked yet.
+        room = middle if d.id in parents else middle + col_gap + last
+        if need > room + 0.5:
+            out.append((d.id, f"The answers slide lists every decision with its answer chosen "
+                              f"from a list; the answer {widest!r} of {d.id} takes "
+                              f"{need:.0f} px where the list holds {room:.0f} px at {where} "
+                              f"(about {int((room - pick_pad) // deck.char)} characters). "
+                              f"Shorten that option's name."))
+        go_w = first - (indent if d.id in parents else 0) - 2 * deck.button_pad - 2
+        go = deck.lines(d.short or d.id, go_w) * deck.body_line + deck.button_h - deck.body_line
+        state = deck.lines("Not asked yet", last) * deck.body_line if d.id in parents else 0
+        rows.append((max(go, deck.button_h, state), d))
+    listed = sum(h for h, _ in rows) + css_units(".slide.tight .answer-list", "gap")[0] * u * (len(rows) - 1)
+    n = len(decisions)
+    kicker = f"Your answers · {n} of {n} answered"
+    confirm = (f"Record the recommended option for the {n} decision{'' if n == 1 else 's'} with "
+               f"no answer yet? Answers already given, Decide later included, stay as they are.")
+    room = deck.width - deck.button_w("Yes, record them") - deck.button_w("No") \
+        - 2 * css_units(".confirm", "gap")[0] * u
+    approve = max(deck.button_h, deck.lines(confirm, room) * deck.body_line)
+    needed = (deck.lines(kicker, deck.width) * deck.body_line
+              + deck.lines("What is recorded", deck.width) * deck.question_line
+              + listed + approve + 3 * deck.gap)
+    if needed > deck.height + 0.5:
+        tallest, d = max(rows, key=lambda r: r[0])
+        out.append((d.id, f"The answers slide is over what it holds at {where}: its {n} "
+                          f"decisions, a row each, need {_over(needed, deck.height)}. The tallest "
+                          f"row is {d.id}'s, its name in the list (`short`, else its id) "
+                          f"{deck.lines(d.short or d.id, first)} lines. Give each decision a "
+                          f"shorter `short`, or ask fewer decisions in one package."))
     return out

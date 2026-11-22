@@ -160,12 +160,23 @@ def read_source(path: Path, built: bool = False, language: str | None = None) ->
 
 
 def _capacity(source: Source) -> None:
-    """Every slot's content within its capacity (deck_capacity), refused as
-    the deck is written, every problem said at once. A built deck arriving
-    is not held to it again: it is a rule for writing."""
+    """Every slot's content within its capacity (deck_capacity), each
+    decision's slide and the answers slide within theirs, refused as the
+    deck is written, every problem said at once. A built deck arriving is
+    not held to it again: it is a rule for writing."""
+    doc = source.document
+    decisions = {d.id: d for d in doc.decisions}
+    found = []
+    for slide in doc.slides:
+        if isinstance(slide, ContentSlide):
+            found += deck_capacity.problems(slide)
+        elif slide.decision in decisions:
+            found += deck_capacity.decision_problems(
+                decisions[slide.decision], doc.decisions.index(decisions[slide.decision]),
+                doc.decisions, slide.id)
+    found += deck_capacity.answers_problems(doc.decisions)
     found = [source.diagnostic("capacity", message, member=member if member in source.nodes else None)
-             for slide in source.document.slides if isinstance(slide, ContentSlide)
-             for member, message in deck_capacity.problems(slide)]
+             for member, message in found]
     if found:
         raise DeckCompileError(tuple(found))
 

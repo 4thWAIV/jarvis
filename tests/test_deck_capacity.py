@@ -149,3 +149,59 @@ def test_the_layout_data_carries_each_object_s_capacity(tmp_path):
     assert set(rooms) == {"opening-callout", "how-steps", "cost-figures", "cost-chart", "vote-table",
                           "order-flow", "who-words", "who-tree", "week-cycle", "week-days"}
     assert rooms["order-flow"]["fits"] and rooms["order-flow"]["holds"]["ranks"] >= 4
+
+
+# ── a decision's slide and the answers slide ─────────────────────────────
+
+def _with_decisions(decisions):
+    deck = copy.deepcopy(mp.EXAMPLE)
+    deck["decisions"] = decisions
+    deck["slides"] = deck["slides"][:2] + [{"id": f"ask-{d['id']}", "type": "decision",
+                                            "decision": d["id"]} for d in decisions]
+    return deck
+
+
+def _decision(ident="where-to-eat", **fields):
+    return {**copy.deepcopy(mp.EXAMPLE["decisions"][0]), "id": ident, **fields}
+
+
+def test_a_decision_s_slide_is_held_to_what_the_shared_deck_draws_at_the_floor(tmp_path):
+    # Worked out from the shared deck's own layout (deck.css) at 662 x 489:
+    # its question, context, options and recommendation, every word at its
+    # floor, in the spacing the deck falls back to there.
+    assert deck_capacity.css_units(".slide.tight", "padding") == [8, 20, 6]
+    read_source(_write(tmp_path / "a", _with_decisions([_decision(context=SENTENCE * 3)])))
+    with pytest.raises(DeckCompileError) as refused:
+        read_source(_write(tmp_path / "b", _with_decisions([_decision(context=SENTENCE * 14)])))
+    said = str(refused.value)
+    assert said.startswith("capacity: ") and "[decisions.0]" in said
+    assert "The decision where-to-eat (slide ask-where-to-eat) is over what its slide holds at " \
+           "662 x 489, every word at its floor" in said
+    assert "lines of body text where it holds 27: " in said and "%) over" in said
+    assert "the context (`context`) " in said and "characters less" in said
+
+
+def test_each_field_of_a_decision_is_named_where_it_takes_the_room(tmp_path):
+    options = [{"id": f"o{n}", "name": f"Choice {n}", "says": SENTENCE * 3} for n in range(1, 5)]
+    with pytest.raises(DeckCompileError) as refused:
+        read_source(_write(tmp_path, _with_decisions([_decision(
+            question="Which of these four do we take? " * 4, options=options,
+            recommended="o1", reason=SENTENCE * 2)])))
+    said = str(refused.value)
+    assert "option o1's text (`options[0].says`)" in said
+    assert "Say less in option o" in said
+
+
+def test_the_answers_slide_is_held_to_what_it_holds(tmp_path):
+    many = [_decision(f"choice-{n}", short=f"The choice about part {n} of the plan",
+                      options=[{"id": f"yes-{n}", "name": "Yes", "says": "Go ahead."},
+                               {"id": f"no-{n}", "name": "No", "says": "Wait."}],
+                      recommended=f"yes-{n}") for n in range(1, 31)]
+    with pytest.raises(DeckCompileError, match="The answers slide is over what it holds at 662 x "
+                                               "489.* its 30 decisions, a row each"):
+        read_source(_write(tmp_path / "many", _with_decisions(many)))
+    long = [_decision(options=[{"id": "a", "name": "A very long option name " * 4, "says": "x"},
+                               {"id": "b", "name": "B", "says": "y"}], recommended="a")]
+    with pytest.raises(DeckCompileError, match="the answer .* of where-to-eat takes .* px where "
+                                               "the list holds"):
+        read_source(_write(tmp_path / "long", _with_decisions(long)))

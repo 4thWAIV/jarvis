@@ -1446,7 +1446,12 @@ over `label_lines_max`), and `presentation_source` refuses as the source
 is read (never a built deck arriving) a slot over its capacity, naming the
 slot, the lines needed and held and how much over, a title over its place,
 and a slide of only prose over one paragraph
-(`capacity.prose_paragraph_lines` lines of its widest text slot); each
+(`capacity.prose_paragraph_lines` lines of its widest text slot), and a
+decision's slide and the answers slide over theirs
+(`deck_capacity.decision_problems`, `answers_problems`: the shared deck's
+own layout read from deck.css at 662 x 489, every word at its floor, the
+slide's fit at `scale_min`, in the tight spacing the deck falls back to;
+naming the field, its lines and how much over); each
 object's capacity is in the layout data, and a diagram's every node,
 connector and group with its place, and `presentation_proof.prove_diagrams`
 holds every word of it in its place at every frame. The release check
@@ -2213,7 +2218,10 @@ into one list, the author revises the deck, and each owner re-checks its
 own items; never the author on its own deck. Passed
 (the job's `deck`: the zip, the built folder, `deck-review.json`), or after
 two fix passes, or a deck the author could not make build,
-its findings go to the sender as a failed swarm's do. The proof also holds
+its findings go to the sender as a failed swarm's do; but a deck still
+over a capacity after the author's rounds is the run's Error
+(`package_deck.NOT_FIT_FIX`, the slot, the lines and the fix, told to the
+Work item as every Error is), never findings for the sender. The proof also holds
 every text style at least the text floor at both sizes (`prove_text`).
 No build is drawn in a browser (Tim 2026-11-22: `deck_fit.py`'s headless
 Chromium and its callers are removed): a slot over its capacity

@@ -341,6 +341,39 @@ def test_a_slot_over_its_capacity_goes_back_to_the_author_never_the_sender(marke
     assert pj.get(doc["id"])["rounds"] == [], "nothing goes to the sender"
 
 
+def test_a_decision_over_its_slide_goes_back_to_the_author(marked, deck_plan):
+    # A decision's slide is held to what it holds as a content slide is.
+    long = deck_with_his_words()
+    long["decisions"][0]["context"] = "Where we eat on Friday matters to the whole team. " * 40
+    deck_plan.decks = [long, deck_with_his_words()]
+    doc = _passed(marked)
+    assert pd.deck(doc) is None
+    said = _said_on_the_deck(json.loads((Path(doc["folder"]) / pd.REVIEW).read_text()))
+    assert said[0].startswith("The deck did not build.")
+    assert "The decision where-to-eat (slide where) is over what its slide holds" in said[0]
+    assert "the context (`context`)" in said[0] and "%) over" in said[0]
+    assert pj.get(doc["id"])["deck"]["result"] == "passed"
+
+
+def test_a_deck_still_over_capacity_is_the_run_s_error_never_the_sender_s(marked, deck_plan):
+    # The author never makes it fit: a layout failure is the program's,
+    # never findings for the sender (Tim 2026-11-22).
+    long = deck_with_his_words()
+    long["decisions"][0]["context"] = "Where we eat on Friday matters to the whole team. " * 40
+    deck_plan.decks = [long]
+    doc = _passed(marked)
+    with pytest.raises(pj.Blocked) as stopped:
+        pd.deck(doc)
+    assert stopped.value.step == "deck"
+    assert stopped.value.reason.startswith("The deck is still over what its slides hold")
+    assert "The decision where-to-eat (slide where)" in stopped.value.reason
+    assert "lines of body text where it holds" in stopped.value.reason
+    assert stopped.value.fix == pd.NOT_FIT_FIX
+    assert json.loads((Path(doc["folder"]) / ps.STATE).read_text())["deck"]["builds"] == \
+        pd.ROUNDS_MAX + 1
+    assert pj.get(doc["id"])["rounds"] == [], "nothing goes to the sender"
+
+
 # ── deliver ───────────────────────────────────────────────────────────────
 
 def test_the_package_is_assembled_signed_and_sent_to_its_sender_to_check(marked, deck_plan,

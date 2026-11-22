@@ -74,8 +74,13 @@ Sizing comes from the language: each slot holds what deck_capacity works
 out from the layout spec at the smallest frame with every word at its
 floor, and content over it does not build, said to the author with the slot
 and how much over, to split it or show it as a visual; an owner's edit
-that puts a slot over is not applied. The shared deck fits its slides
-itself as it draws them (deck.js fitSlide): each slide's words at the
+that puts a slot over is not applied. A decision's slide and the answers
+slide are held to theirs the same way (deck_capacity, from the shared
+deck's own layout in deck.css). A deck still over a capacity after the
+author's rounds is the run's Error (NOT_FIT_FIX: the slot, the lines and
+the fix, told to the Work item as every Error is), never findings for the
+sender: a layout failure is never the sender's (Tim 2026-11-22). The
+shared deck fits its slides itself as it draws them (deck.js fitSlide): each slide's words at the
 largest size at which it fits its frame, never under the floor. Type size
 is the program's: each object's capacity goes to the reviewers in its
 layout data as a fact, never a question for them or the sender, and
@@ -128,6 +133,7 @@ step (package_deliver.py).
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -319,6 +325,36 @@ def revise_deck_note(run: ps.Run, slides: list[str], kept: list[str]) -> str:
         sessions._tag("format", deck_format()),
         sessions._tag("example", example(), file=SOURCE),
         sessions._tag("visuals", visuals_example(), file=SOURCE)])
+
+
+# Where the deck step stops when the deck is still over a slot's capacity
+# after the author's rounds (Tim 2026-11-22: a layout failure is the
+# program's, never the sender's).
+NOT_FIT_FIX = ("Each slot named must hold its words at 662 x 489 with every word at its 13 px "
+               "floor (jarvis/deck_capacity.py, from presentation_assets/layout-spec.json and the "
+               "shared deck's deck.css): split the slide named or show its words as a visual, as "
+               "each problem says. A new run of the package (make_package --rerun) writes the "
+               "deck again from the passed script.")
+_CAPACITY = re.compile(r"^capacity: .*?:\d+:\d+: (.*)$", re.M)
+
+
+def over_capacity(problems: list[str]) -> list[str]:
+    """The build's problems that are a slot, a decision's slide or the
+    answers slide over its capacity (deck_capacity), each in its words."""
+    return [m.group(1) for p in problems for m in _CAPACITY.finditer(p)]
+
+
+def _not_fit(run: ps.Run, kept: dict, state: dict):
+    """The run's Error: the deck is still over a capacity after the
+    author's rounds."""
+    ps._save(run, kept)
+    raise package_jobs.Blocked(
+        DECK, "The deck is still over what its slides hold after the author's revisions: "
+              + " ".join(state.get("unfit") or []),
+        f"JARVIS worked out each slot's capacity, each decision's slide's and the answers "
+        f"slide's at 662 x 489 with every word at its floor, said what was over to the author "
+        f"with the slot, the lines and how to fix it, and had it revise the deck up to "
+        f"{ROUNDS_MAX + 1} times.", NOT_FIT_FIX)
 
 
 def _findings_of_build(problems: list[str]) -> list[dict]:
@@ -837,6 +873,7 @@ def deck(doc: dict) -> Optional[str]:
         state["builds"] += 1
         built, problems = build_and_prove(run, state["builds"])
         state["problems"] = list(problems)
+        state["unfit"] = over_capacity(problems)
         last["built"] = built
         return built
 
@@ -859,6 +896,8 @@ def deck(doc: dict) -> Optional[str]:
         if plan.complete:
             plan.start_source()
             build_now()
+            # A kept deck that is over a capacity goes back to the author
+            # below, as any deck that does not build.
             if last.get("built") is not None and not begin_review(last["built"]):
                 return _finish(run, kept, plan, outcome, last, state, build_now, began, True)
 
@@ -964,6 +1003,8 @@ def deck(doc: dict) -> Optional[str]:
     if outcome.get("waiting"):
         ps._save(run, kept)
         return package_jobs.WAITING
+    if last.get("built") is None and state.get("unfit"):
+        return _not_fit(run, kept, state)
     return _finish(run, kept, plan, outcome, last, state, build_now, began,
                    outcome.get("result") == "passed" and (last.get("built") is not None
                                                           or units.get("phase") == "review"))
@@ -982,6 +1023,8 @@ def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, st
     built = last.get("built") or (build_now() if passed else None)
     if passed and built is not None:
         built = _final(run, plan, reviews, units.get("reviewed") or {}, build_now) or built
+    if built is None and state.get("unfit"):
+        return _not_fit(run, kept, state)
     passed = passed and built is not None
     # The review's record carries the build's program verdict (`program`,
     # from the final build's proof): the build's own key is in the step's.
