@@ -1033,7 +1033,7 @@ def swarm(doc: dict) -> Optional[str]:
     if not kept.get("researched"):
         raise package_jobs.Blocked(SWARM, "The research step did not finish.",
                                    "JARVIS reached the swarm step.", "A new run.")
-    pe.wait_indexed(run.place, SWARM)       # the sender's answers, indexed as written
+    pe.wait_indexed(run.place, SWARM, text_only=("/mark/",))  # the sender's answers, indexed as written
     labels = briefing_labels.for_marking()
     knowledge = package_mark.tim_known(run.rows, run.texts)
     flow = kept.setdefault("flow", {"stage": "outline", "pass": 1})

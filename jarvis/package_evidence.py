@@ -254,10 +254,13 @@ class Waiting:
     off: bool = False               # no embedding model: said when the wait ends
 
 
-def not_indexed(items: list[str], uds=None) -> Waiting:
+def not_indexed(items: list[str], uds=None, text_only: tuple = ()) -> Waiting:
     """Of these items, those not yet indexed: their text not read yet, or a
     vector (whole or a section's) not made yet. An unreadable file has
-    nothing to index and is done."""
+    nothing to index and is done. An item under one of `text_only` is
+    waited for only until its text is read: what the program reads back
+    from its own file (the mark step's output) is never searched by meaning
+    on the run's path, so its vectors are made in the background."""
     from jarvis.knowledge.uds import Stream
     from jarvis.knowledge_content import WRITER
     uds = uds or records.uds()
@@ -268,7 +271,7 @@ def not_indexed(items: list[str], uds=None) -> Waiting:
             out.paths.append(path)
             continue
         vectors = item.vectors
-        if vectors is None:
+        if vectors is None or any(part in path for part in text_only):
             continue
         if vectors.get("state") == "off":
             out.off = True
@@ -282,7 +285,7 @@ SLEEP: Callable[[float], None] = time.sleep
 CLOCK: Callable[[], float] = time.monotonic
 
 
-def wait_indexed(place: Place, step: str, uds=None) -> list[str]:
+def wait_indexed(place: Place, step: str, uds=None, text_only: tuple = ()) -> list[str]:
     """Index the evidence now and wait until every item is indexed, its
     vectors included, at most INDEX_WAIT_SEC; then the run is in Error
     (package_jobs.Blocked). The items' paths."""
@@ -290,7 +293,7 @@ def wait_indexed(place: Place, step: str, uds=None) -> list[str]:
     items = index_now(place, uds)
     started = CLOCK()
     while True:
-        waiting = not_indexed(items, uds)
+        waiting = not_indexed(items, uds, text_only)
         if not waiting.paths:
             return items
         if CLOCK() - started >= INDEX_WAIT_SEC:

@@ -341,7 +341,7 @@ def mark(doc: dict) -> None:
                       "JARVIS reached the mark step.",
                       "A new run, which gathers the evidence first.")
     if record.get("marked_at"):
-        pe.wait_indexed(place, STEP)        # marked once: every run reuses it
+        pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))        # marked once: every run reuses it
         return
     folder = place.folder / MARK
     if folder.exists():                     # a run that stopped part way: marked again
@@ -353,7 +353,7 @@ def mark(doc: dict) -> None:
     mark_prose(doc, files, rows)
     relate_to_questions(doc, files)
     _write(place, doc, files)
-    pe.wait_indexed(place, STEP)
+    pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))
     records.update(place.record, lambda d: {**(d or {}), "marked_at": time.time(),
                                             "marked": INDEX},
                    by=records.JARVIS, change="evidence marked",

@@ -251,7 +251,7 @@ def test_evidence_not_indexed_in_ten_minutes_puts_the_run_in_error(tmp_path, tra
     doc = _job(tmp_path, "", [{"type": "content", "text": "Words."}])
     clock = iter(range(0, 10_000, 120))
     monkeypatch.setattr(pe, "CLOCK", lambda: next(clock))
-    monkeypatch.setattr(pe, "not_indexed", lambda items, uds=None: pe.Waiting(list(items)))
+    monkeypatch.setattr(pe, "not_indexed", lambda items, uds=None, text_only=(): pe.Waiting(list(items)))
     with pytest.raises(pj.Blocked) as blocked:
         package_gather.gather(pj.get(doc["id"]))
     assert blocked.value.step == "gather" and "within 10 minutes" in blocked.value.reason
@@ -495,3 +495,23 @@ def test_tim_s_record_is_his_own_work_first_then_what_he_said_elsewhere(tmp_path
     assert all(u is None for _t, u, _k in searched)
     row = next(r for r in pe.read_manifest(place) if r.stored == pe.TIM_RECORD)
     assert row.knowledge_state == pe.KNOWS
+
+
+def test_what_the_program_reads_back_is_waited_for_by_its_text_only(monkeypatch):
+    """The mark step's output is read back from its own files by the
+    program: its vectors are made in the background, never waited for."""
+    class Item:
+        def __init__(self, state, complete):
+            self.data = {"state": state}
+            self.vectors = {"state": "on", "complete": complete}
+
+    class Uds:
+        items = {"/e/files/a.md": Item("indexed", False),
+                 "/e/mark/files/a.md.json": Item("indexed", False),
+                 "/e/mark/marked.json": Item("pending", False)}
+
+        def get(self, writer, path, streams):
+            return self.items[path]
+    waiting = pe.not_indexed(list(Uds.items), Uds(), text_only=("/mark/",))
+    assert waiting.paths == ["/e/files/a.md", "/e/mark/marked.json"], \
+        "raw evidence waits for its vectors; mark output only until its text is read"
