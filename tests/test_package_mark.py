@@ -108,6 +108,8 @@ def _gathered(tmp_path, checkout, monkeypatch):  # noqa: F811
 
 def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
         tmp_path, gh, checkout, transcript, monkeypatch, roles):  # noqa: F811
+    # One worker: the pages made by the window alone, not shared across workers.
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"claude": 1, "codex": 1})
     doc = _gathered(tmp_path, checkout, monkeypatch)
     package_mark.mark(pj.get(doc["id"]))
     place = pe.place_of(doc)

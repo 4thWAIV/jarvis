@@ -323,7 +323,11 @@ def refresh(item_id: str, search: Search, folder_for: Optional[FolderFor] = None
 class Refresher:
     """Every changed Work item's research made again on a thread of its own,
     so a report's write never waits for it; an item changed again while it
-    waits is made again once."""
+    waits is made again once. The thread is the research's one worker: it
+    keeps one SummarizationSession across the items it summarises (made
+    from the summarizer for the Work items' folder at its first, item 38:
+    one session reused as marking's workers keep theirs), closed when the
+    research stops."""
 
     def __init__(self) -> None:
         self._waiting: set[str] = set()
@@ -331,6 +335,7 @@ class Refresher:
         self._search: Optional[Search] = None
         self._folder_for: Optional[FolderFor] = None
         self._summarizer: Optional[Summarizer] = None
+        self._summary = None                # the worker's held SummarizationSession
         self._thread: Optional[threading.Thread] = None
 
     def start(self, search: Search, folder_for: Optional[FolderFor] = None,
@@ -357,20 +362,42 @@ class Refresher:
             self._waiting |= {str(i) for i in ids}
             self._lock.notify_all()
 
+    def _held(self, _folder: Path):
+        """The worker's one SummarizationSession, made at its first use."""
+        if self._summary is None and self._summarizer is not None:
+            self._summary = self._summarizer(data_paths.work_dir())
+        return self._summary
+
+    def _close_summary(self) -> None:
+        summary, self._summary = self._summary, None
+        close = getattr(summary, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - closing never stops the worker
+                log.warning("work research: the summarization session did not close",
+                            exc_info=True)
+
     def _run(self) -> None:
         while True:
             with self._lock:
-                while not self._waiting:
+                while not self._waiting and not (self._search is None and self._summary):
                     self._lock.wait()
-                item_id = self._waiting.pop()
                 search, folder_for = self._search, self._folder_for
-                summarizer = self._summarizer
+                if search is None:
+                    self._waiting.clear()
+                    item_id = None
+                else:
+                    item_id = self._waiting.pop()
             if search is None:
+                self._close_summary()
                 continue
             try:
-                refresh(item_id, search, folder_for, summarizer=summarizer)
+                refresh(item_id, search, folder_for,
+                        summarizer=self._held if self._summarizer is not None else None)
             except Exception:  # noqa: BLE001 - the next change makes it again
                 log.warning("work research: %s could not be looked up", item_id, exc_info=True)
+                self._close_summary()
 
 
 REFRESHER = Refresher()

@@ -18,6 +18,7 @@ import logging
 from jarvis import worker_activity
 import os
 import difflib
+import functools
 import hashlib
 import re
 import secrets
@@ -2758,7 +2759,8 @@ async def start_session_watcher() -> None:
     _spawn(_watch_agent_keys())
     _spawn(_watch_package_jobs())
     work_research.REFRESHER.start(_research_search, _research_folder_for,
-                                  sessions.BrainSummarizationSession)
+                                  functools.partial(sessions.BrainSummarizationSession,
+                                                    keep=True))
     _subsystems_task = _spawn(_watch_subsystems())
     _follow_usage_poll()
 

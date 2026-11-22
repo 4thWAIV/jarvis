@@ -143,9 +143,10 @@ def test_the_reserve_is_the_expected_answer_never_more_than_the_most_it_can_take
     assert not pages.Budget(window=1_000, answer_most=300).fits(400, 400), \
         "with no expected answer the whole most is reserved"
     pick = model_tiers.Pick("codex", "gpt-6.1-terra", 3, "t", ["gpt-6.1-terra"])
-    assert pages.budget(pick, "marking").expected == pages.EXPECTED_ANSWER["marking"] * \
-        pages.SAFETY == 0.5
-    assert pages.budget(pick, "classification").expected == 1.0
+    assert pages.budget(pick, "marking").expected == pytest.approx(
+        pages.EXPECTED_ANSWER["marking"] * pages.SAFETY) == pytest.approx(0.44)
+    assert pages.budget(pick, "classification").expected == pytest.approx(0.6), \
+        "the smart passes' measured answer, the smaller one"
     assert pages.budget(pick, "retrieval").expected is None
     assert model_tiers.PARALLEL == {"claude": 3, "codex": 10}
 
@@ -199,13 +200,23 @@ async def _made(cls):
     return cls()
 
 
-def test_the_answers_are_shared_across_the_workers_but_never_below_a_minutes_worth():
+def test_the_answers_are_shared_evenly_across_the_workers():
     room = pages.Budget(window=1_000_000, answer_most=1_000_000, expected=0.5)
     docs = [pages.Doc(f"d{n}", [pages.Atom([f"d{n}"], 10, 20)]) for n in range(10_000)]
     packed = pages.pack(docs, fixed=100, room=room, spread=10)
     assert len(packed) == 10, "200,000 tokens of answer over ten workers"
     assert all(p.answer <= 20_000 for p in packed)
     small = [pages.Doc(f"s{n}", [pages.Atom([f"s{n}"], 10, 20)]) for n in range(50)]
-    assert len(pages.pack(small, fixed=100, room=room, spread=10)) == 1, \
-        "a thousand tokens of answer is one page: a minute's answer is the least share"
-    assert pages.share([pages.Atom([], 1, 5_000)], 10) == 5_000
+    assert len(pages.pack(small, fixed=100, room=room, spread=10)) == 10, \
+        "small material is spread across the workers too: no floor of its own"
+    assert len(pages.pack(small, fixed=100, room=room, spread=1)) == 1
+    assert pages.share([pages.Atom([], 1, 5_000), pages.Atom([], 1, 10)], 10) == 5_000, \
+        "never less than one atom's answer"
+
+
+def test_the_budget_still_bounds_a_page_when_the_share_is_larger():
+    room = pages.Budget(window=4_000, answer_most=4_000, expected=0.5)
+    docs = [pages.Doc(f"d{n}", [pages.Atom([f"d{n}"], 100, 10)]) for n in range(100)]
+    packed = pages.pack(docs, fixed=100, room=room, spread=2)
+    assert len(packed) > 2 and all(100 + p.given <= 2_000 for p in packed), \
+        "every page at most half the window, whatever the share"

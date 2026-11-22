@@ -783,8 +783,11 @@ async def test_marking_gives_each_sentence_its_top_labels(monkeypatch, tmp_path)
               sessions.Label("thin", "Too little.")]
     # Smart passes (Tim 2026-11-21): whole sentences only, each with at most
     # its top 3 labels at 0.5 or more, none when none reaches 0.5.
-    once = _Once({"parts": [{"id": "1:s1", "labels": [{"label": "background", "score": 0.5}]},
-                            {"id": "1:s2", "labels": []}]})
+    # The pages are shared across the workers (model_tiers.PARALLEL), so
+    # each sentence may be a page of its own: each page answers its own ids.
+    said = {"1:s1": [{"label": "background", "score": 0.5}], "1:s2": []}
+    once = _Once(lambda text: {"parts": [
+        {"id": i, "labels": said[i]} for i in re.findall(r'<part id="([^"]+)"', text)]})
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     marked = await sessions.BrainMarkingSession(tmp_path).mark(
         text, labels, [sessions.Known("He said fix it.", "knows")], 5)
@@ -841,6 +844,8 @@ def _small_window(monkeypatch, answer_most):
 
 @pytest.mark.asyncio
 async def test_several_files_share_a_page_each_given_whole(monkeypatch, tmp_path):
+    # One worker: the pages made by the window alone, not shared across workers.
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"claude": 1, "codex": 1})
     labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
     texts = [sessions.Text("files/a.md", "Alpha broke. We fixed it."),
              sessions.Text("files/b.md", "Beta broke, so we fixed it too.")]
@@ -886,6 +891,8 @@ async def test_a_long_file_is_split_across_pages_at_its_section_breaks(monkeypat
 
 @pytest.mark.asyncio
 async def test_a_page_not_answered_is_asked_again_once_then_halved(monkeypatch, tmp_path):
+    # One worker: the pages made by the window alone, not shared across workers.
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"claude": 1, "codex": 1})
     text = "One broke. Two broke. Three broke. Four broke."
     labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
 
@@ -958,6 +965,8 @@ async def test_pages_are_asked_in_parallel_each_worker_keeping_its_session(monke
 
 @pytest.mark.asyncio
 async def test_a_script_is_marked_slide_by_slide_with_the_whole_script(monkeypatch, tmp_path):
+    # One worker: the pages made by the window alone, not shared across workers.
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"claude": 1, "codex": 1})
     from jarvis import package_script
     script = _script(words="Fix the store.")
     script["slides"].append({**_script()["slides"][0], "id": "second",
@@ -993,6 +1002,8 @@ async def test_a_script_is_marked_slide_by_slide_with_the_whole_script(monkeypat
 
 @pytest.mark.asyncio
 async def test_classification_adds_background_and_takes_no_states(monkeypatch, tmp_path):
+    # One worker: the pages made by the window alone, not shared across workers.
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"claude": 1, "codex": 1})
     once = _Once({"items": [{"id": "1", "questions": [{"question": "q1", "score": 0.9}]},
                             {"id": "2", "questions": []}]})
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
@@ -1437,6 +1448,7 @@ async def test_extraction_asks_every_file_on_one_session(monkeypatch, tmp_path):
 
         async def ask(self, text, timeout, answer_format=None, strict=True):
             self.forms.append(answer_format or self.answer_format)
+            await asyncio.sleep(0.01)       # a turn takes time: the other worker starts
             return sessions.Reply("{}", {"values": []})
 
     def for_role(role, prompt, folder, answer_format=None, **kwargs):
@@ -1444,11 +1456,86 @@ async def test_extraction_asks_every_file_on_one_session(monkeypatch, tmp_path):
         made[-1].answer_format = answer_format
         return made[-1]
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", for_role)
-    out = await sessions.BrainExtractionSession(tmp_path).extract_many(
-        [("a log", [sessions.Field("error", "an error")]),
-         ("a transcript", [sessions.Field("command", "a command")]),
-         ("another log", [sessions.Field("error", "an error")])], 5)
+    asks = [("a log", [sessions.Field("error", "an error")]),
+            ("a transcript", [sessions.Field("command", "a command")]),
+            ("another log", [sessions.Field("error", "an error")])]
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"codex": 1})
+    out = await sessions.BrainExtractionSession(tmp_path).extract_many(asks, 5)
     assert len(made) == 1 and made[0].opened == 1 and made[0].fresh_calls == 2
     assert [f["properties"]["values"]["items"]["properties"]["field"]["enum"]
-            for f in made[0].forms] == [["error"], ["command"], ["error"]]
+            for f in made[0].forms] == [["error"], ["command"], ["error"]], \
+        "each text's form goes with its turn"
     assert [o[0]["field"] for o in out] == ["error", "command", "error"]
+    # Item 38: one session per worker, as marking's workers keep theirs.
+    made.clear()
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"codex": 2})
+    out = await sessions.BrainExtractionSession(tmp_path).extract_many(asks, 5)
+    assert len(made) == 2 and all(m.opened == 1 for m in made)
+    assert sum(m.fresh_calls for m in made) == 1, "three texts on two workers' sessions"
+    assert [o[0]["field"] for o in out] == ["error", "command", "error"], "in the asked order"
+
+
+class _Held:
+    """A role's session that counts what is done with it."""
+    made = []
+
+    def __init__(self, answer, engine="codex"):
+        self.answer, self.opened, self.fresh_calls, self.closed, self.turns = answer, 0, 0, 0, []
+        self.pick = model_tiers.Pick(engine, "m", 3, "t", ["m"])
+        self.answer_format = None
+        self.prompt = ""
+
+    async def open(self):
+        self.opened += 1
+
+    async def fresh(self):
+        self.fresh_calls += 1
+
+    async def close(self):
+        self.closed += 1
+
+    async def ask(self, text, timeout, answer_format=None, strict=True):
+        self.turns.append((text, answer_format))
+        return sessions.Reply(json.dumps(self.answer), self.answer)
+
+
+def _holding(monkeypatch, answer, engine="codex"):
+    made = []
+
+    def for_role(role, prompt, folder, answer_format=None, **kwargs):
+        made.append(_Held(answer, engine))
+        made[-1].prompt, made[-1].answer_format = prompt, answer_format
+        return made[-1]
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", for_role)
+    return made
+
+
+@pytest.mark.asyncio
+async def test_retrieval_keeps_one_session_across_its_calls_while_kept(monkeypatch, tmp_path):
+    made = _holding(monkeypatch, {"references": []})
+    kept = sessions.BrainRetrievalSession(tmp_path, keep=True)
+    refs = [sessions.Reference("r1", "the judges PR")]
+    await kept.resolve(refs, 5)
+    await kept.resolve(refs, 5)
+    assert len(made) == 1 and made[0].opened == 1 and made[0].fresh_calls == 1
+    assert made[0].closed == 0
+    await kept.close()
+    assert made[0].closed == 1
+    assert made[0].turns[0][1] is not None, "Codex takes the form with each turn"
+    made.clear()
+    await sessions.BrainRetrievalSession(tmp_path).resolve(refs, 5)
+    assert made[0].closed == 1, "not kept: closed after its call"
+
+
+def test_summarization_keeps_one_session_across_its_calls_while_kept(monkeypatch, tmp_path):
+    made = _holding(monkeypatch, {"summaries": []}, engine="claude")
+    sources = [sessions.Source("q", sessions.source_text([("/a.md", "It is ready.")]))]
+    kept = sessions.BrainSummarizationSession(tmp_path, keep=True)
+    kept.summarize(sources, "Work item w1")
+    kept.summarize(sources, "Work item w2")
+    assert len(made) == 1 and made[0].opened == 1 and made[0].fresh_calls == 1
+    assert [t[1] for t in made[0].turns] == [None, None], \
+        "Claude takes the form with its process, started again by fresh"
+    kept.close()
+    assert made[0].closed == 1
+

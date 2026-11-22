@@ -50,7 +50,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Protocol, TypeVar
+from typing import Awaitable, Callable, Optional, Protocol, TypeVar
 from xml.sax.saxutils import quoteattr, unescape
 
 from jarvis import (brain_provider, evidence_types, model_tiers, pages, private_files,
@@ -1146,19 +1146,71 @@ class _PagedRole:
             except NotInForm as e:
                 raise pages.NotChecked(str(e)) from e
             return check(answer, page)
+        return await self.each(first, packed, lambda: self._session(system, form), ask_page,
+                               timeout, failed)
 
+    async def each(self, first, packed: list[pages.Page], make: Callable[[], Awaitable],
+                   ask_page: Callable[[object, pages.Page], Awaitable[T]],
+                   timeout: Optional[float], failed: str) -> list[T]:
+        """The pages asked by the brain's own number of workers
+        (model_tiers.PARALLEL), each keeping one session (pages.run); what
+        it took kept in `reports` and the run's report."""
         report = pages.Report()
         self.reports.append(report)
         wall, _ = run_executor.bounds(timeout)
         try:
             return await pages.run(
-                packed, first=first, make=lambda: self._session(system, form),
-                parallel=parallel, ask=ask_page,
+                packed, first=first, make=make,
+                parallel=model_tiers.PARALLEL.get(first.pick.engine, 1), ask=ask_page,
                 failed=lambda why: SessionFailed(f"{failed}: {why}"), report=report,
                 wait_most=wall)
         finally:
             log.info("%s: %s", self.role, json.dumps(report.summary()))
             run_report.pages(self.role, report.summary())
+
+
+class _Held:
+    """One role's session kept across its calls, as each worker of a paged
+    role keeps its own (item 38: one session reused for extraction,
+    summarization and retrieval as marking does): made and opened at the
+    first call, given a new conversation (`fresh`; on Codex a new thread on
+    the same app server) before each after, its answer's form the call's
+    own. A call that fails
+    closes it; the next makes another. With `keep` False it is closed after
+    every call."""
+
+    def __init__(self, role: str, folder: Path, pick_args: dict, keep: bool = False):
+        self.role, self.folder, self.pick_args, self.keep = role, Path(folder), pick_args, keep
+        self.session = None
+
+    async def ask(self, system: str, text: str, form: dict, timeout: Optional[float]) -> Reply:
+        if self.session is not None and getattr(self.session, "prompt", system) != system:
+            await self.close()
+        try:
+            if self.session is None:
+                self.session = await asyncio.to_thread(
+                    BrainChatSession.for_role, self.role, system, self.folder,
+                    answer_format=form, **self.pick_args)
+                await self.session.open()
+            else:
+                self.session.answer_format = form
+                await self.session.fresh()
+            # Claude takes the form with its process (started again by
+            # `fresh`); Codex with each turn.
+            return await self.session.ask(
+                text, timeout, answer_format=None if self.session.pick.engine == "claude"
+                else form)
+        except BaseException:
+            await self.close()
+            raise
+        finally:
+            if not self.keep:
+                await self.close()
+
+    async def close(self) -> None:
+        session, self.session = self.session, None
+        if session is not None:
+            await session.close()
 
 
 class BrainClassificationSession:
@@ -1227,9 +1279,9 @@ class BrainExtractionSession:
     the program to occur verbatim at its stated position; one that does
     not is dropped. A field with no value is returned empty. Its context is
     the sentence it sits in, read by the program. Several texts are asked
-    on one session (`extract_many`), a new conversation for each after the
-    first (on Codex a new thread on the same app server), as marking's
-    workers keep theirs."""
+    by parallel workers (`extract_many`), each keeping one session, a new
+    conversation for each text after its first (on Codex a new thread on
+    the same app server), as marking's workers keep theirs."""
 
     FORM_OF = staticmethod(lambda fields: _object({"values": _array(_object({
         "field": {"type": "string", "enum": [f.name for f in fields]},
@@ -1238,6 +1290,7 @@ class BrainExtractionSession:
     def __init__(self, folder: Path, **pick_args):
         self.folder = Path(folder)
         self.pick_args = pick_args
+        self.paged = _PagedRole("extraction", folder, pick_args)
 
     @staticmethod
     def _first(text: str, fields: list[Field]) -> tuple[str, str]:
@@ -1252,33 +1305,36 @@ class BrainExtractionSession:
 
     async def extract_many(self, asks: list[tuple[str, list[Field]]], timeout: Optional[float]
                            ) -> list[list[dict]]:
-        """Each (text, its fields) answered in turn on one session (the
-        approved prompt's role part is the same for every text): for each
-        after the first a new conversation (`fresh`), its form the
-        session's own (a Claude session started again takes it at launch)
-        and given with the turn."""
+        """Each (text, its fields) answered, one text a call, asked by the
+        brain's own number of workers (model_tiers.PARALLEL), each worker
+        keeping one session across its texts (pages.run: a new conversation
+        for each after its first; the approved prompt's role part is the
+        same for every text). The form goes with each turn (a text's fields
+        are its type's); an answer not in its form is asked again once."""
         if not asks:
             return []
-        out: list[list[dict]] = []
-        session = None
-        try:
-            for text, fields in asks:
-                form = self.FORM_OF(fields)
-                system, first = self._first(text, fields)
-                if session is None:
-                    session = BrainChatSession.for_role("extraction", system, self.folder,
-                                                        answer_format=form, **self.pick_args)
-                    await session.open()
-                    answer = (await session.ask(first, timeout)).answer
-                else:
-                    session.answer_format = form
-                    await session.fresh()
-                    answer = (await session.ask(first, timeout, answer_format=form)).answer
-                out.append(self._checked(text, fields, answer or {}))
-        finally:
-            if session is not None:
-                await session.close()
-        return out
+        system = self._first(*asks[0])[0]
+        packed = []
+        for n in range(len(asks)):
+            atom = pages.Atom([n], 0, 0)
+            packed.append(pages.Page([pages.Entry(pages.Doc(str(n), [atom]), [atom], True)]))
+
+        def make():
+            return asyncio.to_thread(BrainChatSession.for_role, "extraction", system,
+                                     self.folder, **self.pick_args)
+
+        async def ask_page(session, page: pages.Page) -> tuple[int, list[dict]]:
+            n = page.items[0]
+            text, fields = asks[n]
+            try:
+                answer = (await session.ask(self._first(text, fields)[1], timeout,
+                                            answer_format=self.FORM_OF(fields))).answer
+            except NotInForm as e:
+                raise pages.NotChecked(str(e)) from e
+            return n, self._checked(text, fields, answer or {})
+        found = dict(await self.paged.each(await make(), packed, make, ask_page, timeout,
+                                           "extraction could not answer one file"))
+        return [found[n] for n in range(len(asks))]
 
     @staticmethod
     def _checked(text: str, fields: list[Field], answer: dict) -> list[dict]:
@@ -1518,11 +1574,13 @@ class BrainRetrievalSession:
     """On the brain providers: works out what each free-text reference names (sessions.yaml
     RetrievalSession): a ChatSession on the retrieval role, its read-only
     search tools only; it never fetches, copies, summarises or judges. The
-    program fetches what each entry names (gather)."""
+    program fetches what each entry names (gather). Its session is held
+    across its calls (`_Held`) while `keep`, else closed after each."""
 
-    def __init__(self, folder: Path, **pick_args):
+    def __init__(self, folder: Path, keep: bool = False, **pick_args):
         self.folder = Path(folder)
         self.pick_args = pick_args
+        self.held = _Held("retrieval", folder, pick_args, keep)
 
     async def resolve(self, references: list[Reference], timeout: float) -> list[dict]:
         nullable = {"type": ["string", "null"]}
@@ -1536,9 +1594,7 @@ class BrainRetrievalSession:
             "searched": _TEXT}))})
         system, first = role_prompt("retrieval", {
             "{list}": "\n".join(_tag("reference", r.text, id=r.id) for r in references)})
-        session = BrainChatSession.for_role("retrieval", system, self.folder, answer_format=form,
-                                       **self.pick_args)
-        answer = (await session.once(first, timeout)).answer
+        answer = (await self.held.ask(system, first, form, timeout)).answer
         by_id = {str(r.get("id")): r for r in answer.get("references") or []
                  if isinstance(r, dict)}
         out = []
@@ -1551,6 +1607,9 @@ class BrainRetrievalSession:
                         "entries": entries if resolved == OK else [],
                         "searched": str(said.get("searched") or "")})
         return out
+
+    async def close(self) -> None:
+        await self.held.close()
 
 
 # ── SummarizationSession ──────────────────────────────────────────────────
@@ -1619,12 +1678,16 @@ class BrainSummarizationSession:
     rejected by the program (`cited_in_sources`). Its prompt is
     role-prompts.md Summarization, its role tier 3, effort low and its own
     engines.json entry, `summarization` (Tim, 2026-11-20). Without either
-    it cannot be started and says so (`SessionFailed`)."""
+    it cannot be started and says so (`SessionFailed`). Its session is
+    held across its calls on an event loop of its own (`_Held`) while
+    `keep` (the server's Work item research, one worker), else closed after
+    each; `close` ends it."""
 
     FORM = _object({"summaries": _array(_object({
         "source_id": _TEXT, "text": _TEXT, "cites": _array(_TEXT)}))})
 
-    def __init__(self, folder: Path, timeout: Optional[float] = None, **pick_args):
+    def __init__(self, folder: Path, timeout: Optional[float] = None, keep: bool = False,
+                 **pick_args):
         missing = [what for what, there in (
             ("an approved prompt (role-prompts.md)", SUMMARIZATION in role_prompts.PROMPTS),
             ("a role with its effort and engines.json entry (sessions.yaml role_tiers_v1, "
@@ -1635,6 +1698,8 @@ class BrainSummarizationSession:
         self.folder = Path(folder)
         self.timeout = timeout
         self.pick_args = pick_args
+        self.held = _Held(SUMMARIZATION, folder, pick_args, keep)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def summarize(self, sources: list[Source], purpose: str) -> list[Summary]:
         if not sources:
@@ -1643,13 +1708,29 @@ class BrainSummarizationSession:
             "{purpose}": purpose,
             "{sources: each id, then its hits with their paths}":
                 "\n".join(_tag("source", s.text, id=s.id) for s in sources)})
-        session = BrainChatSession.for_role(SUMMARIZATION, system, self.folder,
-                                            answer_format=self.FORM, **self.pick_args)
-        answer = asyncio.run(session.once(first, self.timeout)).answer or {}
+        if self._loop is None:
+            self._loop = asyncio.new_event_loop()
+        try:
+            answer = self._loop.run_until_complete(
+                self.held.ask(system, first, self.FORM, self.timeout)).answer or {}
+        finally:
+            if not self.held.keep:
+                self._end_loop()
         said = [Summary(str(s.get("source_id") or ""), str(s.get("text") or ""),
                         [str(c) for c in s.get("cites") or []])
                 for s in answer.get("summaries") or [] if isinstance(s, dict)]
         return cited_in_sources(said, sources)
+
+    def _end_loop(self) -> None:
+        loop, self._loop = self._loop, None
+        if loop is not None:
+            loop.close()
+
+    def close(self) -> None:
+        """Its held session ended (the server's research worker stopping)."""
+        if self._loop is not None:
+            self._loop.run_until_complete(self.held.close())
+        self._end_loop()
 
 
 # ── edits ─────────────────────────────────────────────────────────────────

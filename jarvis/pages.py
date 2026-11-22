@@ -60,11 +60,12 @@ NO_BREAK, PARAGRAPH, SECTION = 0, 1, 2
 
 
 # The expected answer of a paged role, in output tokens per input token,
-# measured on the 2026-11-21 proof (package-121122ef070f's evidence on
-# Codex: marking 984k in, 230k out; classification 337k in, 164k out), and
-# the safety factor it is reserved with. A role not named here reserves the
-# most its answer can take.
-EXPECTED_ANSWER = {"marking": 0.25, "classification": 0.5}
+# measured on the smart passes' proof of 2026-11-21 (package-121122ef070f's
+# evidence on Codex, whole sentences with at most their top 3 at 0.5 or
+# more: marking 287,363 in, 61,278 out, 0.21; classification 156,993 in,
+# 46,596 out, 0.30), and the safety factor it is reserved with. A role not
+# named here reserves the most its answer can take.
+EXPECTED_ANSWER = {"marking": 0.22, "classification": 0.3}
 SAFETY = 2
 
 
@@ -273,13 +274,15 @@ def pack(docs: Sequence[Doc], fixed: int, room: Budget, spread: int = 1) -> list
     page is split across pages, each piece ending at a section break where
     one falls late enough, given with its context.
 
-    `spread`, the workers that ask the pages at once: the answer is what a
-    call takes its time over (measured 2026-11-21 on Codex: about 55
-    output tokens a second, so a page answering 18,000 tokens took six
-    minutes, and one asked to answer twice that gave up), so the most the
-    answers can take is shared evenly across the workers: no page's answer
-    more than its share (`share`), or one atom's where that is larger, and
-    never split below a minute's answer (LEAST_SHARE)."""
+    `spread`, the workers that ask the pages at once: the pages are asked
+    in parallel, so the answers are shared evenly across the workers that
+    ask them (`share`), no page's answer more than its share, or one
+    atom's where that is larger; the budget still bounds every page, so
+    material more than the workers' pages hold fills them toward half the
+    window. Measured 2026-11-21 on Codex, package-121122ef070f's evidence:
+    two pages filled to half the window were each answered with a few
+    hundred tokens that did not check, and their halves took six minutes
+    each; shared across ten workers the same marking took 137 s."""
     if not room.fits(fixed, 0):
         raise TooLarge(f"the instructions alone ({fixed} tokens) do not fit half of the "
                        f"model's {room.window}-token window")
@@ -337,25 +340,15 @@ def pack(docs: Sequence[Doc], fixed: int, room: Budget, spread: int = 1) -> list
     return pages
 
 
-# What a page's answer is written at, measured on Codex 2026-11-21 (the
-# proof's marking halves: 18,456 to 19,599 output tokens in 337 to 359 s),
-# and the least answer worth a page of its own: what is written in a minute.
-# Below it, splitting only sends the instructions again for nothing.
-OUTPUT_PER_SEC = 55
-LEAST_SHARE = OUTPUT_PER_SEC * 60
-
-
 def share(atoms: Sequence[Atom], spread: int) -> int:
     """The most one page's answer may take when `spread` workers ask the
     pages at once: an even share of every atom's answer, never less than
-    the largest one atom's or LEAST_SHARE."""
+    the largest one atom's."""
     if not atoms:
         return 0
     largest = max(a.answer for a in atoms)
     total = sum(a.answer for a in atoms)
-    if spread <= 1:
-        return max(largest, total)
-    return max(largest, min(total, LEAST_SHARE), math.ceil(total / spread))
+    return max(largest, math.ceil(total / max(spread, 1)))
 
 
 # ── asking the pages ──────────────────────────────────────────────────────

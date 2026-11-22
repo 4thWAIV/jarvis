@@ -202,3 +202,37 @@ def test_the_engine_search_finds_a_record_by_its_words(tmp_path):
     hit = next(h for h in found["hits"] if h["key"] == f"{work_store.folder_of(item_id)}/"
                f"{item_id}.work")
     assert hit["why"] and "folders" in (hit["text"] or "")
+
+
+def test_the_research_worker_keeps_one_summarization_session(tmp_path):
+    first = _item(tmp_path)
+    second = work_store.create("Another item", "folder", str(tmp_path)).id
+    made, closed, summarised = [], threading.Event(), []
+
+    class Held:
+        def __init__(self, folder):
+            made.append(folder)
+
+        def summarize(self, sources, purpose):
+            summarised.append(purpose)
+            return []
+
+        def close(self):
+            closed.set()
+
+    def search(text, under, kinds):
+        return {"hits": [{"key": "/work/notes.md", "text": "Ready."}]}
+    refresher = work_research.Refresher()
+    refresher.start(search, summarizer=Held)
+    try:
+        refresher.changed({first})
+        deadline = time.monotonic() + 20
+        while len(summarised) < 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        refresher.changed({second})
+        while len(summarised) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+    finally:
+        refresher.stop()
+    assert len(summarised) == 2 and len(made) == 1, "one session across both items"
+    assert closed.wait(10), "closed when the research stops"

@@ -1673,18 +1673,18 @@ the form and the brain's starting context) and the page at most half the
 window, and with them the answer's reserve and a margin of a quarter of
 the window, all inside it; the answer never more than the brain gives in
 one turn (`model_tiers.ANSWER_MOST`). The reserve is the expected sparse
-answer measured on the 2026-11-21 proof (`pages.EXPECTED_ANSWER`: 0.25
-output tokens per input token for marking, 0.5 for classification) times
-`pages.SAFETY` (2), never more than the most the page's answer can take
-(each sentence with its top 3), so pages fill toward half the window;
-and the answers are shared across the workers that ask them
+answer measured on the smart passes' proof of 2026-11-21
+(`pages.EXPECTED_ANSWER`: 0.22 output tokens per input token for
+marking, 0.3 for classification) times `pages.SAFETY` (2), never more
+than the most the page's answer can take (each sentence with its top 3),
+so pages fill toward half the window; and since the pages are asked in
+parallel the answers are shared evenly across the workers that ask them
 (`pages.pack`'s `spread`, `pages.share`): no page's answer bound more
-than an even share of all of them, or one atom's, never below a minute's
-answer (`LEAST_SHARE`, at the measured `OUTPUT_PER_SEC`, 55 output tokens
-a second on Codex), since a call takes its time over its answer (the
-2026-11-21 proof: two pages filled to half the window were each answered
-with a few hundred tokens, not checked, asked again and halved, and each
-half took six minutes). Tokens are counted cheaply and high
+than an even share of all of them, or one atom's, the budget still
+bounding every page (the 2026-11-21 proof: two pages filled to half the
+window were each answered with a few hundred tokens that did not check,
+and their halves took six minutes each; shared across ten workers the
+same marking took 137 s). Tokens are counted cheaply and high
 (`pages.tokens`, three bytes a token). Several files to a page, each given
 whole beside its parts; a file too long for one page split across pages,
 a piece ending at a section break (a heading, else a paragraph) where one
@@ -1706,8 +1706,14 @@ a new thread on the same app server, `CodexSession.new_thread`; on Claude,
 whose one-shot process answers one turn, started again); what it took is
 logged and kept in the run's timing report (`pages.Report`: pages, calls,
 asked again, halved, rate-limit hits and the wait, seconds and tokens;
-`run_report.pages`). `extract_prose` asks every file on one session, a
-new conversation a file (`BrainExtractionSession.extract_many`).
+`run_report.pages`). `extract_prose` asks one file a call, by the same
+workers each keeping one session, a new conversation a file
+(`BrainExtractionSession.extract_many`, `_PagedRole.each`, each file's
+form with its turn). Retrieval and summarization hold their session
+across their calls (`sessions._Held`, `keep`): the server's Work item
+research is one worker keeping one summarization session across the
+items it summarises (`work_research.Refresher`), closed when it stops;
+retrieval is one call a run.
 `relate_to_questions`: every fact and marked sentence of every file, in
 the same order, to ClassificationSession (tier 3) at once, packed and
 asked the same way (an item never split), each given at most its top 3
@@ -1961,10 +1967,15 @@ few minutes a step is a failure) is flagged `too_slow`, and `totals` sums
 them. `quality.json` (`run_report.quality`, written after the swarm and
 the deck steps, timed as a `quality-report` step): per stage the concerns
 signed off and left, each item left mapped to the 28 labels by the
-marking role (each sentence's top labels), repeated in the next pass by
+marking role (each sentence's top labels; each finding once, a later
+write keeping what an earlier one mapped), repeated in the next pass by
 the same concern (by meaning at `package_swarm.SAME_MEANING`) versus
 fixed, passes to done, Tim's reader's questions raised versus answered,
-the script's facts with a source that is there versus unanswered, the
+the script's facts checked by the program (`run_report._facts`: its
+source a file the run holds and its stated position, lines, characters
+or a section by its heading, in that file, `located`; of those, the ones
+whose words are there, `quoted`) versus a position not found, a source
+not found and unanswered, the
 sender's questions asked and grouped with every merge at the 0.85 line
 (both wordings and their score, kept by `group_by_meaning` in
 `swarm.json`'s `asking.groups`), and the deck review's stages and
