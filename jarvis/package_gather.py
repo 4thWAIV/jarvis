@@ -21,8 +21,11 @@ waits for it to be indexed. In order:
   gather_jarvis_material the Work item (its pieces, reports, notes and
                          history), the PRs and CI runs recorded against it,
                          the sending session's commands with their results
-                         and its final messages, and Tim's record on it;
-                         into `jarvis/`, the PRs and CI runs into `retrieved/`
+                         and its final messages, and Tim's record (what he
+                         said on the Work item, then what he said anywhere
+                         else that bears on the package, found in the
+                         engine); into `jarvis/`, the PRs and CI runs into
+                         `retrieved/`
   set_knowledge_state    each row's state, by program (package_evidence)
   manifest               `manifest.json`, one row per stored file
   index                  indexed urgently and waited for, then linked
@@ -203,30 +206,31 @@ def tim_text(work_ids: list[str]) -> str:
     each, his answers to its decisions, his own acts on it (his review, his
     note when he said it is not done, a hold he released, work he added),
     his answers on every package sent for it, open or closed, with his own
-    words, and his Reject of its package runs, with his words."""
+    words, and his Reject of its package runs, with his words. Part 1 of
+    his record (`tim_record`), its headings under that part's."""
     from jarvis import conversation_log, package_inbox, package_jobs, work_store
-    parts = ["# Tim's record on this work", ""]
+    parts: list[str] = []
     for work_id in work_ids:
         item = work_store.get(work_id)
-        parts += [f"## Work item {work_id}: {item.title}", ""]
+        parts += [f"### Work item {work_id}: {item.title}", ""]
         said = [i for i in _all(lambda b: conversation_log.work_thread(work_id, b))
                 if not i.inbound]
-        parts += ["### His messages", ""] + [f"- {i.id} ({i.at:.0f}): {i.text}" for i in said] \
+        parts += ["#### His messages", ""] + [f"- {i.id} ({i.at:.0f}): {i.text}" for i in said] \
             + (["- none"] if not said else []) + [""]
         answered = [a for a in item.answered if a.where != work_store.WITHDRAWN
                     and a.where not in work_store.PACKAGE_CLOSED]
-        parts += ["### His answers to its decisions", ""] + \
+        parts += ["#### His answers to its decisions", ""] + \
             [f"- {a.key}: {a.question} His answer ({a.where}): {a.answer}" for a in answered] + \
             (["- none"] if not answered else []) + [""]
         acts = work_store.events(work_id, kinds=set(work_store.HIS_KINDS)
                                  - {work_store.DECISION_MADE}, limit=10_000)
-        parts += ["### His acts on it", ""] + \
+        parts += ["#### His acts on it", ""] + \
             [f"- {e.seq} {e.kind} ({e.at:.0f}): {e.summary}"
              + (f" {json.dumps(e.detail, ensure_ascii=False)}" if e.detail else "")
              for e in acts] + (["- none"] if not acts else []) + [""]
         if item.review_note:
-            parts += ["### His note when he said it is not done yet", "", item.review_note, ""]
-        parts += ["### His answers on its earlier packages", ""]
+            parts += ["#### His note when he said it is not done yet", "", item.review_note, ""]
+        parts += ["#### His answers on its earlier packages", ""]
         packages = package_inbox.every_for_work(work_id)
         for row in packages:
             why = f" ({row.closed_why})" if row.closed_why else ""
@@ -237,7 +241,7 @@ def tim_text(work_ids: list[str]) -> str:
                 parts.append("  - nothing answered")
         if not packages:
             parts.append("- none")
-        parts += ["", "### His Reject of its package runs", ""]
+        parts += ["", "#### His Reject of its package runs", ""]
         rejected = package_jobs.rejections_on_work(work_id)
         parts += [f"- {r['package']} {r['run']}: {r['words']}" for r in rejected] + \
             (["- none"] if not rejected else [])
@@ -251,20 +255,163 @@ def rejections_text(package: str) -> str:
     said = package_jobs.rejections(package)
     if not said:
         return ""
-    return "\n".join(["## His Reject of this package's earlier runs", ""]
+    return "\n".join(["### His Reject of this package's earlier runs", ""]
                      + [f"- {r['run']}: {r['words']}" for r in said] + [""])
 
 
+# Tim's record comes from everything he has said (construction-drafts.md,
+# decided by Tim): what he said on the package's own Work item, and what he
+# said anywhere else that bears on the package's questions and evidence,
+# found in the engine by words and meaning. The two are kept apart, the
+# package's own first and weighted higher.
+OWN_PART = ("## Part 1: on this package's own Work item (weighted higher: his word on this "
+            "work itself)")
+ELSEWHERE_PART = ("## Part 2: what he said anywhere else that bears on this package's "
+                  "questions and evidence (weighted lower than Part 1)")
+# The records that hold what he said: the conversation's turns, messages
+# (his to agents), Work items (his answers and decisions) and packages (his
+# answers in them).
+HIS_RECORDS = ("turn", "message", "work", "package")
+# His words in the conversation's turns: what he said and typed.
+HIS_TURNS = ("heard", "typed")
+# His words in a message document: what he sent an agent.
+HIS_MESSAGE_ITEMS = ("to_agent",)
+
+
+def _patience() -> float:
+    """How long a search for his words is waited for: the run's own wall
+    clock (Settings' run_timeout_sec, run_executor.bounds), never a
+    deadline that drops results."""
+    from jarvis import run_executor
+    return run_executor.bounds()[0]
+
+
+def _engine_search():
+    from jarvis import work_research
+    return work_research.engine_search(_patience())
+
+
+# How Tim's record searches the engine for what he said elsewhere (tests
+# give their own): work_research.Search.
+SEARCH: Callable[[], Callable] = _engine_search
+
+
+def tim_terms(doc: dict) -> list[str]:
+    """What his words elsewhere are searched for: each of the handoff's
+    questions, and the words of its evidence (a label's or content's text,
+    and why any entry was given), each once."""
+    request = doc.get("request") or {}
+    terms = [str(q.get("text") or "") for q in request.get("questions") or []]
+    for entry in request.get("evidence") or []:
+        if entry.get("type") in ("label", "content"):
+            terms.append(str(entry.get("text") or ""))
+        terms.append(str(entry.get("why") or ""))
+    return [t for t in dict.fromkeys(t.strip() for t in terms) if t]
+
+
+def _his_words(path: str, own: set[str]) -> list[str]:
+    """What he said in the record at `path`, as lines; none when it holds
+    nothing of his, or is of the package's own Work items (Part 1)."""
+    from jarvis import message_records, package_inbox, records, work_store
+    kind = path.rsplit(".", 1)[-1] if "." in path.rsplit("/", 1)[-1] else ""
+    rec = records.get(path)
+    if rec is None:
+        return []
+    data = rec.data
+    if kind == "turn":
+        if data.get("kind") not in HIS_TURNS or not data.get("text"):
+            return []
+        return [f"- he {'said' if data['kind'] == 'heard' else 'typed'} "
+                f"(turn {data.get('id')}, {float(data.get('at') or 0):.0f}): {data['text']}"]
+    if kind == "message":
+        out = []
+        for item in message_records.doc_items(rec):
+            if item.get("kind") in HIS_MESSAGE_ITEMS and item.get("text") \
+                    and item.get("about") not in own:
+                out.append(f"- his message {item.get('id')} to "
+                           f"{item.get('agent_name') or 'an agent'} "
+                           f"({float(item.get('at') or 0):.0f}): {item['text']}")
+        return out
+    if kind == "work":
+        item_id = str(data.get("id") or "")
+        item = work_store.get(item_id) if item_id and item_id not in own else None
+        if item is None:
+            return []
+        out = [f"- his answer on Work item {item.id} ({item.title}), {a.key}: {a.question} "
+               f"His answer ({a.where}): {a.answer}"
+               for a in item.answered if a.where != work_store.WITHDRAWN
+               and a.where not in work_store.PACKAGE_CLOSED and a.answer]
+        if item.review_note:
+            out.append(f"- his note on Work item {item.id} ({item.title}) when he said it is "
+                       f"not done yet: {item.review_note}")
+        return out
+    if kind == "package":
+        row = package_inbox.get(str(data.get("id") or ""))
+        if row is None or (row.work_id and row.work_id in own):
+            return []
+        return [f"- his answer in package {row.id} ({row.title}), {q.id}: {q.question} "
+                f"His answer: {q.answered_id()}"
+                for q in evidence_readers.package_questions(row) if q.answer]
+    return []
+
+
+def said_elsewhere(doc: dict, own: list[str]) -> str:
+    """Part 2 of Tim's record: what he said anywhere else that bears on the
+    package's questions and evidence (his conversation turns, messages,
+    answers and decisions), found in the engine by words and meaning, each
+    search run at once (work_research.at_once, engine_search with the run's
+    own patience); each record once, with the terms it was found for, in
+    the order found. A search that could not be made says so."""
+    from jarvis import work_research
+    terms = tim_terms(doc)
+    parts = [ELSEWHERE_PART, ""]
+    if not terms:
+        return "\n".join(parts + ["- nothing to search for: no questions or evidence words", ""])
+    search = SEARCH()
+    calls = [(lambda t=t, k=k: [work_research._search(search, "knowledge_search", t, None, [k])])
+             for t in terms for k in HIS_RECORDS]
+    looked = work_research.at_once(calls)
+    found: dict[str, list[str]] = {}
+    failed = []
+    for q in looked:
+        if q.get("error"):
+            failed.append(f"- could not be searched ({q['kinds'][0]}, {q['query']}): "
+                          f"{q['error']}")
+        for hit in q["hits"]:
+            path = str(hit.get("path") or "")
+            if path:
+                found.setdefault(path, [])
+                if q["query"] not in found[path]:
+                    found[path].append(q["query"])
+    mine = set(own)
+    lines = []
+    for path, why in found.items():
+        said = _his_words(path, mine)
+        if said:
+            lines += said + [f"  (found for: {'; '.join(why)})"]
+    parts += lines or ["- nothing of his found elsewhere"]
+    return "\n".join(parts + failed + [""])
+
+
 def tim_record(doc: dict) -> tuple[str, str]:
-    """Tim's record for a run (`jarvis/tim.md`) and its source: his record on
-    the run's Work items, his Reject of their package runs among it; with
-    no Work item, his Reject words on this package's earlier runs."""
+    """Tim's record for a run (`jarvis/tim.md`) and its source, in two
+    parts kept apart: Part 1, his record on the run's Work items (his
+    Reject of their package runs among it; with no Work item, his Reject
+    words on this package's earlier runs), first and weighted higher; Part
+    2, what he said anywhere else that bears on the package
+    (`said_elsewhere`)."""
     from jarvis import package_jobs, work_store
     ids = _work_ids(doc)
     if ids:
-        return tim_text(ids), ", ".join(work_store.path_of(i) for i in ids)
-    return ("# Tim's record on this work\n\n" + rejections_text(doc["package"]),
-            package_jobs.path_of(doc))
+        own = tim_text(ids)
+        source = ", ".join(work_store.path_of(i) for i in ids)
+    else:
+        own = rejections_text(doc["package"]) or "- no Work item, and nothing of his on " \
+            "this package yet\n"
+        source = package_jobs.path_of(doc)
+    text = "\n".join(["# Tim's record on this work", "", OWN_PART, "", own,
+                      said_elsewhere(doc, ids)])
+    return text, source + ", the engine (his words elsewhere)"
 
 
 def refresh_tim(doc: dict) -> Row:
@@ -364,9 +511,8 @@ def gather_jarvis_material(g: Gathering) -> None:
                    resolved=NOT_FOUND, reason=source, origin="jarvis"))
     else:
         g.jarvis(pe.SENDER_SESSION, text, source)
-    if ids:
-        text, source = tim_record(g.doc)
-        g.jarvis(pe.TIM_RECORD, text, source)
+    text, source = tim_record(g.doc)
+    g.jarvis(pe.TIM_RECORD, text, source)
 
 
 # ── the step ──────────────────────────────────────────────────────────────

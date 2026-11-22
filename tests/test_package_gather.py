@@ -240,7 +240,10 @@ def test_a_package_with_no_work_item_keeps_its_evidence_under_packages(tmp_path,
     place = pe.place_of(doc)
     assert place.path == f"/packages/{doc['package']}/evidence"
     assert (place.folder / "given/1.md").read_text() == "What the sender knows."
-    assert not (place.folder / "jarvis/tim.md").exists()     # no Work item, no record of his on it
+    tim = (place.folder / "jarvis/tim.md").read_text(encoding="utf-8")
+    assert package_gather.OWN_PART in tim and "no Work item" in tim, \
+        "no Work item: his record holds what he said elsewhere alone"
+    assert package_gather.ELSEWHERE_PART in tim
 
 
 def test_evidence_not_indexed_in_ten_minutes_puts_the_run_in_error(tmp_path, transcript,
@@ -440,3 +443,55 @@ def test_tim_s_record_holds_his_answers_on_every_earlier_package_and_his_rejects
            "it costs first.)" in text
     assert f"{earlier['package']} run-1: Lead with the cost." in text
     assert "### His acts on it" in text
+
+
+def test_tim_s_record_is_his_own_work_first_then_what_he_said_elsewhere(tmp_path, transcript,
+                                                                       monkeypatch):
+    """construction-drafts.md, "Tim's record comes from everything he has
+    said" (decided by Tim): what he said on the package's own Work item,
+    then, kept apart and weighted lower, what he said anywhere else that
+    bears on the package's questions and evidence, found in the engine by
+    words and meaning, each search run at once with the run's patience."""
+    from jarvis import conversation_log as cl, work_api
+    work = _work(tmp_path)
+    cl.append(cl.ConversationItem.new(
+        "heard", "Merge PR 171 only once the folders move is checked on the copy."))
+    cl.append(cl.ConversationItem.new("jarvis", "Merge PR 171 is noted, sir."))
+    other = work_store.create("Merge policy", "folder", str(tmp_path))
+    work_store.record(work_store.WorkEvent(other.id, "decision_needed", "Merge PR 171 now?",
+                                           {"key": "merge"}))
+    work_api.answer_decision(other.id, "merge", "Not before the copy is checked.", "voice")
+    searched = []
+    real = package_gather.SEARCH
+
+    def search():
+        found = real()
+
+        def counted(text, under, kinds):
+            searched.append((text, under, tuple(kinds or ())))
+            return found(text, under, kinds)
+        return counted
+    monkeypatch.setattr(package_gather, "SEARCH", search)
+    doc = _job(tmp_path, work, [{"type": "label", "text": "the folders move on the copy"}])
+    monkeypatch.setattr(package_gather, "RETRIEVAL", lambda d: FakeRetrieval({}))
+    package_gather.gather(pj.get(doc["id"]))
+
+    place = pe.place_of(doc)
+    text = (place.folder / pe.TIM_RECORD).read_text(encoding="utf-8")
+    own, _, elsewhere = text.partition(package_gather.ELSEWHERE_PART)
+    assert package_gather.OWN_PART in own and f"### Work item {work}" in own, \
+        "the package's own Work item first"
+    assert "weighted higher" in package_gather.OWN_PART
+    assert "weighted lower" in package_gather.ELSEWHERE_PART
+    assert "Merge PR 171 only once the folders move is checked on the copy." in elsewhere
+    assert "is noted, sir" not in text, "JARVIS's own turns are not his words"
+    assert f"Work item {other.id} (Merge policy), merge: Merge PR 171 now? His answer " \
+           f"(voice): Not before the copy is checked." in elsewhere
+    assert f"Work item {work}" not in elsewhere, "his own Work item is Part 1's alone"
+    assert "found for: Merge PR 171?" in elsewhere
+    assert {(t, k) for t, _u, k in searched} == {
+        (t, (k,)) for t in ("Merge PR 171?", "the folders move on the copy")
+        for k in package_gather.HIS_RECORDS}, "each term in each of his records, everywhere"
+    assert all(u is None for _t, u, _k in searched)
+    row = next(r for r in pe.read_manifest(place) if r.stored == pe.TIM_RECORD)
+    assert row.knowledge_state == pe.KNOWS

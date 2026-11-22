@@ -462,6 +462,14 @@ EXEMPT = {
         "it gives ClassificationSession a file's facts and marked parts as items, each with its stored path, position and field as its source; the session's material inside its tagged items, never a brain header, never said"),
     "package_gather.tim_text": (
         "it writes Tim's record into the package's evidence file jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
+    "package_gather._his_words": (
+        "it gives his own words found elsewhere in the engine (his turns, his messages to agents, "
+        "his answers) as lines of Part 2 of Tim's record, the package's evidence file "
+        "jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
+    "package_gather.said_elsewhere": (
+        "it writes Part 2 of Tim's record, what he said elsewhere, and any search that could not "
+        "be made, into the package's evidence file jarvis/tim.md, read by the package's steps as "
+        "material; never a brain header, never said"),
     "session_transcript.find": (
         "it returns the path of a session's own transcript, found by its id; nothing it reads is printed, said or put in a header"),
     "work_research.markdown": (

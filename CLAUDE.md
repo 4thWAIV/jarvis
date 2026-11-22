@@ -1591,14 +1591,27 @@ decisions and every event), the PRs and CI runs recorded against it (its
 pieces' evidence), the sending session's commands with their results and
 each turn's final message from its own transcript
 (`session_transcript.py`) as
-`jarvis/sender-session.md`, and Tim's record on it as `jarvis/tim.md`
-(`package_gather.tim_record`, the one writer, gather's and `refresh_tim`'s):
+`jarvis/sender-session.md`, and Tim's record as `jarvis/tim.md`
+(`package_gather.tim_record`, the one writer, gather's and `refresh_tim`'s;
+written with or without a Work item), from everything he has said (Tim's
+decision, construction-drafts.md), in two parts kept apart. Part 1
+(`OWN_PART`), first and weighted higher, on the package's own Work items:
 his messages on it, his answers to its decisions, his own acts on it
 (`work_store.HIS_KINDS`: his review, a hold he released, work he added),
 his note, his answers on every package sent for it, open or closed
 (`package_inbox.every_for_work`; a signed-off package's answers are his
 record too), and his Reject of its package runs with his words
-(`package_jobs.rejections_on_work`).
+(`package_jobs.rejections_on_work`); with no Work item, his Reject of the
+package's earlier runs. Part 2 (`ELSEWHERE_PART`, `said_elsewhere`), what
+he said anywhere else that bears on the package: each of the handoff's
+questions and its evidence's words (`tim_terms`) searched by words and
+meaning in each of his records (`HIS_RECORDS`: turn, message, work,
+package), every search at once (`work_research.at_once` over
+`engine_search` with the run's own wall clock, no deadline that drops
+results), and of each record found only his own words (`_his_words`: his
+heard and typed turns, his messages to agents, his answers and note on
+another Work item, his answers in a package), none of Part 1's Work items,
+each with the terms it was found for. The file's knowledge state is knows.
 Each row's knowledge state is set by program from where it came
 (`package_evidence.knowledge_state`: knows, had access, probably does not
 know). The evidence is then read into the engine at once by the content
@@ -1950,8 +1963,8 @@ the form. His Reject of a delivered package (the standard vote, at sign-off)
 starts the package's next run too (`server._rejected_starts_new_run`,
 `package_jobs.delivered_as`, `rejected`): his words are kept on the run and
 in Tim's record in the evidence (`package_gather.refresh_tim`,
-`jarvis/tim.md`, "His Reject of its package runs", or with no Work item
-"His Reject of this package's earlier runs").
+`jarvis/tim.md`'s Part 1, "His Reject of its package runs", or with no
+Work item "His Reject of this package's earlier runs").
 Each run's reports (`run_report.py`, work-list item 38; no new judge, no
 new model) are written beside it by the program. `timing.json`: each step
 of `package_jobs.run` timed (`run_report.step`; a step run again after
