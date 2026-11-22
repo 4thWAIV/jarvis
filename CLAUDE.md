@@ -1591,8 +1591,14 @@ decisions and every event), the PRs and CI runs recorded against it (its
 pieces' evidence), the sending session's commands with their results and
 each turn's final message from its own transcript
 (`session_transcript.py`) as
-`jarvis/sender-session.md`, and Tim's record on it (his messages, his
-answers, his note, his answers on its earlier packages) as `jarvis/tim.md`.
+`jarvis/sender-session.md`, and Tim's record on it as `jarvis/tim.md`
+(`package_gather.tim_record`, the one writer, gather's and `refresh_tim`'s):
+his messages on it, his answers to its decisions, his own acts on it
+(`work_store.HIS_KINDS`: his review, a hold he released, work he added),
+his note, his answers on every package sent for it, open or closed
+(`package_inbox.every_for_work`; a signed-off package's answers are his
+record too), and his Reject of its package runs with his words
+(`package_jobs.rejections_on_work`).
 Each row's knowledge state is set by program from where it came
 (`package_evidence.knowledge_state`: knows, had access, probably does not
 know). The evidence is then read into the engine at once by the content
@@ -1641,24 +1647,52 @@ its error, file and line; a build error and the failed step; a CI job with
 its result and times; a command and its outcome), a value kept only
 verbatim at its position. A prose file is not extracted: the design names
 no facts for one, and its marks say so (`extraction`,
-`package_mark.NO_PROSE_FACTS`), waiting on Tim. `mark_prose`: each prose
-file (`evidence_structured.is_prose_file`: a prose-typed file, the sender's
-words in `handoff.json`, a retrieved pull request's description; never the
-prose parts of a log or a transcript) to MarkingSession (tier 3), in
-batches small enough to be answered whole (`sessions.BrainMarkingSession`:
-whole sentences with their phrases, at most `sessions.BATCH_PARTS` parts
-where a sentence allows, a batch not answered whole halved and asked again;
-each given the whole file, among Tim's material or as the text itself;
-sessions.yaml MarkingSession batches, Tim 2026-11-20), every part scored
-against the 28 labels (`briefing_labels.py`, the one list: name,
-meaning, action, kind keep, fix or remove, origin and example), with Tim's
-material: the file itself and every item he knows or had access to, whole,
-each with its state, and every item he probably does not know named by its
-source and state only (`package_mark.tims_material`).
-`relate_to_questions`: every fact and marked part of a file to
-ClassificationSession (tier 3), one call a file, every one with its place
-in the file, scored against each of the handoff's questions plus
-background, never told what Tim knows. Each call
+`package_mark.NO_PROSE_FACTS`), waiting on Tim. The files are first put
+in the order they are marked (`package_mark.grouped`, `pages.grouped`):
+the same type together, then the same folder, then each followed by the
+one closest in meaning (the engine's own embeddings, where it has them).
+`mark_prose`: every prose file in full (`evidence_structured.is_prose_file`:
+a prose-typed file, the sender's words in `handoff.json`, a retrieved pull
+request's description; never the prose parts of a log or a transcript; no
+file left out) to MarkingSession (tier 3) at once
+(`sessions.BrainMarkingSession.mark_files`), every part scored against the
+28 labels (`briefing_labels.py`, the one list: name, meaning, action, kind
+keep, fix or remove, origin and example), with Tim's material: every item
+he knows or had access to, whole, each with its state, and every item he
+probably does not know named by its source and state only
+(`package_mark.tim_known`); a file on the page is named there by its
+state alone, its words given once. Pages (`pages.py`, Mark rebuilt for
+speed, Tim 2026-11-21; it replaced the 40-part batches): packed by the
+program to a budget from the model's own context window (`pages.Budget`,
+`model_tiers.context_window`: Codex's own `models_cache.json` in JARVIS's
+Codex home, else `model_tiers.WINDOW`; the smallest of the models its
+sweep may take): the instructions (system prompt, labels, Tim's material,
+the form and the brain's starting context) and the page at most half the
+window, and with them the most the page's answer can take (every part with
+every label) and a margin of a quarter of the window, all inside it; the
+answer never more than the brain gives in one turn
+(`model_tiers.ANSWER_MOST`). Tokens are counted cheaply and high
+(`pages.tokens`, three bytes a token). Several files to a page, each given
+whole beside its parts; a file too long for one page split across pages,
+a piece ending at a section break (a heading, else a paragraph) where one
+falls in its later half, each piece keeping its file and positions and
+given with its whole file. The answer is sparse (`sessions._sparse_form`):
+each part by its id with only the labels that apply and their scores, one
+left out 0; the program checks every id is the page's, each once and none
+missing, and every label one of the 28 (`_check_sparse`); a page that does
+not check is asked again once, then split in half, each half the same
+way, down to one sentence. The pages are asked at once, at most the
+brain's own number (`model_tiers.PARALLEL`, 3), each worker keeping one
+session across its pages (`pages.run`; `BrainChatSession.fresh`: on Codex
+a new thread on the same app server, `CodexSession.new_thread`; on Claude,
+whose one-shot process answers one turn, started again); what it took is
+logged (`pages.Report`: pages, calls, asked again, halved, seconds and
+tokens). `relate_to_questions`: every fact and marked part of every file,
+in the same order, to ClassificationSession (tier 3) at once, packed and
+asked the same way (an item never split; each answered with only the
+questions it bears on), every one with its place in the file, scored
+against each of the handoff's questions plus background, never told what
+Tim knows. Each call
 that finds no model or cannot answer puts the run in Error
 (`package_jobs.asked`, which the gather step's retrieval uses too). What it
 read goes beside the evidence, `mark/<stored file>.json` for each file (its
@@ -1762,8 +1796,9 @@ screen (an ordered list of pieces: `text`, `his_words` with its source, a
 `picture` by path, a `table`), what JARVIS says over it (`narration`), the
 source path and position of every fact (`facts`), the questions it
 answers and the decision it asks if any; marked slide by slide
-(`mark_slides`: one batch never two slides' words, the whole script with
-each, every part at its slide and field, `package_script.units`; the 28
+(`mark_slides`: packed into pages as the evidence is, a page never part
+of two slides, the whole script with each, every part at its slide and
+field, `package_script.units`; the 28
 labels, Tim's material by `package_mark.tim_known`). Each participant's
 first message is made at its first turn (`_Firsts`): its share of the
 evidence (`evidence`, `sessions.share_values`: Tim's reader what he knows
@@ -1864,7 +1899,8 @@ the form. His Reject of a delivered package (the standard vote, at sign-off)
 starts the package's next run too (`server._rejected_starts_new_run`,
 `package_jobs.delivered_as`, `rejected`): his words are kept on the run and
 in Tim's record in the evidence (`package_gather.refresh_tim`,
-`jarvis/tim.md`, "His Reject of this package's earlier runs").
+`jarvis/tim.md`, "His Reject of its package runs", or with no Work item
+"His Reject of this package's earlier runs").
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
@@ -3512,10 +3548,13 @@ not found empty and its context the sentence around it;
 sentence rule, `speech.sentence_end`, extended for headings, list items
 and paragraphs, and phrases cut at commas, semicolons, colons, dashes,
 brackets and the joining words) and scores every part against every label
-in batches small enough to be answered whole (`BATCH_PARTS`, a sentence
-never apart from its phrases, each call given the whole file; one not
-answered whole halved and asked again; a script slide by slide,
-`mark_slides`), Tim's material with its knowledge states; `BrainRetrievalSession`
+in pages that fit the model (`pages.py`: several files to a page, a
+sentence never apart from its phrases, each file given whole beside its
+parts; the answer sparse and checked; one that does not check asked again
+once, then halved; the pages asked in parallel, one session a worker; a
+script slide by slide, `mark_slides`), Tim's material with its knowledge
+states; `BrainClassificationSession` is paged the same way;
+`BrainRetrievalSession`
 answers each free-text reference as typed entries of
 `evidence_types.NAMED_BY_LABEL` or not found; the program applies only
 edits whose old text is at their offsets (`apply_edits`; `EDIT`, and
@@ -3648,6 +3687,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   mark step, what a program reads in the evidence (each file's type, its
   structured facts, its prose), and the 28 labels a briefing is marked with
   (see "A package's evidence")
+- `pages.py` — A role's material packed into pages that fit its model's
+  window with room for the answer, files grouped by type, folder and
+  meaning, and the pages asked in parallel, one session a worker (marking,
+  classification and the script's marking; see "A package's evidence")
 - `package_swarm.py` / `research_log.py` — The research and swarm steps:
   the author's research turn, the cooperative swarm's outline, fill and
   fix passes, its sign-offs, questions to the sender and what is left,
@@ -3740,7 +3783,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `sessions.py` / `roles.py` / `role_mcp.py` / `role_prompts.py` /
   `model_tiers.py` / `text_parts.py` / `evidence_types.py` — The sessions a
   package is made with, each role's launch and tools, a role's own tool
-  server, the approved prompts, the four tiers and the sweep, the written
+  server, the approved prompts, the four tiers and the sweep (with each
+  model's window, its most answer and each brain's parallel calls), the written
   text splitter and the evidence types (see "The sessions a package is
   made with")
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
