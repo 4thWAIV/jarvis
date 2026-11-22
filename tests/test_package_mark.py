@@ -162,13 +162,12 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
         assert not [f for f in by_file[stored]["facts"] if f["by"] == "extraction"]
 
     # mark_prose: every prose file in full, packed into pages that fit the
-    # model (Mark rebuilt for speed); every part scored against all 28
-    # labels, the sparse answer's left-out labels 0; each part's segment is
+    # model (Mark rebuilt for speed); each whole sentence with at most its
+    # top 3 labels at 0.5 or more (smart passes); each part's segment is
     # the file's own characters at its position.
     situation = by_file["files/situation.md"]["parts"]
-    assert situation and all(set(p["scores"]) == set(briefing_labels.NAMES) for p in situation)
-    assert all(p["scores"]["evidence"] == 0.8 and p["scores"]["filler"] == 0.0
-               for p in situation)
+    assert situation and all(p["kind"] == "sentence" for p in situation)
+    assert all(p["scores"] == {"evidence": 0.8} for p in situation)
     for p in situation:
         assert text_of("files/situation.md")[p["position"]["start"]:p["position"]["end"]] \
             == p["segment"]

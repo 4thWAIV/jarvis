@@ -130,3 +130,70 @@ def test_run_asks_again_once_then_halves_and_raises_what_cannot_check():
                                                        True)])],
                               first=S(), make=lambda: None, parallel=1, ask=never,
                               failed=RuntimeError))
+
+
+def test_the_reserve_is_the_expected_answer_never_more_than_the_most_it_can_take():
+    # Pages filled by a sparse-answer reserve (2026-11-21): the measured
+    # output per input token times the safety factor, capped by the most
+    # the page's answer can take and by the model's turn.
+    room = pages.Budget(window=1_000, answer_most=300, expected=0.5)
+    assert room.reserve(400, 1_000) == 200, "half of what is given"
+    assert room.reserve(400, 50) == 50, "never more than the most it can take"
+    assert room.fits(500, 1_000) and not room.fits(501, 0)
+    assert not pages.Budget(window=1_000, answer_most=300).fits(400, 400), \
+        "with no expected answer the whole most is reserved"
+    pick = model_tiers.Pick("codex", "gpt-6.1-terra", 3, "t", ["gpt-6.1-terra"])
+    assert pages.budget(pick, "marking").expected == pages.EXPECTED_ANSWER["marking"] * \
+        pages.SAFETY == 0.5
+    assert pages.budget(pick, "classification").expected == 1.0
+    assert pages.budget(pick, "retrieval").expected is None
+    assert model_tiers.PARALLEL == {"claude": 3, "codex": 10}
+
+
+def test_pages_fill_toward_half_the_window_with_a_small_answer():
+    room = pages.Budget(window=10_000, answer_most=10_000, expected=0.5)
+    # Each atom given 10 tokens, its answer at most 40 (more than it gives).
+    docs = [pages.Doc(f"d{n}", [pages.Atom([f"d{n}"], 10, 40)]) for n in range(1_000)]
+    packed = pages.pack(docs, fixed=100, room=room)
+    first = packed[0]
+    assert 100 + first.given > 0.45 * room.window, "the page fills toward half the window"
+    assert room.fits(100 + first.given, first.answer)
+
+
+def test_a_rate_limited_call_pauses_every_worker_and_is_asked_again():
+    import time as _time
+    hits = []
+
+    class S:
+        async def open(self):
+            pass
+
+        async def fresh(self):
+            pass
+
+        async def close(self):
+            pass
+
+    async def ask(session, page):
+        if not hits:
+            hits.append(_time.monotonic())
+            raise pages.RateLimited("slow down", resets_at=_time.time() + 0.2)
+        hits.append(_time.monotonic())
+        return page.items
+
+    one = [pages.Page([pages.Entry(_doc(k, [1]), _doc(k, [1]).atoms, True)]) for k in "ab"]
+    report = pages.Report()
+    got = asyncio.run(pages.run(one, first=S(), make=lambda: _made(S), parallel=2, ask=ask,
+                                failed=RuntimeError, report=report, wait_most=5))
+    assert sorted(i for r in got for i in r) == ["a0", "b0"]
+    assert report.rate_limited == 1 and report.waited > 0
+    assert report.summary()["rate_limited"] == 1
+    with pytest.raises(pages.RateLimited):
+        async def always(session, page):
+            raise pages.RateLimited("hours", resets_at=_time.time() + 3_600)
+        asyncio.run(pages.run(one[:1], first=S(), make=lambda: _made(S), parallel=1,
+                              ask=always, failed=RuntimeError, wait_most=5))
+
+
+async def _made(cls):
+    return cls()

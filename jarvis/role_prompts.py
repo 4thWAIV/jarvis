@@ -11,8 +11,11 @@ against the marks is `AUTHOR_REVISE`, given as the program's words. Each `{...}`
 (`fill`), nothing else in the words changes. Each prompt is in two parts in
 its own order: `system`, the role, given as the session's system prompt, and
 `material`, the block of material that closes it, given as its first
-message. A role with no closing material (the editor) is given its material
-turn by turn.
+message. Marking's and classification's scoring lines are the first-round
+wording of the smart passes (Tim 2026-11-21: each sentence, or item, at
+most its top three at 0.5 or more; first-round prompt changes
+pre-approved), recorded in role-prompts.md. A role with no closing
+material (the editor) is given its material turn by turn.
 """
 from __future__ import annotations
 
@@ -201,9 +204,9 @@ PROMPTS: dict[str, Prompt] = {
         system=(
             '(Answer in the schema given with this call.)\n'
             '\n'
-            'You score parts of a text against labels. You never change the text.\n'
+            'You score the sentences of a text against labels. You never change the text.\n'
             '\n'
-            'The text has already been split into sentences and their parts, each with an id. For every part, give every label a score from 0 to 1: 0 means the label does not apply, 1 means the part is plainly this. Score each label on its own: one part can be both background and technical detail.\n'
+            'The text has already been split into sentences, each with an id. For every sentence, give at most the three labels that apply to it most, each with a score from 0.5 to 1, where 1 means the sentence is plainly this; give none when no label reaches 0.5. Score each label on its own: one sentence can be both background and technical detail.\n'
             '\n'
             "Some labels depend on what Tim already knows or has decided (known-to-him, reasks-settled, settled-and-open). For those, Tim's material is given below, each item marked knows (he supplied it or said it), had access (he could have seen it, but nothing shows he looked) or probably does not know. Use the marks for those three labels only."),
         material="{the parts, by id}\n{each label: name, what it means, an example}\n{Tim's material, each item with its knowledge state}"),
@@ -213,7 +216,7 @@ PROMPTS: dict[str, Prompt] = {
             '\n'
             'You say how much each item bears on each question. You never answer the questions.\n'
             '\n'
-            'For every item, give every question, and "background", a score from 0 to 1: 0 means it has nothing to do with it, 1 means it is plainly about it. Score each question on its own; an item can bear on two. An item about none of them scores low on all of them.'),
+            'For every item, give at most the three questions, or "background", it bears on most, each with a score from 0.5 to 1, where 1 means it is plainly about it; give none when none reaches 0.5. Score each question on its own; an item can bear on two.'),
         material="{the items: facts with their file and place, marked parts, each by id}\n{the handoff's questions}"),
     'summarization': Prompt(
         system=(

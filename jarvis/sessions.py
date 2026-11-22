@@ -54,7 +54,8 @@ from typing import Callable, Optional, Protocol, TypeVar
 from xml.sax.saxutils import quoteattr, unescape
 
 from jarvis import (brain_provider, evidence_types, model_tiers, pages, private_files,
-                    role_mcp, role_prompts, roles, run_executor, settings_service, text_parts)
+                    role_mcp, role_prompts, roles, run_executor, run_report, settings_service,
+                    text_parts)
 from jarvis.brain import BrainConfig
 
 log = logging.getLogger("jarvis.sessions")
@@ -68,6 +69,28 @@ class SessionFailed(RuntimeError):
 
 class NotInForm(SessionFailed):
     """A session answered, but not in the form its call gave."""
+
+
+class TimeLimit(SessionFailed):
+    """A session that did not start or answer within the run's bounds
+    (Settings, Agents: run_timeout_sec, run_idle_sec)."""
+
+
+class RateLimited(SessionFailed, pages.RateLimited):
+    """A turn the brain refused as rate-limited: `resets_at`, when it says
+    it takes turns again, or None."""
+
+    def __init__(self, why: str, resets_at: Optional[float] = None):
+        SessionFailed.__init__(self, why)
+        self.resets_at = resets_at
+
+
+def rate_limited(error: str) -> bool:
+    """A turn's error in the brain's words that says it was refused for a
+    rate limit (Codex: "rate limit", "Too Many Requests", 429)."""
+    words = (error or "").lower()
+    return any(w in words for w in ("rate limit", "rate-limit", "ratelimit",
+                                    "too many requests", " 429"))
 
 
 # ── answers in a fixed form ───────────────────────────────────────────────
@@ -204,6 +227,8 @@ class BrainChatSession:
         self._at = -1                       # the sweep's model now open
         self._answered = False              # a turn has been answered on it
         self._tokens: tuple[int, int] = (0, 0)
+        self._blocked_until: Optional[float] = None   # the brain said it refuses turns
+        self._blocked = False
         # The last turn's time and tokens (its context window then, its
         # output), for the swarm's record of each turn.
         self.last_turn: Optional[dict] = None
@@ -261,10 +286,16 @@ class BrainChatSession:
                 self.session = event.conversation_id
         elif isinstance(event, brain_provider.TextDelta):
             self._parts.append(event.text)
+        elif isinstance(event, brain_provider.UsageSeen):
+            self._blocked, self._blocked_until = event.blocked, event.resets_at
         elif isinstance(event, brain_provider.TurnEnded):
             self._tokens = (event.context_tokens, event.output_tokens)
             if self._done is not None and not self._done.done():
-                if event.error:
+                if event.error and (self._blocked or rate_limited(event.error)):
+                    self._done.set_exception(RateLimited(
+                        f"the {self.role.name} session's brain refused the turn for a rate "
+                        f"limit: {event.error}", self._blocked_until if self._blocked else None))
+                elif event.error:
                     self._done.set_exception(SessionFailed(event.error))
                 else:
                     self._done.set_result(event.reply if event.reply is not None
@@ -279,13 +310,14 @@ class BrainChatSession:
     async def _open_one(self, model: str) -> None:
         provider = brain_provider.provider(brain_provider.ENGINES[self.pick.engine])
         self._child = provider.session(self._config(model), self._event, self._exited)
+        run_report.app_server(self.pick.engine)
         wall, _ = run_executor.bounds()
         try:
             async with asyncio.timeout(wall):
                 await self._child.open(self.prompt)
         except TimeoutError as e:
-            raise SessionFailed(f"the {self.role.name} session did not start within "
-                                f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
+            raise TimeLimit(f"the {self.role.name} session did not start within "
+                            f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
         except OSError as e:
             raise SessionFailed(str(e)) from e
         self.model = model
@@ -336,7 +368,7 @@ class BrainChatSession:
                     heard = max(started, getattr(self._child, "heard_at", started))
                     left = idle - (time.monotonic() - heard)
                     if left <= 0:
-                        raise SessionFailed(
+                        raise TimeLimit(
                             f"the {self.role.name} session's brain wrote nothing for "
                             f"{idle:.0f} s (Settings, Agents: run_idle_sec)")
                     try:
@@ -344,8 +376,8 @@ class BrainChatSession:
                     except TimeoutError:
                         continue        # heard since? measured again
         except TimeoutError as e:
-            raise SessionFailed(f"the {self.role.name} session did not answer within "
-                                f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
+            raise TimeLimit(f"the {self.role.name} session did not answer within "
+                            f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
         except OSError as e:
             raise SessionFailed(str(e)) from e
 
@@ -363,10 +395,13 @@ class BrainChatSession:
             text = f"{text}\n\n{SCHEMA_GIVEN}\n{json.dumps(answer_format)}"
         started = time.monotonic()
         while True:
+            began = time.monotonic()
             try:
                 said = await self._turn(text, timeout, answer_format)
                 break
             except SessionFailed as e:
+                self._record(began, _outcome(e) if self._answered or not model_refused(str(e))
+                             else run_report.REFUSED)
                 if self._answered or not model_refused(str(e)):
                     raise
                 # Refused on its first turn: the sweep's next model, the
@@ -383,6 +418,7 @@ class BrainChatSession:
             # The turn's whole use where the brain reports it (Codex: every
             # request of the turn, cached input apart).
             self.last_turn["turn_tokens"] = dict(used)
+        self._record(began, run_report.ANSWERED)
         self._on_log(f"{self.role.name}: turn answered in {self.last_turn['seconds']} s, "
                      f"context {self._tokens[0]} tokens, output {self._tokens[1]} tokens")
         answer = json_answer(said) if form is not None else None
@@ -391,6 +427,25 @@ class BrainChatSession:
                 return Reply(text=said, answer=None)
             raise NotInForm(f"the {self.role.name} session's answer was not in its form")
         return Reply(text=said, answer=answer)
+
+    def _record(self, began: float, outcome: str) -> None:
+        """This call in the run's report (run_report.call): its role, brain,
+        model, tier, effort, seconds, tokens in, cached and out, and how it
+        ended. A turn that did not answer has no tokens of its own."""
+        used = getattr(self._child, "turn_usage", None) if outcome == run_report.ANSWERED \
+            else None
+        tin, out = self._tokens if outcome == run_report.ANSWERED else (0, 0)
+        cached = None
+        if isinstance(used, dict):
+            tin = int(used.get("inputTokens") or 0)
+            cached = int(used.get("cachedInputTokens") or 0)
+            out = int(used.get("outputTokens") or 0)
+        run_report.call({"role": self.role.name, "engine": self.pick.engine,
+                         "model": self.model, "tier": self.pick.tier,
+                         "effort": self.role.effort,
+                         "seconds": round(time.monotonic() - began, 1),
+                         "tokens_in": tin, "cached": cached, "tokens_out": out,
+                         "outcome": outcome, "at": time.time()})
 
     async def _close_child(self) -> None:
         if self._done is not None and not self._done.done():
@@ -428,6 +483,15 @@ class BrainChatSession:
             return await self.ask(text, timeout)
         finally:
             await self.close()
+
+
+def _outcome(e: SessionFailed) -> str:
+    """How a call that did not answer ended, for the run's report."""
+    if isinstance(e, RateLimited):
+        return run_report.RATE_LIMITED
+    if isinstance(e, TimeLimit):
+        return run_report.TIME_LIMIT
+    return run_report.FAILED
 
 
 def role_prompt(role: str, values: dict[str, str]) -> tuple[str, str]:
@@ -957,8 +1021,9 @@ class ClassQuestion:
 
 
 class ClassificationSession(Protocol):
-    """Each item scored against every class: the handoff's questions, plus
-    background (designed around CDM Classify)."""
+    """Each item with the classes it bears on most: the handoff's
+    questions, plus background (designed around CDM Classify); at most
+    TOP, each scored FLOOR or more."""
 
     async def classify(self, items: list[Item], classes: list[ClassQuestion],
                        timeout: float) -> list[dict]: ...
@@ -968,36 +1033,47 @@ class ClassificationSession(Protocol):
 #
 # Mark rebuilt for speed (Tim 2026-11-21): the material packed into pages
 # that fit the model's window (pages.py), the pages asked in parallel, one
-# session kept across a worker's pages, and the answer sparse: each part
-# (or item) by its id with only the labels (or questions) that apply and
-# their scores; one left out is 0. The program checks every id is the
-# page's, each given once and none missing, and every label one of the
-# taxonomy's.
+# session kept across a worker's pages, and the answer sparse. Smart passes
+# (Tim 2026-11-21, construction-drafts.md, the last Tim line): each
+# sentence (or item) by its id with at most its TOP labels (or questions)
+# that apply most, each scored FLOOR or more, none when none reaches FLOOR.
+# The program checks every id is the page's, each given once and none
+# missing, and every label one of the taxonomy's, at most TOP to an id,
+# each scored between FLOOR and 1.
+
+TOP = 3
+FLOOR = 0.5
+_APPLIES = {"type": "number", "minimum": FLOOR, "maximum": 1}
+
 
 def _sparse_form(listed: str, named: str, names: list[str]) -> dict:
     """The sparse answer's form: `listed` (parts, items), each with its id
-    and `named` (labels, questions), only the ones that apply, each scored."""
+    and at most TOP of `named` (labels, questions), each scored FLOOR or
+    more."""
     return _object({listed: {**_array(_object({
         "id": _TEXT,
         named: {**_array(_object({named[:-1]: {"type": "string", "enum": list(names)},
-                                  "score": _SCORE})),
-                "description": f"Only the {named} that apply, each with its score; one "
-                               f"left out scores 0."}})),
+                                  "score": _APPLIES})),
+                "maxItems": TOP,
+                "description": f"At most the {TOP} {named} that apply most, each scored "
+                               f"{FLOOR} or more; none when none reaches {FLOOR}."}})),
         "description": f"Every one of the {listed} given, by its id."}})
 
 
 def _answer_most(listed: str, named: str, page_id: str, names: list[str]) -> int:
-    """The most one entry of a sparse answer can take: its id with every one
-    of `names` scored, in tokens."""
+    """The most one entry of a sparse answer can take: its id with the TOP
+    longest of `names` scored, in tokens."""
+    longest = sorted(names, key=len, reverse=True)[:TOP]
     return pages.tokens(json.dumps({"id": page_id, named: [
-        {named[:-1]: n, "score": 0.125} for n in names]})) + 1
+        {named[:-1]: n, "score": 0.125} for n in longest]})) + 1
 
 
 def _check_sparse(answer: object, listed: str, named: str, ids: list[str],
                   names: list[str]) -> dict[str, dict[str, float]]:
-    """Each id's scores, every name present (0 where left out); raises
-    pages.NotChecked unless every id given is the page's, once each, none
-    missing, and every name scored is one of `names`, between 0 and 1."""
+    """Each id's scores, only the names given (one left out did not reach
+    FLOOR); raises pages.NotChecked unless every id given is the page's,
+    once each, none missing, and every name scored is one of `names`, at
+    most TOP to an id, each between FLOOR and 1."""
     wanted, allowed = set(ids), set(names)
     given = answer.get(listed) if isinstance(answer, dict) else None
     if not isinstance(given, list):
@@ -1009,19 +1085,20 @@ def _check_sparse(answer: object, listed: str, named: str, ids: list[str],
             raise pages.NotChecked("it answered an id that is not on the page")
         if pid in out:
             raise pages.NotChecked("it answered one id twice")
-        scores = {n: 0.0 for n in names}
-        seen: set[str] = set()
-        for s in entry.get(named) or []:
+        listed_names = entry.get(named) or []
+        if len(listed_names) > TOP:
+            raise pages.NotChecked(f"it gave more than {TOP} {named} to one id")
+        scores: dict[str, float] = {}
+        for s in listed_names:
             name = s.get(named[:-1]) if isinstance(s, dict) else None
             value = s.get("score") if isinstance(s, dict) else None
             if name not in allowed:
                 raise pages.NotChecked(f"it gave a name that is not one of the {named}")
-            if name in seen:
+            if name in scores:
                 raise pages.NotChecked(f"it gave one of the {named} twice to one id")
             if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                    or not 0 <= value <= 1:
-                raise pages.NotChecked("it gave a score that is not between 0 and 1")
-            seen.add(name)
+                    or not FLOOR <= value <= 1:
+                raise pages.NotChecked(f"it gave a score that is not between {FLOOR} and 1")
             scores[name] = float(value)
         out[pid] = scores
     missing = wanted - set(out)
@@ -1058,7 +1135,7 @@ class _PagedRole:
         fixed = (pages.tokens(system) + pages.tokens(fixed_material)
                  + pages.tokens(json.dumps(form)) + pages.starting_context(pick.engine))
         try:
-            packed = pages.pack(docs, fixed, pages.budget(pick))
+            packed = pages.pack(docs, fixed, pages.budget(pick, self.role))
         except pages.TooLarge as e:
             raise SessionFailed(f"{self.role}: {e}") from e
 
@@ -1071,20 +1148,23 @@ class _PagedRole:
 
         report = pages.Report()
         self.reports.append(report)
+        wall, _ = run_executor.bounds(timeout)
         try:
             return await pages.run(
                 packed, first=first, make=lambda: self._session(system, form),
                 parallel=model_tiers.PARALLEL.get(pick.engine, 1), ask=ask_page,
-                failed=lambda why: SessionFailed(f"{failed}: {why}"), report=report)
+                failed=lambda why: SessionFailed(f"{failed}: {why}"), report=report,
+                wait_most=wall)
         finally:
             log.info("%s: %s", self.role, json.dumps(report.summary()))
+            run_report.pages(self.role, report.summary())
 
 
 class BrainClassificationSession:
     """On the brain providers: the items without knowledge states (they do
     not judge him), packed into pages (an item never split), the items of
-    one file together, each item answered with only the questions it bears
-    on."""
+    one file together, each item answered with at most the TOP questions
+    it bears on most, each FLOOR or more."""
 
     def __init__(self, folder: Path, **pick_args):
         self.paged = _PagedRole("classification", folder, pick_args)
@@ -1145,24 +1225,62 @@ class BrainExtractionSession:
     """On the brain providers: a fixed answer format, each value checked by
     the program to occur verbatim at its stated position; one that does
     not is dropped. A field with no value is returned empty. Its context is
-    the sentence it sits in, read by the program."""
+    the sentence it sits in, read by the program. Several texts are asked
+    on one session (`extract_many`), a new conversation for each after the
+    first (on Codex a new thread on the same app server), as marking's
+    workers keep theirs."""
+
+    FORM_OF = staticmethod(lambda fields: _object({"values": _array(_object({
+        "field": {"type": "string", "enum": [f.name for f in fields]},
+        "value": _TEXT, "confidence": _SCORE, "start": _OFFSET, "end": _OFFSET}))}))
 
     def __init__(self, folder: Path, **pick_args):
         self.folder = Path(folder)
         self.pick_args = pick_args
 
-    async def extract(self, text: str, fields: list[Field], timeout: float) -> list[dict]:
-        form = _object({"values": _array(_object({
-            "field": {"type": "string", "enum": [f.name for f in fields]},
-            "value": _TEXT, "confidence": _SCORE, "start": _OFFSET, "end": _OFFSET}))})
-        system, first = role_prompt("extraction", {
+    @staticmethod
+    def _first(text: str, fields: list[Field]) -> tuple[str, str]:
+        return role_prompt("extraction", {
             "{text}": _tag("text", text),
             "{fields for this file's type}":
                 "\n".join(_tag("field", f.describes, name=f.name,
                                many="true" if f.many else "false") for f in fields)})
-        session = BrainChatSession.for_role("extraction", system, self.folder, answer_format=form,
-                                       **self.pick_args)
-        answer = (await session.once(first, timeout)).answer
+
+    async def extract(self, text: str, fields: list[Field], timeout: float) -> list[dict]:
+        return (await self.extract_many([(text, fields)], timeout))[0]
+
+    async def extract_many(self, asks: list[tuple[str, list[Field]]], timeout: Optional[float]
+                           ) -> list[list[dict]]:
+        """Each (text, its fields) answered in turn on one session (the
+        approved prompt's role part is the same for every text): for each
+        after the first a new conversation (`fresh`), its form the
+        session's own (a Claude session started again takes it at launch)
+        and given with the turn."""
+        if not asks:
+            return []
+        out: list[list[dict]] = []
+        session = None
+        try:
+            for text, fields in asks:
+                form = self.FORM_OF(fields)
+                system, first = self._first(text, fields)
+                if session is None:
+                    session = BrainChatSession.for_role("extraction", system, self.folder,
+                                                        answer_format=form, **self.pick_args)
+                    await session.open()
+                    answer = (await session.ask(first, timeout)).answer
+                else:
+                    session.answer_format = form
+                    await session.fresh()
+                    answer = (await session.ask(first, timeout, answer_format=form)).answer
+                out.append(self._checked(text, fields, answer or {}))
+        finally:
+            if session is not None:
+                await session.close()
+        return out
+
+    @staticmethod
+    def _checked(text: str, fields: list[Field], answer: dict) -> list[dict]:
         many = {f.name: f.many for f in fields}
         out: list[dict] = []
         for value in answer.get("values") or []:
@@ -1205,8 +1323,9 @@ class Text:
 
 
 class MarkingSession(Protocol):
-    """Marks texts: their sentences and phrases, each scored 0..1 against
-    every label (sessions.yaml MarkingSession)."""
+    """Marks texts: each whole sentence with at most its TOP labels that
+    apply most, each scored FLOOR or more (sessions.yaml MarkingSession;
+    smart passes, Tim 2026-11-21)."""
 
     async def mark_files(self, texts: list[Text], labels: list[Label], knowledge: list[Known],
                          timeout: float) -> dict[str, list[dict]]: ...
@@ -1218,13 +1337,13 @@ class MarkingSession(Protocol):
 @dataclass
 class _Words:
     """One file or slide as it is packed: its tag and key, the whole text
-    given with any page holding some of it ("" for none), and its sentences
-    with their phrases, each part by its own id."""
+    given with any page holding some of it ("" for none), and its
+    sentences, each by its own id."""
     n: int
     tag: str
     key: str
     text: str
-    sentences: list[list[text_parts.Segment]]
+    sentences: list[text_parts.Segment]
 
 
 def _break_before(text: str, sentence: text_parts.Segment, previous_end: int) -> int:
@@ -1236,19 +1355,20 @@ def _break_before(text: str, sentence: text_parts.Segment, previous_end: int) ->
 
 
 class BrainMarkingSession:
-    """On the brain providers: each text's sentences and phrases (split by
-    text_parts), each scored against every label, each label on its own.
-    Tim's material comes with its knowledge states, for the labels that
-    depend on him.
+    """On the brain providers: each text's whole sentences (split by
+    text_parts; a sentence's phrases are not marked, smart passes, Tim
+    2026-11-21), each with at most its TOP labels that apply most, each
+    FLOOR or more, each label on its own. Tim's material comes with its
+    knowledge states, for the labels that depend on him.
 
     In pages (Mark rebuilt for speed, Tim 2026-11-21; it replaced the
     batches of sessions.yaml MarkingSession, 2026-11-20): the texts, in the
     caller's order (similar files together), packed into pages that fit the
     model's window with the instructions, the answer and a margin, several
-    files to a page, a sentence never apart from its phrases; a file too
-    long for one page split across pages at its section breaks. Every page
-    gives each file it holds whole as context, as each batch did. The
-    answer is sparse: each part with only the labels that apply. A script
+    files to a page; a file too long for one page split across pages at its
+    section breaks. Every page gives each file it holds whole as context,
+    as each batch did. The answer is sparse: each sentence with at most its
+    TOP labels at FLOOR or more. A script
     is marked slide by slide (`mark_slides`): a slide never shares a page
     with part of another, and the whole script is given with every page."""
 
@@ -1262,17 +1382,14 @@ class BrainMarkingSession:
 
     async def mark_files(self, texts: list[Text], labels: list[Label], knowledge: list[Known],
                          timeout: float) -> dict[str, list[dict]]:
-        """Each text's parts, by its key, every label scored (0 where the
-        answer left it out). A text's words are given once on a page: an
-        item of Tim's material that is a file on the page is named there by
-        its source and state alone."""
-        words = []
-        for n, t in enumerate(texts):
-            segments = text_parts.split(t.text)
-            words.append(_Words(n + 1, "file", t.key, t.text, _sentences(segments)))
+        """Each text's sentences, by its key, each with the labels it was
+        given (one left out did not reach FLOOR). A text's words are given
+        once on a page: an item of Tim's material that is a file on the
+        page is named there by its source and state alone."""
+        words = [_Words(n + 1, "file", t.key, t.text, _sentences(text_parts.split(t.text)))
+                 for n, t in enumerate(texts)]
         scored = await self._marked(words, "", labels, knowledge, timeout)
-        return {t.key: [_part(s, scored[(w.n, s.id)]) for sentence in w.sentences
-                        for s in sentence]
+        return {t.key: [_part(s, scored[(w.n, s.id)]) for s in w.sentences]
                 for t, w in zip(texts, words)}
 
     async def mark_slides(self, units: list, context: str, labels: list[Label],
@@ -1285,13 +1402,11 @@ class BrainMarkingSession:
         by_slide: dict[str, _Words] = {}
         placed: list[tuple[object, text_parts.Segment]] = []
         for unit in units:
-            segments = [dataclasses.replace(
-                s, id=f"{unit.slide}/{unit.field}/{s.id}",
-                within=f"{unit.slide}/{unit.field}/{s.within}" if s.within else None)
-                for s in text_parts.split(unit.text)]
+            segments = [dataclasses.replace(s, id=f"{unit.slide}/{unit.field}/{s.id}")
+                        for s in _sentences(text_parts.split(unit.text))]
             slide = by_slide.setdefault(unit.slide, _Words(len(by_slide) + 1, "slide",
                                                            unit.slide, "", []))
-            slide.sentences.extend(_sentences(segments))
+            slide.sentences.extend(segments)
             placed += [(unit, s) for s in segments]
         scored = await self._marked(list(by_slide.values()), context, labels, knowledge,
                                     timeout)
@@ -1318,19 +1433,16 @@ class BrainMarkingSession:
         system, fixed = role_prompt("marking", values("", set()))
 
         def part_tag(w: _Words, s: text_parts.Segment) -> str:
-            return _tag("part", s.text, id=f"{w.n}:{s.id}", kind=s.kind,
-                        within=f"{w.n}:{s.within}" if s.within else None)
+            return _tag("part", s.text, id=f"{w.n}:{s.id}")
         docs = []
         for w in words:
             atoms, end = [], 0
             for sentence in w.sentences:
                 atoms.append(pages.Atom(
-                    [(w, s) for s in sentence],
-                    pages.tokens("\n".join(part_tag(w, s) for s in sentence)) + 1,
-                    sum(_answer_most("parts", "labels", f"{w.n}:{s.id}", names)
-                        for s in sentence),
-                    _break_before(w.text, sentence[0], end) if w.text else pages.NO_BREAK))
-                end = sentence[0].end
+                    [(w, sentence)], pages.tokens(part_tag(w, sentence)) + 1,
+                    _answer_most("parts", "labels", f"{w.n}:{sentence.id}", names),
+                    _break_before(w.text, sentence, end) if w.text else pages.NO_BREAK))
+                end = sentence.end
             docs.append(pages.Doc(w.key, atoms, pages.tokens(_tag("text", w.text)) + 1
                                   if w.text else 0, meta=w))
 
@@ -1351,22 +1463,15 @@ class BrainMarkingSession:
             return {ids[pid]: scores for pid, scores in found.items()}
         scored: dict[tuple[int, str], dict] = {}
         for found in await self.paged.ask(system, form, fixed, docs, material, check, timeout,
-                                          "marking could not answer one sentence's parts "
-                                          "whole"):
+                                          "marking could not answer one sentence"):
             scored.update(found)
         return scored
 
 
-def _sentences(segments: list[text_parts.Segment]) -> list[list[text_parts.Segment]]:
-    """Each sentence with its phrases (text_parts gives a sentence, then its
-    phrases)."""
-    out: list[list[text_parts.Segment]] = []
-    for s in segments:
-        if s.kind == text_parts.SENTENCE or not out:
-            out.append([s])
-        else:
-            out[-1].append(s)
-    return out
+def _sentences(segments: list[text_parts.Segment]) -> list[text_parts.Segment]:
+    """The whole sentences (text_parts gives a sentence, then its phrases;
+    only the sentence is marked)."""
+    return [s for s in segments if s.kind == text_parts.SENTENCE]
 
 
 def _part(s: text_parts.Segment, scores: dict) -> dict:

@@ -12,17 +12,24 @@ all 28 labels; about 190 calls of two minutes a package.
   meaning (the engine's own embeddings, where it has them).
 - `pack`: pages packed by the program to a token budget worked out from
   the model's own context window (`Budget`): the instructions and the page
-  at most half the window, and with them the most the page's answer can
-  take and a generous margin, all inside it; the answer never more than
-  the model gives in one turn. Several files to a page; a file too long
+  at most half the window, and with them the answer's reserve and a
+  generous margin, all inside it; the answer never more than the model
+  gives in one turn. The reserve is the expected answer, measured
+  (`EXPECTED_ANSWER`: output tokens per input token of the 2026-11-21
+  proof, times `SAFETY`), never more than the most the page's answer can
+  take (each part with its top labels), so pages fill toward half the
+  window. Several files to a page; a file too long
   for one is split across pages at its section breaks, each piece keeping
   its file and positions. Tokens are counted cheaply, erring high
   (`tokens`).
 - `run`: the pages asked at once, at most the brain's own number
   (model_tiers.PARALLEL), each worker keeping one session across its
   pages (a new conversation for each page, on the same brain process where
-  the brain allows). A page whose answer does not check is asked again
-  once, then split in half, each half asked the same way.
+  the brain allows). A page whose answer does not check (a cut-off answer
+  among them) is asked again once, then split in half, each half asked
+  the same way. A call the brain refuses as rate-limited pauses every
+  worker (`RateLimited`): until the time the brain gives, else for a
+  doubling wait, and the page is asked again; each hit is counted.
 """
 from __future__ import annotations
 
@@ -52,6 +59,15 @@ BYTES_PER_TOKEN = 3
 NO_BREAK, PARAGRAPH, SECTION = 0, 1, 2
 
 
+# The expected answer of a paged role, in output tokens per input token,
+# measured on the 2026-11-21 proof (package-121122ef070f's evidence on
+# Codex: marking 984k in, 230k out; classification 337k in, 164k out), and
+# the safety factor it is reserved with. A role not named here reserves the
+# most its answer can take.
+EXPECTED_ANSWER = {"marking": 0.25, "classification": 0.5}
+SAFETY = 2
+
+
 class TooLarge(ValueError):
     """The material cannot be packed inside the model's window: the
     instructions alone, or one sentence with them, leave no room."""
@@ -67,27 +83,41 @@ def tokens(text: str) -> int:
 @dataclass(frozen=True)
 class Budget:
     """What one call may hold, from the model's own context window: the
-    instructions and the page at most half of it, and with them the most
-    the page's answer can take and a margin of a quarter of it, all inside
-    it; the answer never more than the model gives in one turn."""
+    instructions and the page at most half of it, and with them the
+    answer's reserve and a margin of a quarter of it, all inside it; the
+    answer never more than the model gives in one turn.
+
+    The reserve (`reserve`): `expected` output tokens per input token of
+    the whole call, never more than `most`, the most the page's answer
+    can take; with no `expected`, `most` itself."""
     window: int
     answer_most: int
+    expected: Optional[float] = None
 
     @property
     def margin(self) -> int:
         return self.window // 4
 
-    def fits(self, given: int, answer: int) -> bool:
+    def reserve(self, given: int, most: int) -> int:
+        if self.expected is None:
+            return most
+        return min(most, math.ceil(self.expected * given))
+
+    def fits(self, given: int, most: int) -> bool:
+        answer = self.reserve(given, most)
         return (given <= self.window // 2 and answer <= self.answer_most
                 and given + answer + self.margin <= self.window)
 
 
-def budget(pick: model_tiers.Pick) -> Budget:
+def budget(pick: model_tiers.Pick, role: str = "") -> Budget:
     """The budget of a role's calls on its brain: the smallest window among
-    the models its sweep may take (the session may be swept onto any)."""
+    the models its sweep may take (the session may be swept onto any), the
+    role's expected answer reserved (`EXPECTED_ANSWER` times `SAFETY`)."""
     models = list(pick.tried or [pick.model])
     window = min(model_tiers.context_window(pick.engine, m) for m in models)
-    return Budget(window, model_tiers.answer_most(pick.engine))
+    expected = EXPECTED_ANSWER.get(role)
+    return Budget(window, model_tiers.answer_most(pick.engine),
+                  expected * SAFETY if expected is not None else None)
 
 
 def starting_context(engine: str) -> int:
@@ -150,9 +180,9 @@ def grouped(things: Sequence[T], *, kind: Callable[[T], str], folder: Callable[[
 
 @dataclass
 class Atom:
-    """The smallest thing a page holds: a sentence with its phrases, or one
-    item. `given`: its tokens on the page; `answer`: the most its answer can
-    take; `brk`: how strong a break comes before it."""
+    """The smallest thing a page holds: a sentence, or one item. `given`:
+    its tokens on the page; `answer`: the most its answer can take; `brk`:
+    how strong a break comes before it."""
     items: list
     given: int
     answer: int
@@ -303,6 +333,16 @@ class NotChecked(Exception):
     """A page's answer that did not check (raised by the caller's `ask`)."""
 
 
+class RateLimited(Exception):
+    """The brain refused a call as rate-limited (raised by the caller's
+    `ask`): `resets_at`, when the brain says it takes calls again (epoch
+    seconds), or None."""
+
+    def __init__(self, why: str, resets_at: Optional[float] = None):
+        super().__init__(why)
+        self.resets_at = resets_at
+
+
 @dataclass
 class Report:
     """What asking a role's pages took: the pages packed, the calls made
@@ -313,6 +353,8 @@ class Report:
     again: int = 0
     halved: int = 0
     workers: int = 0
+    rate_limited: int = 0
+    waited: float = 0.0             # seconds every worker paused for a rate limit
     seconds: float = 0.0
     turns: list[dict] = field(default_factory=list)
 
@@ -325,12 +367,14 @@ class Report:
                 used[k] = used.get(k, 0) + int(v or 0)
         return {"pages": self.pages, "calls": self.calls, "asked_again": self.again,
                 "halved": self.halved, "workers": self.workers,
+                "rate_limited": self.rate_limited, "waited": round(self.waited, 1),
                 "seconds": round(self.seconds, 1), "tokens": used}
 
 
 async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any]],
               parallel: int, ask: Callable[[Any, Page], Awaitable[T]],
-              failed: Callable[[str], Exception], report: Optional[Report] = None) -> list[T]:
+              failed: Callable[[str], Exception], report: Optional[Report] = None,
+              wait_most: Optional[float] = None) -> list[T]:
     """Every page's answer, asked by at most `parallel` workers at once,
     each keeping one session across its pages: `first` (already made) for
     the first worker, `make()` for each other. A session is opened before
@@ -338,8 +382,12 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
     after; all are closed at the end. `ask(session, page)` raises
     NotChecked for an answer that does not check: the page is asked again
     once, then split in half, each half asked the same way; a page of one
-    atom that still does not check is `failed(why)`. Any other failure
-    stops every worker and is raised."""
+    atom that still does not check is `failed(why)`. A call refused as
+    RateLimited pauses every worker until the brain's reset time, else for
+    a wait that doubles with each hit in a row (1, 2, 4 ... s), and asks
+    the page again; a pause that would take more than `wait_most` seconds
+    (the run's own wall clock) is raised. Any other failure stops every
+    worker and is raised."""
     report = report if report is not None else Report()
     report.pages = len(pages)
     if not pages:
@@ -353,6 +401,8 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
     outstanding = len(pages)
     workers = max(1, min(parallel, len(pages)))
     report.workers = workers
+    paused_until = 0.0
+    in_a_row = 0
 
     def finish_one() -> None:
         nonlocal outstanding
@@ -362,7 +412,7 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
                 queue.put_nowait(None)
 
     async def worker(n: int) -> None:
-        nonlocal outstanding
+        nonlocal outstanding, paused_until, in_a_row
         session, opened = (first if n == 0 else None), False
         try:
             while True:
@@ -374,6 +424,9 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
                         continue
                     if session is None:
                         session = await make()
+                    pause = paused_until - time.monotonic()
+                    if pause > 0:
+                        await asyncio.sleep(pause)
                     if not opened:
                         await session.open()
                         opened = True
@@ -382,10 +435,27 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
                     report.calls += 1
                     try:
                         results.append(await ask(session, page))
+                        in_a_row = 0
                     finally:
                         turn = getattr(session, "last_turn", None)
                         if isinstance(turn, dict):
                             report.turns.append(dict(turn))
+                except RateLimited as e:
+                    report.rate_limited += 1
+                    in_a_row += 1
+                    wait = (e.resets_at - time.time() if e.resets_at is not None
+                            else float(2 ** (in_a_row - 1)))
+                    wait = max(wait, 0.0)
+                    if wait_most is not None and wait > wait_most:
+                        failures.append(e)
+                    else:
+                        until = time.monotonic() + wait
+                        if until > paused_until:
+                            report.waited += until - max(paused_until, time.monotonic())
+                            paused_until = until
+                        log.info("pages: rate-limited (%s); every worker pauses %.0f s", e, wait)
+                        outstanding += 1
+                        queue.put_nowait(page)
                 except NotChecked as e:
                     if page.tries == 0:
                         page.tries = 1

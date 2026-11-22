@@ -182,9 +182,12 @@ WINDOW: dict[str, dict[str, int]] = {
 }
 ANSWER_MOST: dict[str, int] = {"claude": 32_000, "codex": 100_000}
 
-# How many of a role's calls each brain is given at once: the three a
-# managed run is held to (run_executor's permits), for each brain.
-PARALLEL: dict[str, int] = {"claude": 3, "codex": 3}
+# How many of a role's calls each brain is given at once: Claude the three
+# a managed run is held to (run_executor's permits); Codex ten, a call it
+# refuses as rate-limited pausing every worker (pages.run), each such hit
+# counted in the step's report (2026-11-21: three to ten; Claude stays at
+# three until ten is measured safe on it).
+PARALLEL: dict[str, int] = {"claude": 3, "codex": 10}
 
 
 def _listed_window(model: str) -> Optional[int]:

@@ -22,20 +22,21 @@ what is marked and only waits for it to be indexed. In order:
   mark_prose          every prose file (evidence_structured.is_prose_file:
                       Tim's messages, the sender's reason and situation,
                       docs, notes, PR descriptions), each in full, to
-                      MarkingSession (tier 3): split into sentences and parts
-                      by program (text_parts), every part scored against the
-                      28 labels (briefing_labels); with Tim's material and
+                      MarkingSession (tier 3): split into sentences by
+                      program (text_parts), each whole sentence given at
+                      most its top 3 of the 28 labels (briefing_labels),
+                      each scored 0.5 or more; with Tim's material and
                       its knowledge states, for the labels that depend on
                       him. The files are grouped so similar ones share pages
                       (`grouped`: the same type, the same folder, close in
                       meaning), packed into pages that fit the model and
                       asked in parallel (pages.py, Mark rebuilt for speed,
                       Tim 2026-11-21)
-  relate_to_questions every fact and marked part, in the same order, to
+  relate_to_questions every fact and marked sentence, in the same order, to
                       ClassificationSession (tier 3), packed and asked the
-                      same way, scored against each of the handoff's
-                      questions, plus background; given without knowledge
-                      states
+                      same way, each given at most its top 3 of the
+                      handoff's questions, plus background, each 0.5 or
+                      more; given without knowledge states
 
 What it read is kept beside the evidence, one file for each stored file,
 `mark/<stored file>.json` (its type, facts, marked parts and their scores
@@ -180,25 +181,29 @@ def read_structured(files: list[FileMarks]) -> None:
 
 
 def extract_prose(doc: dict, files: list[FileMarks]) -> None:
-    """The prose parts of each log and transcript to ExtractionSession, one
-    call a file, for that type's facts; each value it gives is kept only
-    where it stands verbatim in the prose (sessions.BrainExtractionSession),
-    with where that is in the file. A prose file is left unextracted, its
-    marks saying why (`NO_PROSE_FACTS`)."""
+    """The prose parts of each log and transcript to ExtractionSession, all
+    on one session (a new conversation a file), for that type's facts; each
+    value it gives is kept only where it stands verbatim in the prose
+    (sessions.BrainExtractionSession), with where that is in the file. A
+    prose file is left unextracted, its marks saying why
+    (`NO_PROSE_FACTS`)."""
     from jarvis import package_jobs
-    session = EXTRACTION(doc)
+    asked: list[tuple[FileMarks, list]] = []
     for f in files:
-        prose = f.view.text
-        if not prose:
+        if not f.view.text:
             continue
         fields = None if f.prose_file else fields_for(f.row.file_type)
         if fields is None:
             if f.prose_file:
                 f.extraction = NO_PROSE_FACTS
             continue
-        found = package_jobs.asked(STEP, "extraction",
-                                   f"JARVIS asked extraction for the facts of {f.stored}.",
-                                   session.extract(prose, fields, None))
+        asked.append((f, fields))
+    if not asked:
+        return
+    answers = package_jobs.asked(
+        STEP, "extraction", f"JARVIS asked extraction for the facts of {len(asked)} file(s).",
+        EXTRACTION(doc).extract_many([(f.view.text, fields) for f, fields in asked], None))
+    for (f, _), found in zip(asked, answers):
         for value in found:
             if not value["value"] or value["position"] is None:
                 continue
@@ -237,9 +242,9 @@ def grouped(files: list[FileMarks]) -> list[FileMarks]:
 
 
 def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row]) -> None:
-    """Every prose file, in full, to MarkingSession at once, every part
-    scored against every one of the 28 labels; each part's position read
-    back into the file."""
+    """Every prose file, in full, to MarkingSession at once, each sentence
+    given at most its top 3 of the 28 labels at 0.5 or more; each
+    sentence's position read back into the file."""
     from jarvis import package_jobs, sessions
     prose = [f for f in files if f.view.text and f.prose_file]
     if not prose:
@@ -277,9 +282,9 @@ def questions_of(doc: dict):
 
 
 def relate_to_questions(doc: dict, files: list[FileMarks]) -> None:
-    """Every fact and marked part of every file to ClassificationSession at
-    once, in the files' order, scored against each of the handoff's
-    questions, plus background."""
+    """Every fact and marked sentence of every file to ClassificationSession
+    at once, in the files' order, each given at most its top 3 of the
+    handoff's questions, plus background, at 0.5 or more."""
     from jarvis import package_jobs
     by_file = [(f, _items(f)) for f in files]
     items = [i for _, found in by_file for i in found]
