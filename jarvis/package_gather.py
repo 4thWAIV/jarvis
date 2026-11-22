@@ -595,7 +595,10 @@ def gather(doc: dict) -> None:
         # the evidence is gathered once per package).
         step_cache.note(doc, step_cache.Unit(STEP, "", {"held": held.get("gather_key")}),
                         step_cache.REUSED, 0.0)
-        pe.wait_indexed(place, STEP)
+        # Its vectors were waited for when it was gathered; what was written
+        # since (the mark step's output, the sender's answers) waits only
+        # until its words are read.
+        pe.wait_indexed(place, STEP, vectors=False)
         return
     if place.folder.exists():               # a run that stopped part way: gathered again
         shutil.rmtree(place.folder)

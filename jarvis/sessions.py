@@ -208,8 +208,12 @@ class BrainChatSession:
                  answer_format: Optional[dict] = None, resume: Optional[str] = None,
                  on_log: Optional[Callable[[str], None]] = None,
                  role_spec: Optional[roles.Role] = None,
-                 search_log: Optional[Path] = None):
+                 search_log: Optional[Path] = None,
+                 shown: Optional[tuple[str, ...]] = None):
         self.role = role_spec or roles.role(role)
+        # The names its file tools see in its run folder (role_files.py;
+        # None, everything there).
+        self.shown = None if shown is None else tuple(shown)
         self.search_log = Path(search_log) if search_log is not None else None
         self.prompt = prompt
         self.folder = Path(folder)
@@ -256,7 +260,8 @@ class BrainChatSession:
         path.parent.mkdir(parents=True, exist_ok=True)
         folders = (self.folder, *self.reads) if self.role.release.reads_files else ()
         body = {"mcpServers": {roles.SERVER_NAME: role_mcp.entry(self.role.name,
-                                                                  self.search_log, folders)}}
+                                                                  self.search_log, folders,
+                                                                  self.shown)}}
         private_files.replace(path, json.dumps(body, indent=2).encode("utf-8"))
         return path
 
@@ -351,8 +356,10 @@ class BrainChatSession:
                                   f"{self.pick.tier} or the next one up was accepted ({last})")
 
     async def open(self) -> None:
-        """Started on the first model of the sweep the brain accepts."""
-        await self._open_next()
+        """Started on the first model of the sweep the brain accepts; the
+        wait timed in the step's report (run_report.wait)."""
+        with run_report.wait("session_open", self.role.name, engine=self.pick.engine):
+            await self._open_next()
 
     async def _turn(self, text: str, timeout: Optional[float],
                     answer_format: Optional[dict]) -> str:
@@ -714,6 +721,14 @@ class Script(Protocol):
 FirstMessage = Callable[[str], str]
 
 
+async def _all_of(calls) -> None:
+    """Every call run at once and waited for; the first that raised is
+    raised once all have ended."""
+    for result in await asyncio.gather(*calls, return_exceptions=True):
+        if isinstance(result, BaseException):
+            raise result
+
+
 class BrainSwarmSession:
     """A SwarmSession of ChatSessions on the brain providers. The program
     runs the turns and keeps the log word for word, never summarising or
@@ -752,12 +767,15 @@ class BrainSwarmSession:
                 if c.owner == name and (among is None or c.id in among)]
 
     async def open(self) -> None:
-        for chat in self.participants.values():
-            await chat.open()
+        """Every participant opened at once: each is its own brain process
+        or thread, and nothing one opens waits on another (measured on
+        package-9a8f7c72f87b: five opened one after another took 7 to 8 s).
+        The first that cannot open is raised once all have tried; those
+        that opened are closed by `close`."""
+        await _all_of(chat.open() for chat in self.participants.values())
 
     async def close(self) -> None:
-        for chat in self.participants.values():
-            await chat.close()
+        await _all_of(chat.close() for chat in self.participants.values())
 
     def share_of(self, name: str) -> list[Known]:
         return self.shares.get(name, [])

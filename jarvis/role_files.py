@@ -19,6 +19,15 @@ and TEXT_MAX_BYTES bytes). A path is absolute, or relative to the first
 folder (the run folder). Hidden, credential and key files are never shown
 (repo_read.sensitive_reason, the folder catalog's rule), so the server's
 own configuration beside the run (`.jarvis-role/`) is not either.
+
+In the run folder a role sees only the package's working files, the names
+its server was started with (`--show`: research.md, prep.md, outline.yaml,
+script.yaml, research-searches.md and the deck's source,
+package_swarm.WORKING), never the run's bookkeeping (timing.json,
+quality.json, swarm.json, run.job, job.log, research-log.jsonl,
+research-used.json): measured on package-9a8f7c72f87b run-1, the author
+and the owners read timing.json whole, window by window, on every turn.
+Anything else in the run folder is neither listed nor found nor read.
 """
 from __future__ import annotations
 
@@ -78,10 +87,23 @@ def _visible(relative: Path, _is_dir: bool) -> bool:
 
 
 class Files:
-    """The file tools over these folders, the first the run folder."""
+    """The file tools over these folders, the first the run folder; in the
+    run folder only the names in `shown` (None: everything in it)."""
 
-    def __init__(self, folders: list[Path]):
+    def __init__(self, folders: list[Path], shown: Optional[tuple[str, ...]] = None):
         self.folders = [Path(os.path.abspath(f)) for f in folders]
+        self.shown = None if shown is None else frozenset(shown)
+
+    def _visible_in(self, root: Path):
+        """What may be seen under one of the folders (a path relative to
+        it): the catalog's rule, and in the run folder its working files."""
+        restricted = self.shown is not None and self.folders and root == self.folders[0]
+
+        def visible(relative: Path, is_dir: bool) -> bool:
+            if restricted and relative.parts and relative.parts[0] not in self.shown:
+                return False
+            return _visible(relative, is_dir)
+        return visible
 
     def _place(self, path: Optional[str]) -> tuple[Path, Path]:
         """(the folder it is in, its path relative to it)."""
@@ -94,7 +116,7 @@ class Files:
                 relative = absolute.relative_to(root)
             except ValueError:
                 continue
-            if relative.parts and not _visible(relative, False):
+            if relative.parts and not self._visible_in(root)(relative, False):
                 raise Refused(f"{absolute} may not be read.")
             return root, relative
         raise Refused(f"{absolute} is outside the folders you were given: "
@@ -103,7 +125,7 @@ class Files:
     def list(self, path: Optional[str] = None, after: Optional[str] = None) -> dict:
         root, relative = self._place(path)
         key = json.loads(after) if after else None
-        found = folder_readers.list_dir(root, relative, _visible, after=key)
+        found = folder_readers.list_dir(root, relative, self._visible_in(root), after=key)
         return {"folder": str(root / relative),
                 "entries": [{"name": e.name, "kind": e.kind, "size": e.size}
                             for e in found.entries],
@@ -129,11 +151,12 @@ class Files:
         looked = 0
         partial = False
         folders = [relative]
+        visible = self._visible_in(root)
         while folders and not partial:
             folder = folders.pop(0)
             after = None
             while True:
-                page = folder_readers.list_dir(root, folder, _visible, after=after)
+                page = folder_readers.list_dir(root, folder, visible, after=after)
                 for entry in page.entries:
                     looked += 1
                     if looked > SCAN_MAX_ENTRIES:

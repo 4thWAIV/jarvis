@@ -251,7 +251,7 @@ def test_evidence_not_indexed_in_ten_minutes_puts_the_run_in_error(tmp_path, tra
     doc = _job(tmp_path, "", [{"type": "content", "text": "Words."}])
     clock = iter(range(0, 10_000, 120))
     monkeypatch.setattr(pe, "CLOCK", lambda: next(clock))
-    monkeypatch.setattr(pe, "not_indexed", lambda items, uds=None, text_only=(): pe.Waiting(list(items)))
+    monkeypatch.setattr(pe, "not_indexed", lambda items, *a, **k: pe.Waiting(list(items)))
     with pytest.raises(pj.Blocked) as blocked:
         package_gather.gather(pj.get(doc["id"]))
     assert blocked.value.step == "gather" and "within 10 minutes" in blocked.value.reason

@@ -20,7 +20,14 @@ Two files beside each run (its folder, package_jobs.folder_of):
   app servers started; the swarm's stages with their times; every search a
   role made in the step (`searches`: role, tool and seconds, from the run's
   research-log.jsonl, research_log.py) and their seconds summed
-  (`search_seconds`). Its `totals`
+  (`search_seconds`); every wait in the step (`waits`, `wait`: indexing,
+  a session opening, the engine's embedding, each one named, with its
+  seconds and the seconds the Mac slept in it, `asleep`), the seconds the
+  Mac slept in the whole step (`asleep`, awake.Clock: a run's process
+  keeps it awake, awake.held, so this says when it did not) and the
+  seconds no wait, call or search covers (`unaccounted`), so a gap is never
+  unexplained; and every wait on the sender (`sender`: each round asked,
+  its kind, when asked and answered, its seconds). Its `totals`
   sum them, and a step over `STEP_FAILS_AFTER_SEC` is flagged `too_slow`
   (Tim 2026-11-21: more than a few minutes for a step is a failure).
 - `quality.json` (`QUALITY`): per pass of the swarm, each concern signed
@@ -72,11 +79,14 @@ STEP_FAILS_AFTER_SEC = 5 * 60.0
 
 class _Step:
     def __init__(self, name: str):
+        from jarvis import awake
         self.name = name
-        self.began = time.time()
+        self.clock = awake.Clock()
+        self.began = self.clock.began
         self.calls: list[dict] = []
         self.pages: list[dict] = []
         self.units: list[dict] = []
+        self.waits: list[dict] = []
         self.app_servers = 0
 
 
@@ -104,6 +114,31 @@ def unit(record: dict) -> None:
     with _lock:
         if _current is not None:
             _current.units.append(dict(record))
+
+
+@contextlib.contextmanager
+def wait(kind: str, name: str = "", **detail) -> Iterator[None]:
+    """One wait inside the step under way, timed and named (`kind`:
+    indexing, session_open, embedding ...; `name`, what it waited on),
+    however it ends; the seconds the Mac slept in it as `asleep`."""
+    from jarvis import awake
+    clock = awake.Clock()
+    outcome = "done"
+    try:
+        yield
+    except BaseException as e:
+        outcome = f"ended: {type(e).__name__}"
+        raise
+    finally:
+        record = {"wait": kind, "name": name, "began": clock.began, "ended": time.time(),
+                  "seconds": round(clock.seconds(), 1), "outcome": outcome,
+                  **{k: v for k, v in detail.items() if v is not None}}
+        slept = clock.slept()
+        if slept:
+            record["asleep"] = slept
+        with _lock:
+            if _current is not None:
+                _current.waits.append(record)
 
 
 def app_server(engine: str) -> None:
@@ -143,9 +178,45 @@ def _searches(folder: Path, began: float, ended: float) -> list[dict]:
             if began <= float(e.get("at") or 0) <= ended]
 
 
+def _spans(step: _Step, searches: list[dict]) -> list[tuple[float, float]]:
+    """When each wait, call and search of the step ran (began, ended)."""
+    out = [(float(w["began"]), float(w["ended"])) for w in step.waits]
+    for record in list(step.calls) + list(searches):
+        at, took = record.get("at"), record.get("seconds")
+        if at is not None and took is not None:
+            out.append((float(at) - float(took), float(at)))
+    return out
+
+
+def unaccounted(began: float, ended: float, spans: list[tuple[float, float]]) -> float:
+    """The seconds of [began, ended] no span covers (spans may overlap: what
+    runs at once is counted once)."""
+    covered, edge = 0.0, began
+    for start, end in sorted((max(a, began), min(b, ended)) for a, b in spans):
+        if end <= edge:
+            continue
+        covered += end - max(start, edge)
+        edge = end
+    return round(max(0.0, (ended - began) - covered), 1)
+
+
+def sender_waits(doc: dict) -> list[dict]:
+    """Each round the run asked its sender (package_jobs `rounds`): its
+    kind, when it was asked and answered, and the seconds it waited."""
+    out = []
+    for n, r in enumerate(doc.get("rounds") or [], 1):
+        asked, answered = r.get("asked_at"), r.get("answered_at")
+        out.append({"round": n, "kind": r.get("kind") or "questions", "asked_at": asked,
+                    "answered_at": answered,
+                    "seconds": (round(float(answered) - float(asked), 1)
+                                if asked is not None and answered is not None else None)})
+    return out
+
+
 def step_entry(step: _Step, ended: float, outcome: str, resumed: bool,
                searches: Optional[list[dict]] = None) -> dict:
     seconds = round(ended - step.began, 1)
+    slept = step.clock.slept()
     tin = sum(_tokens(c)[0] for c in step.calls)
     cached = sum(_tokens(c)[1] for c in step.calls)
     out = sum(_tokens(c)[2] for c in step.calls)
@@ -163,6 +234,11 @@ def step_entry(step: _Step, ended: float, outcome: str, resumed: bool,
             "searches": list(searches or []),
             "search_seconds": round(sum(float(x.get("seconds") or 0) for x in searches or []), 3),
             "units": step.units, "cache": cache_of(step.units),
+            "waits": list(step.waits),
+            "wait_seconds": round(sum(float(w.get("seconds") or 0) for w in step.waits), 1),
+            "asleep": slept,
+            "unaccounted": unaccounted(step.began, ended,
+                                       _spans(step, list(searches or []))),
             "tokens": {"in": tin, "cached": cached, "out": out}}
 
 
@@ -183,6 +259,7 @@ def totals(steps: list[dict]) -> dict:
     rate-limit hits, app servers, tokens; the steps too slow by name."""
     out = {"seconds": 0.0, "calls": 0, "pages": 0, "retries": 0, "time_limits": 0,
            "rate_limited": 0, "app_server_starts": 0, "searches": 0, "search_seconds": 0.0,
+           "waits": 0, "wait_seconds": 0.0, "asleep": 0.0, "unaccounted": 0.0,
            "tokens": {"in": 0, "cached": 0, "out": 0}, "too_slow": [],
            "cache": {"reused": 0, "computed": 0, "recomputed": 0, "replaced": 0}}
     for s in steps:
@@ -193,6 +270,9 @@ def totals(steps: list[dict]) -> dict:
         out["pages"] += int(s.get("pages_asked") or 0)
         out["searches"] += len(s.get("searches") or [])
         out["search_seconds"] = round(out["search_seconds"] + float(s.get("search_seconds") or 0), 3)
+        out["waits"] += len(s.get("waits") or [])
+        for key in ("wait_seconds", "asleep", "unaccounted"):
+            out[key] = round(out[key] + float(s.get(key) or 0), 1)
         for key in ("retries", "time_limits", "rate_limited", "app_server_starts"):
             out[key] += int(s.get(key) or 0)
         for key in ("in", "cached", "out"):
@@ -235,6 +315,7 @@ def step(doc: dict, name: str) -> Iterator[None]:
             body["steps"].append(step_entry(entry, ended, outcome, resumed,
                                             _searches(folder, entry.began, ended)))
             body["stages"] = _stages(folder)
+            body["sender"] = sender_waits(doc)
             body["totals"] = totals(body["steps"])
             _write(path, body)
         except Exception:  # noqa: BLE001 - the report never stops the run

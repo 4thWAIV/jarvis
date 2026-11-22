@@ -886,10 +886,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("action", choices=("run",))
     parser.add_argument("job")
     args = parser.parse_args(argv)
-    from jarvis import settings_service
+    from jarvis import awake, settings_service
     settings_service.load_once()
-    with logging_to(Path(get(args.job)["log"])):
-        log.info("the run's process %d runs job %s", os.getpid(), args.job)
+    # The Mac kept from idle sleep while the run works (awake.py: measured
+    # on package-9a8f7c72f87b, a run left to itself slept from 11:13 to
+    # 12:07, moving only in the Mac's 45-second maintenance wakes).
+    with logging_to(Path(get(args.job)["log"])), awake.held() as kept_awake:
+        log.info("the run's process %d runs job %s%s", os.getpid(), args.job,
+                 "" if kept_awake else " (nothing keeps the Mac awake: no caffeinate)")
         return run(args.job)
 
 

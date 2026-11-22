@@ -497,7 +497,7 @@ def mark(doc: dict) -> None:
                                     {**marks[f.stored], "item": ""}, indent=1,
                                     ensure_ascii=False).encode("utf-8")})
     _write_index(place, doc, [marks[f.stored] for f in files])
-    pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))
+    pe.wait_indexed(place, STEP, vectors=False)      # gather waited for every vector
     records.update(place.record, lambda d: {**(d or {}), "marked_at": time.time(),
                                             "marked": INDEX},
                    by=records.JARVIS, change="evidence marked",

@@ -96,6 +96,7 @@ class Plan:
         self.sent: dict[str, list[str]] = {}
         self.forms: dict[str, list[dict]] = {}
         self.opened: list[tuple[str, str | None]] = []
+        self.shown: dict[str, object] = {}
         self.efforts: list[tuple[str, str]] = []
         self.script = script_of("PR 171 moves every Work item.", "files/situation.md")
         self.outline = outline_of()
@@ -150,8 +151,9 @@ class Plan:
 def _chat_factory(plan: Plan):
     class Chat:
         def __init__(self, role, prompt, folder, *, pick, reads=(), resume=None,
-                     search_log=None, on_log=None, role_spec=None):
+                     search_log=None, on_log=None, role_spec=None, shown=None):
             self.name, self.role, self.prompt = role, role_spec or roles.role(role), prompt
+            plan.shown[role] = shown
             plan.efforts.append((role, self.role.effort))
             self.pick, self.model, self.session = pick, pick.model, resume
             self.reads, self.search_log = reads, search_log
@@ -303,6 +305,40 @@ def test_a_new_run_reuses_the_research_its_inputs_made(marked, plan):
                                                    ).read_text()
     kept = json.loads((new / ps.STATE).read_text())
     assert [u["kind"] for u in kept["units"]] == ["research"]
+
+
+def test_research_reads_its_own_writing_into_the_engine_and_waits_on_no_vector(
+        marked, plan, monkeypatch):
+    """research.md and prep.md are read into the engine at once, their
+    words only; their meaning vectors follow in the background and the step
+    never waits on them."""
+    read, waited = [], []
+    monkeypatch.setattr(pe, "index_files", lambda paths, uds=None: read.append(
+        [Path(p).name for p in paths]) or [])
+    real = pe.wait_indexed
+    monkeypatch.setattr(pe, "wait_indexed", lambda *a, **k: waited.append(k) or real(*a, **k))
+    ps.research(pj.get(marked["id"]))
+    assert read == [[ps.RESEARCH_MD, ps.PREP_MD, ps.SEARCHES_MD]]
+    assert waited == [], "research waits on no index"
+
+
+def test_the_swarm_waits_for_words_never_for_vectors_and_shows_only_working_files(
+        marked, plan, monkeypatch):
+    """The evidence's vectors were waited for when it was gathered: the
+    swarm waits only until what was written since is read (words), and each
+    participant's file tools see only the package's working files in the
+    run folder, never its bookkeeping."""
+    waited = []
+    real = pe.wait_indexed
+    monkeypatch.setattr(pe, "wait_indexed", lambda *a, **k: waited.append(k) or real(*a, **k))
+    _research_and_swarm(marked)
+    assert waited and all(k.get("vectors") is False for k in waited)
+    assert plan.shown and all(v == ps.WORKING for v in plan.shown.values())
+    for name in ("timing.json", "quality.json", "swarm.json", "run.job", "job.log",
+                 research_log.NAME, "research-used.json", ".jarvis-role"):
+        assert name not in ps.WORKING
+    from jarvis import package_deck
+    assert package_deck.FOLDER in ps.WORKING, "the deck's source is a working file"
 
 
 # ── the swarm ─────────────────────────────────────────────────────────────

@@ -132,7 +132,7 @@ from typing import Callable, Optional
 
 from jarvis import (briefing_labels, model_tiers, package_evidence as pe, package_jobs,
                     package_mark, package_script, pages, records, research_log, role_prompts,
-                    roles, sessions, step_cache, work_research, working_set)
+                    roles, run_report, sessions, step_cache, work_research, working_set)
 
 RESEARCH, SWARM = "research", "swarm"
 RESEARCH_MD, PREP_MD = "research.md", "prep.md"
@@ -520,7 +520,7 @@ def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
     for name in NAMES:
         role = roles.role(name)
         had = (kept.get("participants") or {}).get(name) or {}
-        common = dict(reads=run.reads(name), search_log=run.log, on_log=_log)
+        common = dict(reads=run.reads(name), search_log=run.log, on_log=_log, shown=WORKING)
         if name in (effort or {}):
             common["role_spec"] = dataclasses.replace(role, effort=effort[name])
         if had.get("session"):
@@ -589,6 +589,11 @@ SEARCHES_MD = "research-searches.md"
 RESEARCH_EFFORT = "medium"
 # The program's searches, in the research log, as the program's own.
 SEARCHER = PROGRAM
+# What a participant's file tools see in the run folder (role_files.py):
+# the package's working files and the deck's source (package_deck.FOLDER),
+# never the run's bookkeeping (timing.json, quality.json, swarm.json,
+# run.job, job.log, research-log.jsonl, research-used.json).
+WORKING = (RESEARCH_MD, PREP_MD, OUTLINE, SCRIPT, SEARCHES_MD, "deck")
 
 def _patience() -> float:
     """How long a research search is waited for: the run's own wall clock
@@ -755,6 +760,10 @@ def research(doc: dict) -> None:
                                    "with its source path, for each question, and the prep.",
                                    "Read the run's conversation and log for why; a new run.")
     kept["researched"] = True
+    # Their words in the engine now; their meaning vectors follow in the
+    # background, and nothing waits on them.
+    with run_report.wait("indexing", "research: research.md and prep.md, words only"):
+        pe.index_files([run.research, run.prep, run.folder / SEARCHES_MD])
     finish_unit(run, kept, unit, began, RESEARCH_FILES)
 
 
@@ -894,7 +903,8 @@ def group_by_meaning(asks: list[dict], vectors: list[list[float]]) -> list[dict]
 def _embedded(texts: list[str], what: str) -> list[list[float]]:
     from jarvis.knowledge_client import EngineUnavailable
     try:
-        return EMBED(texts)
+        with run_report.wait("embedding", what, texts=len(texts)):
+            return EMBED(texts)
     except EngineUnavailable as e:
         raise package_jobs.Blocked(
             SWARM, f"The engine could not embed {what} to group them by meaning: {e}",
@@ -1374,7 +1384,10 @@ def swarm(doc: dict) -> Optional[str]:
         before = record["digest"]
     if todo is None:
         return _swarm_passed(run, kept)
-    pe.wait_indexed(run.place, SWARM, text_only=("/mark/",))
+    # The evidence's vectors were waited for when it was gathered; what was
+    # written since (the sender's answers) waits only until its words are
+    # read, its meaning following in the background.
+    pe.wait_indexed(run.place, SWARM, vectors=False)
     labels = briefing_labels.for_marking()
     knowledge = package_mark.tim_known(run.rows, run.texts)
     flow = kept.setdefault("flow", {"stage": "outline", "pass": 1})

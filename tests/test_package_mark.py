@@ -215,10 +215,12 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
     assert set(roles.given) == {"marking", "extraction", "classification"}
     assert all(g["requester"] == "claude" for calls in roles.given.values() for g in calls)
 
-    # Indexed with the raw files, found by a search under the evidence path.
+    # Indexed with the raw files, found by a search under the evidence path:
+    # its words at once; its meaning vectors follow in the background, and
+    # the step never waits on them (gather waited for every vector).
     uds = records.uds()
-    item = uds.get(TIM, place.item("mark/marked.json"), {Stream.DATA, Stream.VECTORS})
-    assert item.data["state"] == "indexed" and item.vectors["complete"]
+    item = uds.get(TIM, place.item("mark/marked.json"), {Stream.DATA})
+    assert item.data["state"] == "indexed"
     hits = uds.search(TIM, Query(words="failed_test test_move", under=place.path))
     assert any(h.path.startswith(place.item("mark/")) for h in hits)
     assert records.get(place.record).data["marked_at"]

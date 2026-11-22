@@ -260,6 +260,36 @@ def index_now(place: Place, uds=None) -> list[str]:
     return index_folder(place.folder, uds)
 
 
+def index_files(paths, uds=None) -> list[str]:
+    """These files of JARVIS's (a step's own writing: research.md, prep.md)
+    read into the engine now, their text and sections, by the content
+    child's own reader; their meaning vectors follow in the background and
+    nothing waits on them (the swarm never waits on vectors for what it has
+    just written). The item paths read; a file no content root holds, or
+    the reader passes over, is not one."""
+    from jarvis import fs_watch, knowledge_content
+    from jarvis.knowledge.uds import Stream
+    indexer = knowledge_content.Indexer(uds or records.uds())
+    out = []
+    for path in map(Path, paths):
+        if not path.is_file():
+            continue
+        try:
+            root, rel_dir = _root_and_rel(path.parent)
+        except LookupError:
+            continue
+        rel = os.path.normpath(os.path.join(rel_dir, path.name))
+        item = knowledge_content.item_path(root, rel)
+        stat = fs_watch.stat_of(str(path))
+        if item is None or stat is None:
+            continue
+        held = indexer.uds.get(knowledge_content.WRITER, item, {Stream.DATA})
+        indexer.note(root, rel, stat, (held.data or {}) if held is not None else None)
+        indexer.extract(root, rel)
+        out.append(item)
+    return out
+
+
 @dataclass
 class Waiting:
     """What is still not indexed, and why it cannot be."""
@@ -267,13 +297,15 @@ class Waiting:
     off: bool = False               # no embedding model: said when the wait ends
 
 
-def not_indexed(items: list[str], uds=None, text_only: tuple = ()) -> Waiting:
+def not_indexed(items: list[str], uds=None, text_only: tuple = (),
+                vectors: bool = True) -> Waiting:
     """Of these items, those not yet indexed: their text not read yet, or a
     vector (whole or a section's) not made yet. An unreadable file has
     nothing to index and is done. An item under one of `text_only` is
     waited for only until its text is read: what the program reads back
     from its own file (the mark step's output) is never searched by meaning
-    on the run's path, so its vectors are made in the background."""
+    on the run's path, so its vectors are made in the background. With
+    `vectors` False no item waits for its vectors."""
     from jarvis.knowledge.uds import Stream
     from jarvis.knowledge_content import WRITER
     uds = uds or records.uds()
@@ -283,13 +315,13 @@ def not_indexed(items: list[str], uds=None, text_only: tuple = ()) -> Waiting:
         if item is None or (item.data or {}).get("state") == "pending":
             out.paths.append(path)
             continue
-        vectors = item.vectors
-        if vectors is None or any(part in path for part in text_only):
+        made = item.vectors
+        if not vectors or made is None or any(part in path for part in text_only):
             continue
-        if vectors.get("state") == "off":
+        if made.get("state") == "off":
             out.off = True
             out.paths.append(path)
-        elif not vectors.get("complete"):
+        elif not made.get("complete"):
             out.paths.append(path)
     return out
 
@@ -298,15 +330,27 @@ SLEEP: Callable[[float], None] = time.sleep
 CLOCK: Callable[[], float] = time.monotonic
 
 
-def wait_indexed(place: Place, step: str, uds=None, text_only: tuple = ()) -> list[str]:
+def wait_indexed(place: Place, step: str, uds=None, text_only: tuple = (),
+                 vectors: bool = True) -> list[str]:
     """Index the evidence now and wait until every item is indexed, its
-    vectors included, at most INDEX_WAIT_SEC; then the run is in Error
-    (package_jobs.Blocked). The items' paths."""
+    vectors included unless `vectors` is False (a step after gather, which
+    waited for every vector of the evidence it gathered: what was written
+    since is waited for only until its text is read), at most
+    INDEX_WAIT_SEC; then the run is in Error (package_jobs.Blocked). The
+    wait is timed in the step's report (run_report.wait). The items'
+    paths."""
+    from jarvis import run_report
+    with run_report.wait("indexing", f"{step}: the evidence"
+                         + ("" if vectors else ", words only")):
+        return _wait_indexed(place, step, uds, text_only, vectors)
+
+
+def _wait_indexed(place: Place, step: str, uds, text_only: tuple, vectors: bool) -> list[str]:
     from jarvis.package_jobs import Blocked
     items = index_now(place, uds)
     started = CLOCK()
     while True:
-        waiting = not_indexed(items, uds, text_only)
+        waiting = not_indexed(items, uds, text_only, vectors)
         if not waiting.paths:
             return items
         if CLOCK() - started >= INDEX_WAIT_SEC:
@@ -315,7 +359,7 @@ def wait_indexed(place: Place, step: str, uds=None, text_only: tuple = ()) -> li
             raise Blocked(step, f"{len(waiting.paths)} of the package's {len(items)} evidence "
                           f"file(s) were not indexed within 10 minutes.{why}",
                           f"JARVIS read the evidence into the knowledge engine at once and "
-                          f"waited 10 minutes for its words and meaning to be indexed "
+                          f"waited 10 minutes for its words{' and meaning' if vectors else ''} to be indexed "
                           f"(still waiting: {', '.join(waiting.paths[:5])}).",
                           "Install the embedding model (Settings, Knowledge), then a new run."
                           if waiting.off else

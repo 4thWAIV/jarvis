@@ -15,7 +15,7 @@ is appended to the run's search log as it is answered (research_log.py:
 workflow.yaml research log_searches).
 
     python -m jarvis.role_mcp --role <role> [--log <run folder>/research-log.jsonl]
-                              [--read <folder> ...]
+                              [--read <folder> ...] [--show <name> ...]
 """
 from __future__ import annotations
 
@@ -72,11 +72,13 @@ def handle(msg: dict) -> dict | None:
                              server_name=roles.SERVER_NAME)
 
 
-def entry(role: str, log: Path | None = None, folders: tuple[Path, ...] = ()) -> dict:
+def entry(role: str, log: Path | None = None, folders: tuple[Path, ...] = (),
+          shown: tuple[str, ...] | None = None) -> dict:
     """This server for one role, as an MCP configuration names it: the
     brain's own server's way in (its URL and token file), this role, the
-    run's search log it appends to (`log`) and the folders its file tools
-    read (`folders`, the run folder first). The server's address is the
+    run's search log it appends to (`log`), the folders its file tools
+    read (`folders`, the run folder first) and the names it sees in the run
+    folder (`shown`; None, everything there). The server's address is the
     one it recorded, else this process's own (the server itself)."""
     from jarvis import data_paths, server_address
     running = server_address.running()
@@ -84,7 +86,9 @@ def entry(role: str, log: Path | None = None, folders: tuple[Path, ...] = ()) ->
     return {"command": sys.executable,
             "args": ["-P", "-m", "jarvis.role_mcp", "--role", role,
                      *(["--log", str(log)] if log is not None else []),
-                     *[arg for folder in folders for arg in ("--read", str(folder))]],
+                     *[arg for folder in folders for arg in ("--read", str(folder))],
+                     *([arg for name in shown for arg in ("--show", name)] or ["--show-none"]
+                       if shown is not None else [])],
             "env": {"PYTHONPATH": str(data_paths.PACKAGE_DIR.parent),
                     "JARVIS_TOOL_URL": f"{url}/internal/tool",
                     "JARVIS_TOOL_TOKEN_FILE": str(data_paths.tool_token_path())}}
@@ -96,9 +100,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--role", required=True, choices=sorted(roles.ROLES))
     parser.add_argument("--log", type=Path)
     parser.add_argument("--read", type=Path, action="append", default=[])
+    parser.add_argument("--show", action="append", default=None)
+    parser.add_argument("--show-none", action="store_true")
     args = parser.parse_args(argv)
     ROLE, LOG = args.role, args.log
-    FILES.folders = role_files.Files(args.read).folders
+    shown = () if args.show_none else (tuple(args.show) if args.show is not None else None)
+    files = role_files.Files(args.read, shown)
+    FILES.folders, FILES.shown = files.folders, files.shown
     jarvis_mcp.main(handle)
 
 

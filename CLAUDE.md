@@ -1843,8 +1843,14 @@ that finds no model or cannot answer puts the run in Error
 read goes beside the evidence, `mark/<stored file>.json` for each file (its
 type, facts, parts and their scores against the questions, each with its
 position) and `mark/marked.json` (the labels, the questions, the files),
-indexed with the raw files and waited for as gather's are;
-`package_mark.marked(place)` reads it all back.
+indexed with the raw files, its words waited for, never its vectors (gather
+waited for every vector of the evidence: every later wait,
+`wait_indexed(vectors=False)`, the mark step's, gather reused, the swarm's,
+waits only until what was written since is read);
+`package_mark.marked(place)` reads it all back. What the research step
+writes (research.md, prep.md, research-searches.md) is read into the
+engine at once, words only (`package_evidence.index_files`), its meaning
+following in the background; nothing waits on it.
 A Work item's own research (`work_research.py`; design: research
 work_item_research) is made again on every change of the item
 (`work_store.on_changed`, `REFRESHER`, started with the session watcher):
@@ -2140,7 +2146,18 @@ tokens in, cached and out, and how it ended: answered, refused by the
 model sweep, time limit, rate limited, failed), each paged role's pages
 (`pages.Report`), the app servers started, every search a role made in it
 with its seconds (`searches`, `search_seconds`, from research-log.jsonl)
-and the swarm's stages; a step
+and the swarm's stages; every wait in it timed and named (`waits`,
+`run_report.wait`: `indexing`, `session_open` per role, `embedding`,
+each with its seconds and the seconds the Mac slept in it, `asleep`), the
+seconds the Mac slept in the step (`asleep`, `awake.Clock`: wall time
+less time awake, since `time.monotonic` stops while the Mac sleeps) and
+the seconds no wait, call or search covers (`unaccounted`, what runs at
+once counted once), so no gap is unexplained; and every wait on the
+sender (`sender`: each round, its kind, asked and answered, seconds). The
+run's process keeps the Mac from idle sleep while it runs (`awake.held`,
+`caffeinate -i -w <pid>`, from `package_jobs.main`): measured on
+package-9a8f7c72f87b run-1, a run left to itself slept from 11:13 to
+12:07, moving only in the Mac's 45-second maintenance wakes. A step
 over `STEP_FAILS_AFTER_SEC` (five minutes; Tim 2026-11-21: more than a
 few minutes a step is a failure) is flagged `too_slow`, and `totals` sums
 them. `quality.json` (`run_report.quality`, written after the swarm and
@@ -3829,7 +3846,9 @@ the session opened again on the sweep's next model, its first turn sent
 again there; a new long-lived Claude session takes a new id on each try,
 never `--resume` of a refused one; after an answer nothing is swept.
 `BrainSwarmSession` is long-lived ChatSessions in one conversation, working
-cooperatively (`package_swarm.build` for a package run): each participant
+cooperatively (`package_swarm.build` for a package run), every participant
+opened at once (`open`, each its own process or thread; the first that
+cannot open raised once all have tried): each participant
 sent every new message of the others word for word, with who said it, and
 on its first turn its first message (given, or made then by a callable);
 a turn is one participant's (`answer`) or several in parallel
@@ -3891,7 +3910,12 @@ A role that reads files reads them with its file tools
 server, through folder_readers (no link followed, every page and window
 bounded), inside its run folder and the folders it reads (`Launch.reads`,
 given to the server as `--read`), hidden, credential and key files never
-shown. The author has the research tools (`roles.RESEARCH_TOOLS`, the
+shown; in the run folder only the package's working files
+(`package_swarm.WORKING`, given as `--show`: research.md, prep.md,
+outline.yaml, script.yaml, research-searches.md and the deck's source),
+never the run's bookkeeping (timing.json, quality.json, swarm.json,
+run.job, job.log, research-log.jsonl, research-used.json), which is
+neither listed, found nor read. The author has the research tools (`roles.RESEARCH_TOOLS`, the
 research right's with `search_history` and `read_history`), the file tools,
 the batch search (`search_at_once`) and Write and Edit; the editor the evidence search (`knowledge_search`) and
 the file tools; the context owner and the structure and decision owner
@@ -4000,6 +4024,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `run_report.py` — Each package run's timing.json and quality.json, the
   collector the run's process records every role call into, and their sums
   per package and Work item (see "A package's evidence")
+- `awake.py` — The Mac kept from idle sleep while a package run works
+  (`held`, caffeinate), and how long it slept in a span (`Clock`)
 - `pages.py` — A role's material packed into pages that fit its model's
   window with room for the answer, files grouped by type, folder and
   meaning, and the pages asked in parallel, one session a worker (marking,
