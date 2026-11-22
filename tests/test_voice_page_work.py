@@ -143,6 +143,8 @@ class _Work:
             self.lists += 1
             await route.fulfill(json={**_list(self.deciding, self.quiet),
                                       "revision": getattr(self, "revision", 0)})
+        elif path.endswith("/package-runs"):
+            await route.fulfill(json={"work": path.split("/")[2], "packages": []})
         else:
             item = _past() if path.endswith("work-3") else _item(self.deciding)
             await route.fulfill(json={"item": item, "events": [
@@ -361,6 +363,8 @@ class _Review:
             await route.fulfill(json={"items": list(self.items.values()), "history": [],
                                       "groups": [{"grouped_by": "area", "name": "Voice",
                                                   "label": "Voice", "ids": list(self.items)}]})
+        elif path.endswith("/package-runs"):
+            await route.fulfill(json={"work": path.split("/")[2], "packages": []})
         else:
             item = self.items[path.rsplit("/", 1)[1]]
             await route.fulfill(json={"item": item, "events": [], "packages": []})

@@ -112,6 +112,8 @@ class _Work:
             await route.fulfill(json={"items": items, "groups": [
                 {"grouped_by": "area", "name": "Voice", "label": "Voice", "ids": [i["id"] for i in items]}],
                 "history": []})
+        elif path.endswith("/package-runs"):
+            await route.fulfill(json={"work": path.split("/")[2], "packages": []})
         else:
             item = next(i for i in items if path.endswith(i["id"]))
             await route.fulfill(json={"item": item, "events": []})
