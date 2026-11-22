@@ -1,0 +1,820 @@
+"""The script describes each slide's visual (Tim 2026-11-22, construction-
+drafts.md "The script describes each slide's visual": "So if you are saying
+the script should describe the slide and how it will look with the
+information to fill it in when we build it but in a text description for
+later building that that was what I told you to do to begin with yes.").
+
+The outline names each slide's visual form and why it carries the point
+(`FORMS`, package_script.outline_schema); the script gives each visual as
+typed pieces with the content that fills it (`PIECES`), the same types as
+presentation/1's objects: steps, key figures each with its source, a
+callout, a comparison, a chart's dataset with each value's source path and
+position, beside the text, Tim's own words, a picture and a table script/1
+always had. This module is the one place those pieces are read by program:
+
+- `piece_problems`: what a visual cannot be without (counts within what the
+  deck draws, a chart's columns and numbers);
+- `value_problems`: every number a chart or a key figure shows found, by the
+  program, in its source at its position (`Sources` reads the source: the
+  package's evidence, the run's folder, a Work item's or package's files);
+- `objects_of` and `arrange`: a script slide turned into presentation/1
+  objects by program, and the first of JARVIS's named layouts in which every
+  object fits its slot by deck_capacity (`fit_problems`, run as the script
+  is written, so a script that cannot fit is refused before the deck);
+- `apply`: the deck step puts the script's objects on each deck slide, the
+  author's layout and slots kept where they hold them (the author only
+  arranges), and `unmatched` says any deck object that is not the script's.
+
+A diagram is not a form yet: presentation/1 has no diagram object, and the
+outline offers it once the language has one.
+"""
+from __future__ import annotations
+
+import copy
+import itertools
+import re
+from pathlib import Path
+from typing import Optional
+
+from jarvis import deck_capacity, layout_spec, presentation_data
+from jarvis.presentation_schema import ContentSlide, Dataset
+
+# ── what the outline and the script name ─────────────────────────────────
+
+# Every form a slide's visual can take: one the deck can draw.
+TEXT, STEPS, FIGURES, CALLOUT, COMPARISON, TABLE, PICTURE = (
+    "text", "steps", "figures", "callout", "comparison", "table", "picture")
+CHARTS = {"bar_chart": "bar", "line_chart": "line", "scatter_chart": "scatter"}
+FORMS = (TEXT, STEPS, FIGURES, CALLOUT, COMPARISON, TABLE, *CHARTS, PICTURE)
+FORM_WORDS = ("text: words where the words are the point; steps: a sequence, numbered; "
+              "figures: one to four key numbers, each with its source; callout: one warning, "
+              "finding or bottom line set apart; comparison: two to four things side by side; "
+              "table: words in rows and columns; bar_chart, line_chart, scatter_chart: numbers "
+              "drawn from a dataset of the evidence's figures, each value with its source; "
+              "picture: a picture by path")
+
+# The script's typed visuals beside its text, his_words, picture and table.
+CHART = "chart"
+VISUAL_KINDS = (STEPS, FIGURES, CALLOUT, COMPARISON, CHART)
+# What the deck draws at most (presentation_schema).
+MAX_STEPS, MAX_FIGURES, MAX_SERIES, MAX_ROWS = 8, 4, 4, 50
+ID = r"^[a-z][a-z0-9-]{0,79}$"
+
+_TEXT = {"type": "string"}
+_WORDS = {"type": "string", "minLength": 1, "pattern": r"\S"}
+POSITION_WORDS = ("Where in that source the value is: 'line N', 'lines N-M' or 'characters "
+                  "A-B' (0-based, the end not included).")
+
+
+def _object(properties: dict, description: str = "") -> dict:
+    out = {"type": "object", "properties": properties, "required": list(properties),
+           "additionalProperties": False}
+    if description:
+        out["description"] = description
+    return out
+
+
+def _array(items: dict, description: str, least: int = 0) -> dict:
+    out: dict = {"type": "array", "items": items, "description": description}
+    if least:
+        out["minItems"] = least
+    return out
+
+
+def _kind(name: str, description: str) -> dict:
+    return {"type": "string", "enum": [name], "description": description}
+
+
+SOURCED = {"source": {**_WORDS, "description": "Its source path."},
+           "position": {**_WORDS, "description": POSITION_WORDS}}
+
+PIECES = {
+    STEPS: _object({
+        "kind": _kind(STEPS, "A sequence as numbered steps."),
+        "steps": _array(_object({"title": _WORDS, "says": {
+            **_TEXT, "description": "What the step says, or empty."}}),
+            f"The steps in order, at most {MAX_STEPS}.", least=1)}),
+    FIGURES: _object({
+        "kind": _kind(FIGURES, "Key figures: one to four numbers side by side."),
+        "figures": _array(_object({
+            "value": {**_WORDS, "description": "The number as it is read, units and all."},
+            "label": {**_WORDS, "description": "What it counts."}, **SOURCED}),
+            f"The figures, at most {MAX_FIGURES}, each with its source.", least=1)}),
+    CALLOUT: _object({
+        "kind": _kind(CALLOUT, "One warning, finding or bottom line set apart."),
+        "label": {**_TEXT, "description": "A short label above it, or empty."},
+        "says": _WORDS}),
+    COMPARISON: _object({
+        "kind": _kind(COMPARISON, "Two to four things side by side."),
+        "columns": _array(_object({"title": _WORDS, "points": _array(
+            _WORDS, "What it says, point by point.")}), "The columns, two to four.",
+            least=2)}),
+    CHART: _object({
+        "kind": _kind(CHART, "Numbers drawn as a chart from a dataset of the evidence's "
+                             "figures."),
+        "chart": {"type": "string", "enum": ["bar", "line", "scatter"]},
+        "text": {**_WORDS, "description": "What the chart shows, in words."},
+        "columns": _array(_object({
+            "id": {"type": "string", "pattern": ID, "description": "Lower case letters, "
+                                                                     "digits and dashes."},
+            "label": _WORDS, "type": {"type": "string", "enum": ["number", "text"]},
+            "units": {**_TEXT, "description": "Its units, or empty."}}),
+            "The dataset's columns.", least=2),
+        "x": {**_WORDS, "description": "The id of the column along the bottom."},
+        "y": _array(_WORDS, f"The ids of the number columns drawn, one to {MAX_SERIES}.",
+                    least=1),
+        "rows": _array(_object({
+            "id": {"type": "string", "pattern": ID},
+            "values": _array(_object({
+                "column": _WORDS,
+                "value": {**_WORDS, "description": "The value as it is written in its "
+                                                   "source."},
+                "source": {**_TEXT, "description": "Its source path; for a number column "
+                                                   "always."},
+                "position": {**_TEXT, "description": POSITION_WORDS + " For a number "
+                                                                      "column always."}}),
+                "One value for each column.", least=1)}),
+            f"The dataset's rows, at most {MAX_ROWS}.", least=1)}),
+}
+
+
+# ── reading numbers and positions ────────────────────────────────────────
+
+_NUMBER = re.compile(r"[-\u2212]?(?:\d{1,3}(?: \d{3})+(?![\d,.])|\d(?:[\d,.\u00a0\u202f']*\d)?)")
+
+
+def number(text: str) -> Optional[float]:
+    """The one number in `text` as a value (12,000 / 12 000 / 12.5 / 12,5 /
+    -3 % ...), or None when it holds none or more than one."""
+    found = _NUMBER.findall(str(text))
+    return _value(found[0]) if len(found) == 1 else None
+
+
+def _value(token: str) -> Optional[float]:
+    sign = -1 if token[0] in "-\u2212" else 1
+    token = token.lstrip("-\u2212")
+    for mark in ("\u00a0", "\u202f", "'", " "):
+        token = token.replace(mark, "")
+    if "," in token and "." in token:
+        decimal = "," if token.rfind(",") > token.rfind(".") else "."
+        token = token.replace("." if decimal == "," else ",", "").replace(decimal, ".")
+    elif "," in token or "." in token:
+        mark = "," if "," in token else "."
+        head, *groups = token.split(mark)
+        if len(groups) > 1 or (len(groups[0]) == 3 and mark == ","):
+            if all(len(g) == 3 for g in groups):
+                token = "".join([head, *groups])
+            else:
+                return None
+        else:
+            token = f"{head}.{groups[0]}"
+    try:
+        return sign * float(token)
+    except ValueError:
+        return None
+
+
+def numbers_in(text: str) -> list[float]:
+    """Every number in `text`; one written with a separator also as it
+    reads without it (1.234 is 1.234 and, in Spanish, 1234)."""
+    out = []
+    for token in _NUMBER.findall(text):
+        for reading in (token, token.replace(",", "").replace(".", "")):
+            found = _value(reading)
+            if found is not None and found not in out:
+                out.append(found)
+    return out
+
+
+_LINES = re.compile(r"^\s*(?:lines?|l\.?)\s*(\d+)(?:\s*(?:-|–|to|through)\s*(\d+))?\s*$",
+                    re.I)
+_CHARS = re.compile(r"^\s*(?:characters?|chars?|offsets?)\s*(\d+)\s*(?:-|–|to)\s*(\d+)\s*$",
+                    re.I)
+
+
+def span(text: str, position: str) -> Optional[str]:
+    """The stretch of `text` a position names, or None when it names none
+    the program can read, or one past the end."""
+    found = _LINES.match(position or "")
+    if found:
+        first = int(found.group(1))
+        last = int(found.group(2) or first)
+        lines = text.splitlines()
+        if first < 1 or last < first or last > len(lines):
+            return None
+        return "\n".join(lines[first - 1:last])
+    found = _CHARS.match(position or "")
+    if found:
+        start, end = int(found.group(1)), int(found.group(2))
+        return text[start:end] if 0 <= start < end <= len(text) else None
+    return None
+
+
+class Sources:
+    """A source path's text, read by the program: an engine path under one
+    of `mapped` (its prefix and the folder it is on disk), a path below one
+    of `folders` (absolute, or relative to each in turn). Nothing else is
+    read."""
+
+    LIMIT = 8 * 1024 * 1024
+
+    def __init__(self, mapped: tuple = (), folders: tuple = ()):
+        self.mapped = tuple((str(p).rstrip("/") + "/", Path(f)) for p, f in mapped)
+        self.folders = tuple(Path(f) for f in folders)
+
+    def _file(self, path: str) -> Optional[Path]:
+        for prefix, folder in self.mapped:
+            if path.startswith(prefix):
+                return folder / path[len(prefix):]
+        given = Path(path)
+        if given.is_absolute():
+            return given if any(_below(given, f) for f in self.folders) else None
+        for folder in self.folders:
+            if (folder / given).is_file() and _below(folder / given, folder):
+                return folder / given
+        return None
+
+    def text(self, path: str) -> Optional[str]:
+        found = self._file(str(path or "").strip())
+        if found is None or ".." in found.parts:
+            return None
+        try:
+            if not found.is_file() or found.stat().st_size > self.LIMIT:
+                return None
+            return found.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+
+def _below(path: Path, folder: Path) -> bool:
+    try:
+        path.resolve().relative_to(folder.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+# ── the program's check of a script slide's visuals ──────────────────────
+
+def piece_problems(piece: dict, at: str) -> list[str]:
+    """What a typed visual cannot be without, beyond its form."""
+    kind = piece.get("kind")
+    out: list[str] = []
+    if kind == STEPS and len(piece["steps"]) > MAX_STEPS:
+        out.append(f"{at}, steps, has {len(piece['steps'])}; the deck draws at most "
+                   f"{MAX_STEPS}: split them across slides.")
+    elif kind == FIGURES:
+        if len(piece["figures"]) > MAX_FIGURES:
+            out.append(f"{at}, figures, has {len(piece['figures'])}; the deck draws at most "
+                       f"{MAX_FIGURES}.")
+        for n, figure in enumerate(piece["figures"]):
+            if number(figure["value"]) is None:
+                out.append(f"{at}.figures[{n}] is {figure['value']!r}: a key figure shows one "
+                           f"number.")
+    elif kind == COMPARISON and len(piece["columns"]) > 4:
+        out.append(f"{at}, a comparison, has {len(piece['columns'])} columns; at most 4.")
+    elif kind == CHART:
+        out += _chart_problems(piece, at)
+    return out
+
+
+def _chart_problems(piece: dict, at: str) -> list[str]:
+    columns = {c["id"]: c for c in piece["columns"]}
+    out = []
+    if len(columns) != len(piece["columns"]):
+        out.append(f"{at}, a chart: each column has its own id.")
+    for name in [piece["x"], *piece["y"]]:
+        if name not in columns:
+            out.append(f"{at}, a chart, names the column {name!r}, which it does not have.")
+    if out:
+        return out
+    if len(piece["y"]) > MAX_SERIES or len(set(piece["y"])) != len(piece["y"]) \
+            or piece["x"] in piece["y"]:
+        out.append(f"{at}, a chart, draws one to {MAX_SERIES} columns, each once, none its x.")
+    if any(columns[name]["type"] != "number" for name in piece["y"]):
+        out.append(f"{at}, a chart: every column it draws (y) holds numbers.")
+    if piece["chart"] == "scatter" and columns[piece["x"]]["type"] != "number":
+        out.append(f"{at}, a scatter chart: its x column holds numbers.")
+    if len(piece["rows"]) > MAX_ROWS:
+        out.append(f"{at}, a chart, has {len(piece['rows'])} rows; at most {MAX_ROWS}.")
+    ids = [r["id"] for r in piece["rows"]]
+    if len(set(ids)) != len(ids):
+        out.append(f"{at}, a chart: each row has its own id.")
+    for r, row in enumerate(piece["rows"]):
+        given = [v["column"] for v in row["values"]]
+        if sorted(given) != sorted(columns):
+            out.append(f"{at}.rows[{r}] gives values for {', '.join(given)}; the chart's "
+                       f"columns are {', '.join(columns)}, one value each.")
+            continue
+        for v, value in enumerate(row["values"]):
+            if columns[value["column"]]["type"] != "number":
+                continue
+            where = f"{at}.rows[{r}].values[{v}]"
+            if number(value["value"]) is None:
+                out.append(f"{where} is {value['value']!r}, not one number.")
+            if not value["source"].strip() or not value["position"].strip():
+                out.append(f"{where}, a number, has no source path and position.")
+    return out
+
+
+def sourced_values(slide: dict) -> list[tuple[str, dict]]:
+    """Every number a slide's visuals show with its source: (where, value)
+    with `value`, `source`, `position`."""
+    out = []
+    for i, piece in enumerate(slide.get("on_screen") or []):
+        if piece.get("kind") == FIGURES:
+            out += [(f"on_screen[{i}].figures[{n}]", f) for n, f in enumerate(piece["figures"])]
+        elif piece.get("kind") == CHART:
+            kinds = {c["id"]: c["type"] for c in piece["columns"]}
+            out += [(f"on_screen[{i}].rows[{r}].values[{v}]", value)
+                    for r, row in enumerate(piece["rows"])
+                    for v, value in enumerate(row["values"])
+                    if kinds.get(value["column"]) == "number"]
+    return out
+
+
+def value_problems(slide: dict, at: str, sources: Optional[Sources]) -> list[str]:
+    """Each number a chart or key figure shows, found by the program in its
+    source at its position, as the facts of the evidence are read: the
+    source read, the position one the program reads, and the number there."""
+    if sources is None:
+        return []
+    out, read = [], {}
+    for where, value in sourced_values(slide):
+        said = f"{at} {where} ({value['value']!r})"
+        path = value["source"].strip()
+        if path not in read:
+            read[path] = sources.text(path)
+        text = read[path]
+        if text is None:
+            out.append(f"{said}: its source {path!r} cannot be read; cite the evidence file "
+                       f"the value is in.")
+            continue
+        stretch = span(text, value["position"])
+        if stretch is None:
+            out.append(f"{said}: its position {value['position']!r} is not one the program "
+                       f"reads in {path}. {POSITION_WORDS}")
+            continue
+        wanted = number(value["value"])
+        if wanted is None or not any(abs(n - wanted) <= 1e-9 * max(1, abs(wanted))
+                                     for n in numbers_in(stretch)):
+            out.append(f"{said}: the number is not in {path} at {value['position']}.")
+    return out
+
+
+def plan_problems(script: dict, outline: Optional[dict]) -> list[str]:
+    """Each content slide of the script shows the visual its outline slide
+    names (text: its words; a chart form: a chart of that kind)."""
+    if not outline:
+        return []
+    planned = {s.get("id"): s.get("visual") for s in outline.get("slides") or []
+               if isinstance(s, dict)}
+    out = []
+    for slide in script.get("slides") or []:
+        form = planned.get(slide["id"])
+        if not form or slide.get("decision"):
+            continue
+        pieces = slide.get("on_screen") or []
+        kinds = {p.get("kind") for p in pieces}
+        shown = (bool(kinds & {TEXT, "his_words"}) if form == TEXT
+                 else any(p.get("kind") == CHART and p.get("chart") == CHARTS[form]
+                          for p in pieces) if form in CHARTS
+                 else form in kinds)
+        if not shown:
+            out.append(f"slide {slide['id']}: the outline shows its point as {form}; its "
+                       f"on_screen has no {form}. Give it that visual with its content, or "
+                       f"say in the conversation why another carries the point.")
+    return out
+
+
+# ── a script slide as presentation/1 objects ─────────────────────────────
+
+SCRIPT_REFERENCE = "script"
+
+
+def _ref(slide_id: str) -> dict:
+    return {"reference": SCRIPT_REFERENCE, "member": slide_id}
+
+
+def _paragraphs(oid: str, pieces: list[dict]) -> list[dict]:
+    out = []
+    for piece in pieces:
+        if piece["kind"] == "his_words":
+            lines = [("paragraph", piece["text"], "his-words")]
+        else:
+            lines = []
+            for line in str(piece.get("text") or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if line[:2] in ("- ", "* ", "• "):
+                    lines.append(("bullet", line[2:].strip(), "normal"))
+                elif re.match(r"^\d+[.)]\s", line):
+                    lines.append(("numbered", re.sub(r"^\d+[.)]\s+", "", line), "normal"))
+                else:
+                    lines.append(("paragraph", line, "normal"))
+        for role, words, emphasis in lines:
+            n = len(out) + 1
+            out.append({"id": f"{oid}-p{n}", "role": role,
+                        "runs": [{"id": f"{oid}-p{n}-r1", "text": words, "emphasis": emphasis}]})
+    return out
+
+
+def _dataset(piece: dict, ident: str, sid: str) -> tuple[dict, dict[str, str]]:
+    names = {c["id"]: f"{ident}-c{n}" for n, c in enumerate(piece["columns"], 1)}
+    kinds = {c["id"]: c["type"] for c in piece["columns"]}
+    columns = []
+    for c in piece["columns"]:
+        column = {"id": names[c["id"]], "label": c["label"], "type": c["type"]}
+        if str(c.get("units") or "").strip():
+            column["units"] = c["units"]
+        columns.append(column)
+    rows = []
+    for n, row in enumerate(piece["rows"], 1):
+        values = {}
+        for v in row["values"]:
+            raw = v["value"]
+            values[names[v["column"]]] = (number(raw) if kinds[v["column"]] == "number" else raw)
+        rows.append({"id": f"{ident}-r{n}", "values": values})
+    return {"id": ident, "source": _ref(sid), "columns": columns, "rows": rows}, names
+
+
+class Built:
+    """A script slide as presentation/1: its objects in reading order (no
+    slots), the datasets and assets they need, and its narration."""
+
+    def __init__(self, slide: dict):
+        self.slide = slide
+        self.id = slide["id"]
+        self.objects: list[dict] = []
+        self.datasets: list[dict] = []
+        self.assets: list[dict] = []
+        self.columns = 0           # how many of the objects are a comparison's columns
+        self._build()
+
+    def _add(self, obj: dict) -> dict:
+        obj = {"id": f"{self.id}-v{len(self.objects) + 1}", **obj, "source": _ref(self.id)}
+        self.objects.append(obj)
+        return obj
+
+    def _build(self) -> None:
+        words: list[dict] = []
+
+        def flush():
+            if words:
+                obj = self._add({"type": "text"})
+                obj["paragraphs"] = _paragraphs(obj["id"], words)
+                if not obj["paragraphs"]:
+                    self.objects.pop()
+                words.clear()
+
+        for piece in self.slide.get("on_screen") or []:
+            kind = piece.get("kind")
+            if kind in (TEXT, "his_words"):
+                words.append(piece)
+                continue
+            flush()
+            if kind == PICTURE:
+                obj = self._add({"type": "image"})
+                asset = f"{obj['id']}-picture"
+                obj.update(asset=asset, alt=piece.get("text") or "A picture.", fit="contain")
+                self.assets.append({"id": asset, "path": Path(str(piece["path"])).name,
+                                    "from": piece["path"], "source": _ref(self.id)})
+            elif kind == TABLE:
+                rows = [r for r in piece.get("rows") or [] if r]
+                obj = self._add({"type": "table"})
+                if len(rows) > 1:
+                    obj["head"] = rows[0]
+                    rows = rows[1:]
+                obj["rows"] = [{"id": f"{obj['id']}-r{n}", "cells": r}
+                               for n, r in enumerate(rows, 1)]
+                obj["alt"] = " ".join(obj.get("head") or rows[0])
+            elif kind == STEPS:
+                obj = self._add({"type": "steps"})
+                obj["items"] = [{"id": f"{obj['id']}-s{n}", "title": s["title"],
+                                 **({"says": s["says"]} if str(s.get("says") or "").strip()
+                                    else {})}
+                                for n, s in enumerate(piece["steps"], 1)]
+            elif kind == FIGURES:
+                obj = self._add({"type": "figures"})
+                obj["items"] = [{"id": f"{obj['id']}-f{n}", "value": f["value"],
+                                 "label": f["label"]}
+                                for n, f in enumerate(piece["figures"], 1)]
+            elif kind == CALLOUT:
+                obj = self._add({"type": "callout"})
+                if str(piece.get("label") or "").strip():
+                    obj["label"] = piece["label"]
+                obj["says"] = piece["says"]
+            elif kind == COMPARISON:
+                for column in piece["columns"]:
+                    obj = self._add({"type": "text"})
+                    obj["paragraphs"] = _paragraphs(obj["id"], [{"kind": TEXT, "text": "\n".join(
+                        [column["title"], *(f"- {p}" for p in column["points"])])}])
+                    obj["paragraphs"][0]["role"] = "heading"
+                    self.columns += 1
+            elif kind == CHART:
+                obj = self._add({"type": "chart"})
+                dataset, names = _dataset(piece, f"{self.id}-d{len(self.datasets) + 1}",
+                                          self.id)
+                self.datasets.append(dataset)
+                obj.update(kind=piece["chart"], data={"dataset": dataset["id"]},
+                           x=names[piece["x"]], y=[names[y] for y in piece["y"]],
+                           alt=piece["text"])
+        flush()
+
+    @property
+    def narration(self) -> list[dict]:
+        return [{"id": f"{self.id}-say", "say": self.slide["narration"],
+                 "focus": [self.objects[0]["id"]] if self.objects else []}]
+
+    def slide_of(self, layout: str, slots: dict[str, str],
+                 narration: Optional[list[dict]] = None) -> dict:
+        objects = [{"id": o["id"], "type": o["type"], "slot": slots[o["id"]],
+                    **{k: v for k, v in o.items() if k not in ("id", "type")}}
+                   for o in self.objects]
+        return {"id": self.id, "type": "content", "title": self.slide["title"],
+                "layout": layout, "objects": objects,
+                "readingOrder": [o["id"] for o in self.objects],
+                "narration": narration or self.narration, "notes": ""}
+
+
+def objects_of(slide: dict) -> Built:
+    return Built(slide)
+
+
+# Layouts tried in this order: the plainest that holds the objects first.
+ORDER = ("title-and-body", "picture-and-words", "table", "two-pictures", "comparison")
+
+
+def _language() -> str:
+    try:
+        from jarvis import spoken_words
+        return spoken_words.active_language()
+    except Exception:  # noqa: BLE001 - the script check never fails on the language
+        return "en"
+
+
+def candidates(built: Built):
+    """Every (layout, slots) that takes the objects, one object a slot, each
+    slot taking its type, the layout's required slots filled and its
+    columns in order, plainest first."""
+    accepts = layout_spec.spec()["accepts"]
+    named = layout_spec.spec()["layouts"]
+    objects = built.objects
+    order = ("comparison",) if built.columns else ORDER
+    for layout in order:
+        slots = layout_spec.slots_of(layout)
+        columns = named[layout].get("columns", {}).get("slots", [])
+        for chosen in itertools.permutations(slots, len(objects)):
+            if any(o["type"] not in accepts[s] for o, s in zip(objects, chosen)):
+                continue
+            if not set(named[layout]["required"]) <= set(chosen):
+                continue
+            used = [s for s in columns if s in chosen]
+            if used != columns[:len(used)]:
+                continue
+            if built.columns and sum(1 for s in chosen if s in columns) != built.columns:
+                continue
+            yield layout, {o["id"]: s for o, s in zip(objects, chosen)}
+
+
+def _fits(built: Built, slide: dict) -> list[str]:
+    """What does not fit when `slide` is drawn (deck_capacity), or a reason
+    it cannot be read as presentation/1."""
+    try:
+        model = ContentSlide.model_validate(slide)
+        datasets = {d["id"]: Dataset.model_validate(d) for d in built.datasets}
+        for dataset in datasets.values():
+            presentation_data.check_dataset(dataset)
+        for obj in model.objects:
+            if obj.type == "chart":
+                presentation_data.resolve_chart(obj, datasets, _language())
+            elif obj.type == "table":
+                presentation_data.expand_table(obj, datasets, _language())
+    except (ValueError, presentation_data.DataProblem) as error:
+        return [str(error).splitlines()[0]]
+    return [message for _, message in deck_capacity.problems(model)]
+
+
+def arrange(built: Built) -> tuple[Optional[tuple[str, dict]], list[str]]:
+    """The first layout and slots in which every object fits its slot, or
+    (None, the problems of the arrangement nearest to fitting)."""
+    best: Optional[list[str]] = None
+    for layout, slots in candidates(built):
+        found = _fits(built, built.slide_of(layout, slots))
+        if not found:
+            return (layout, slots), []
+        if best is None or len(found) < len(best):
+            best = found
+    if best is None:
+        types = ", ".join(o["type"] for o in built.objects) or "nothing"
+        return None, [f"its visuals ({types}) are more than any of JARVIS's layouts holds "
+                      f"on one slide: split the slide, or put its words in one text piece."]
+    return None, best
+
+
+def fit_problems(slide: dict, at: str) -> list[str]:
+    """A content slide of the script laid out by program (deck_capacity at
+    the smallest frame): refused when no layout holds it."""
+    if slide.get("decision"):
+        return []
+    built = Built(slide)
+    if not built.objects:
+        return [f"{at} shows nothing on screen: give it its visual."]
+    _, problems = arrange(built)
+    return [f"{at} does not fit a slide: {p}" for p in problems]
+
+
+# ── the deck step ────────────────────────────────────────────────────────
+
+def _content_slides(script: dict) -> list[dict]:
+    return [s for s in script.get("slides") or [] if isinstance(s, dict)
+            and not s.get("decision")]
+
+
+def built_slides(script: dict) -> dict:
+    """Every content slide of the script built by program, laid out in the
+    first layout that fits: {"slides", "datasets", "assets"}."""
+    out: dict = {"slides": [], "datasets": [], "assets": []}
+    for slide in _content_slides(script):
+        built = Built(slide)
+        if not built.objects:
+            continue
+        arranged, _ = arrange(built)
+        layout, slots = arranged or next(candidates(built), (ORDER[0], {}))
+        if not arranged and len(slots) != len(built.objects):
+            continue
+        out["slides"].append(built.slide_of(layout, slots))
+        out["datasets"] += built.datasets
+        out["assets"] += [{k: v for k, v in a.items() if k != "from"} for a in built.assets]
+    return out
+
+
+def _their_slots(slide: dict, built: Built) -> dict[str, Optional[str]]:
+    """The slot the author gave each built object: its object of the same
+    id, else its next object of the same type, in order."""
+    theirs = [o for o in slide.get("objects") or [] if isinstance(o, dict)]
+    claimed: set[int] = set()
+    out: dict[str, Optional[str]] = {}
+    for obj in built.objects:
+        found = next((n for n, o in enumerate(theirs) if o.get("id") == obj["id"]), None)
+        if found is None or found in claimed:
+            found = next((n for n, o in enumerate(theirs) if n not in claimed
+                          and o.get("type") == obj["type"]
+                          and not any(b["id"] == o.get("id") for b in built.objects)), None)
+        if found is not None:
+            claimed.add(found)
+        out[obj["id"]] = theirs[found].get("slot") if found is not None else None
+    return out
+
+
+def _held(layout, slots: dict[str, Optional[str]]) -> bool:
+    """The author gave every object a slot in a layout: its arrangement
+    stands, and the build says what in it does not hold."""
+    return isinstance(layout, str) and all(isinstance(v, str) and v for v in slots.values())
+
+
+def apply(source: dict, script: dict, deck_folder: Optional[Path] = None,
+          sources: Optional[Sources] = None, revision: str = "") -> dict:
+    """The deck source with the script's objects on each of its content
+    slides, by program: the author's layout and each object's slot kept
+    where the author gave every object one (its object of the same id, else
+    of the same type in order; the build says what does not hold), else
+    JARVIS's arrangement; the author's narration cues kept, each lighting
+    only what the slide shows; the title the script's. The datasets and pictures
+    they need are added (a picture copied beside the source), and the
+    script itself is the reference every object names."""
+    source = copy.deepcopy(source)
+    slides = {s.get("id"): s for s in source.get("slides") or [] if isinstance(s, dict)}
+    datasets = [d for d in source.get("datasets") or [] if isinstance(d, dict)]
+    assets = [a for a in source.get("assets") or [] if isinstance(a, dict)]
+    touched = False
+    for wanted in _content_slides(script):
+        slide = slides.get(wanted["id"])
+        if slide is None or slide.get("type") != "content":
+            continue
+        built = Built(wanted)
+        if not built.objects:
+            continue
+        layout = slide.get("layout")
+        slots = _their_slots(slide, built)
+        if not _held(layout, slots):
+            arranged, _ = arrange(built)
+            layout, slots = arranged or next(candidates(built), (ORDER[0], None))
+            if slots is None:
+                continue
+        narration = _kept_cues(slide.get("narration"), built)
+        slide.clear()
+        slide.update(built.slide_of(layout, slots, narration))
+        for dataset in built.datasets:
+            _put(datasets, dataset)
+        for asset in built.assets:
+            _put(assets, {k: v for k, v in asset.items() if k != "from"})
+            if deck_folder is not None:
+                _copy_picture(asset, deck_folder, sources)
+        touched = True
+    if touched:
+        for key, items in (("datasets", datasets), ("assets", assets)):
+            if items or key in source:
+                source[key] = items
+        refs = [r for r in source.get("references") or [] if isinstance(r, dict)]
+        _put(refs, {"id": SCRIPT_REFERENCE, "kind": "file", "locator": "../script.yaml",
+                    "revision": revision or "passed",
+                    "description": "The passed script this deck is built from: every slide's "
+                                   "visual and the source path and position of each value it "
+                                   "shows."})
+        source["references"] = refs
+    return source
+
+
+def _put(items: list[dict], item: dict) -> None:
+    """`item` in place of the one with its id, else added at the end (so a
+    source applied again is the same, in the same order)."""
+    for n, have in enumerate(items):
+        if have.get("id") == item["id"]:
+            items[n] = item
+            return
+    items.append(item)
+
+
+def _targets(built: Built) -> set[str]:
+    """Every id a cue may light on the built slide: each object, paragraph,
+    run, item and table row, and each bar or point of a chart."""
+    out: set[str] = set()
+
+    def walk(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("id"), str):
+                out.add(value["id"])
+            for v in value.values():
+                walk(v)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v)
+    walk(built.objects)
+    datasets = {d["id"]: d for d in built.datasets}
+    for obj in built.objects:
+        if obj["type"] == "chart":
+            for row in datasets[obj["data"]["dataset"]]["rows"]:
+                out.update(f"{obj['id']}-{row['id']}-{y}" for y in obj["y"])
+        elif obj["type"] == "table":
+            out.update(r["id"] for r in obj.get("rows") or [])
+    return out
+
+
+def _kept_cues(cues, built: Built) -> Optional[list[dict]]:
+    """The author's narration cues, each lighting only what the built slide
+    shows (a target it no longer has dropped, a cue left lighting nothing
+    lights the first object); None when the author wrote none."""
+    if not isinstance(cues, list) or not cues:
+        return None
+    targets, out = _targets(built), []
+    for cue in cues:
+        if not isinstance(cue, dict):
+            continue
+        focus = [f for f in cue.get("focus") or [] if f in targets]
+        out.append({**cue, "focus": focus or [built.objects[0]["id"]]})
+    return out or None
+
+
+def _copy_picture(asset: dict, deck_folder: Path, sources: Optional[Sources]) -> None:
+    target = deck_folder / asset["path"]
+    if target.is_file():
+        return
+    found = sources._file(str(asset["from"])) if sources else None
+    if found is None:
+        given = Path(str(asset["from"]))
+        found = given if given.is_absolute() else None
+    if found is not None and found.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(found.read_bytes())
+
+
+def _content(obj: dict) -> dict:
+    return {k: v for k, v in obj.items() if k != "slot"}
+
+
+def unmatched(script: dict, source: dict) -> list[str]:
+    """Each object the script's visual makes that its deck slide does not
+    show as the script gives it: every script piece maps to the same deck
+    object, by program."""
+    slides = {s.get("id"): s for s in source.get("slides") or [] if isinstance(s, dict)}
+    datasets = {d.get("id"): d for d in source.get("datasets") or [] if isinstance(d, dict)}
+    out = []
+    for wanted in _content_slides(script):
+        slide = slides.get(wanted["id"])
+        if slide is None or slide.get("type") != "content":
+            continue
+        built = Built(wanted)
+        have = {o.get("id"): o for o in slide.get("objects") or [] if isinstance(o, dict)}
+        for obj in built.objects:
+            if obj["id"] not in have or _content(have[obj["id"]]) != _content(obj):
+                out.append(f"Slide {wanted['id']}'s {obj['type']} {obj['id']} is not the "
+                           f"script's: JARVIS builds every visual from the script, and the "
+                           f"deck only arranges its layout and slots.")
+        for dataset in built.datasets:
+            if datasets.get(dataset["id"]) != dataset:
+                out.append(f"The dataset {dataset['id']} is not the script's chart on slide "
+                           f"{wanted['id']}.")
+    return out
+

@@ -85,7 +85,8 @@ def test_the_research_tools_hold_the_brain_s_own_past_conversations():
 def outline_of(source: str = "files/situation.md") -> dict:
     return {"version": "outline/1", "slides": [{
         "id": "opening", "title": "The move", "point": "PR 171 moves every Work item.",
-        "answers": "merge-171", "background": False, "evidence": [source]}]}
+        "answers": "merge-171", "background": False, "evidence": [source],
+        "visual": "text", "why": "The change is one sentence."}]}
 
 
 class Plan:
@@ -383,7 +384,7 @@ def test_the_outline_then_the_script_then_a_pass_signed_off_by_every_owner(marke
                     for f in forms if "signoff" in f["properties"]]
              for name, forms in plan.forms.items()}
     assert enums["tims_reader"] == [["cares"]] * 3
-    assert enums["structure_owner"] == [["order", "decision_ready"]] * 3
+    assert enums["structure_owner"] == [["order", "decision_ready", "shows_point"]] * 3
     assert enums["editor"] == [["language"]]
     # The editor's edit applied where its old text is exactly there; the one
     # that is not refused, and said.
@@ -395,7 +396,7 @@ def test_the_outline_then_the_script_then_a_pass_signed_off_by_every_owner(marke
     assert result["result"] == "passed" and result["passes"] == 1
     assert {c["id"]: c["state"] for c in result["concerns"]} == {
         "cares": "resolved", "background": "resolved", "order": "resolved",
-        "decision_ready": "resolved", "language": "resolved"}
+        "decision_ready": "resolved", "shows_point": "resolved", "language": "resolved"}
     assert {s["stage"] for s in result["signoffs"]} == {"outline", "outline-signoff", "pass-1"}
     assert [t["stage"] for t in result["times"]][:3] == ["research-searches", "research",
                                                           "outline"]

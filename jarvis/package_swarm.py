@@ -130,9 +130,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from jarvis import (briefing_labels, model_tiers, package_evidence as pe, package_jobs,
-                    package_mark, package_script, pages, records, research_log, role_prompts,
-                    roles, run_report, sessions, step_cache, work_research, working_set)
+from jarvis import (briefing_labels, data_paths, model_tiers, package_evidence as pe,
+                    package_jobs, package_mark, package_script, pages, records, research_log,
+                    role_prompts, roles, run_report, script_visuals, sessions, step_cache,
+                    work_research, working_set)
 
 RESEARCH, SWARM = "research", "swarm"
 RESEARCH_MD, PREP_MD = "research.md", "prep.md"
@@ -187,18 +188,21 @@ def _language() -> str:
 
 def concerns() -> list[sessions.Concern]:
     """Each concern and its owner (owner-prompts.md): Tim's four judge
-    questions word for word, and the editor's language."""
+    questions word for word, the structure owner's "Does each slide show
+    its point?" (the visual plan, construction-drafts.md "The script
+    describes each slide's visual"), and the editor's language."""
     cares, = _asked_in(READER)
     background, = _asked_in(CONTEXT)
-    order, decision = _asked_in(STRUCTURE)
+    order, decision, shows = _asked_in(STRUCTURE)
     return [sessions.Concern("cares", cares, READER),
             sessions.Concern("background", background, CONTEXT),
             sessions.Concern("order", order, STRUCTURE),
             sessions.Concern("decision_ready", decision, STRUCTURE),
+            sessions.Concern("shows_point", shows, STRUCTURE),
             sessions.Concern("language", _language(), EDITOR)]
 
 
-OUTLINE_CONCERNS = ("cares", "background", "order", "decision_ready")
+OUTLINE_CONCERNS = ("cares", "background", "order", "decision_ready", "shows_point")
 SCRIPT_CONCERNS = OUTLINE_CONCERNS + ("language",)
 
 
@@ -243,8 +247,19 @@ class Run:
 
     def script_file(self) -> package_script.ScriptFile:
         """The script in its structured form, checked against the handoff's
-        questions."""
-        return package_script.ScriptFile(self.script, question_ids(self.doc))
+        questions, its visuals' numbers against their sources and its
+        slides against the outline's visual plan."""
+        return package_script.ScriptFile(self.script, question_ids(self.doc),
+                                         sources=self.sources(), outline=self.outline)
+
+    def sources(self) -> script_visuals.Sources:
+        """Where a value's source path is read by the program: the evidence
+        (its engine path or its folder), the run's folder, and a Work item's
+        or package's own files."""
+        return script_visuals.Sources(
+            mapped=((self.place.path, self.place.folder),
+                    ("/work", data_paths.work_dir()), ("/packages", data_paths.package_dir())),
+            folders=(self.place.folder, self.folder))
 
     def outline_file(self) -> package_script.OutlineFile:
         return package_script.OutlineFile(self.outline, question_ids(self.doc))
@@ -680,7 +695,8 @@ def research_note(run: Run) -> str:
 # The code that shapes the research and every stage's output: this module,
 # the script's form and marking, the research log and the Work item's
 # research (step_cache.code).
-SWARM_CODE = ("jarvis.package_swarm", "jarvis.package_script", "jarvis.research_log",
+SWARM_CODE = ("jarvis.package_swarm", "jarvis.package_script", "jarvis.script_visuals",
+              "jarvis.research_log",
               "jarvis.work_research", "jarvis.package_mark", "jarvis.package_evidence")
 
 
@@ -1081,7 +1097,8 @@ def settle_note(run: Run) -> str:
 def fill_note(run: Run) -> str:
     return (f"Write the script from the agreed outline, below. Give it in your answer as "
             f"`script` in the schema given with this call ({package_script.VERSION}), the "
-            f"whole script: JARVIS checks it and writes it to {run.script}.\n"
+            f"whole script: JARVIS checks it and writes it to {run.script}. "
+            f"{role_prompts.AUTHOR_VISUALS}\n"
             + sessions._tag("outline", _read(run.outline), file=OUTLINE))
 
 

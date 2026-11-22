@@ -1599,9 +1599,16 @@ A package's next run (`server._new_package_run`,
 2026-11-22: the standard design, make and Bazel): every unit of a step is
 `step_cache.Unit` (kind, name, inputs), its key the SHA-256 of its inputs
 in canonical JSON, its output (files and a value) kept with its seconds and
-who made it under `data_paths.package_cache_dir()` (`<data>/package-cache/
-<kind>/<key>`, shared by every package; no content root maps it), and
-reused (`step_cache.reuse`, restored into the run's folder) when kept.
+who made it in the package's own cache (`step_cache.root`: `<package
+folder>/.step-cache/<kind>/<key>`, beside its `evidence/` and `runs/`;
+never indexed, `knowledge_content.run_bookkeeping`), and reused
+(`step_cache.reuse`, restored into the run's folder) when kept. The cache
+is one package's (Tim, 2026-11-22: reusing work across two different
+packages has no value, they are two different problems): every run of
+the same package (findings answered, an Error run again, the sender's
+change, his Reject) reuses whatever its changes did not touch, and a new
+package always starts fresh, whatever its handoff; the shared
+`<data>/package-cache` of before is removed at start.
 Model answers are not deterministic, so a key is of the inputs, never the
 output, and a unit that reads another names that unit's output digest
 (`Entry.digest`); only finished work is kept (a stage that failed or waits
@@ -1611,10 +1618,19 @@ as well as the material: the source of the code that shapes the output
 at any depth, read from its source with `ast`, never imported
 (`step_cache.closure`), by its SHA-256; never a hand-raised version),
 and for a model step each role's approved prompt, tier, effort, release
-and the engine and model its engines.json kind chooses
-(`step_cache.role_tool`, `roles_tool`), the labels whole
-(`step_cache.labels_key`) and the concerns. The units: `gather` is always
-read again for a new package, since its inputs are live (the files, each
+and the engine and the model that runs it (`step_cache.role_tool`,
+`roles_tool`: `model_tiers.pick`'s model, the tier resolved on the chosen
+brain, on Codex the newest of its live list read once a process,
+`step_cache._listed`), the labels whole (`step_cache.labels_key`), the
+concerns and, where meaning groups what is put together (mark's pages,
+the swarm's asks and what is left), the embedding model
+(`step_cache.embedding_key`). A model a session's sweep found refused is
+kept in the package's cache (`refused.json`: `sessions.BrainChatSession.
+_refused` -> `run_report.refused` -> `step_cache.note_refused`) and passed
+over by every later pick of the package (`model_tiers.pick`'s `refused`,
+from `package_mark.pick_args` and `step_cache.role_tool` alike), so a key
+names the model the sweep ends on. The units: `gather` reads everything
+at the package's first run, since its inputs are live (the files, each
 reference, the Work item, the PRs and CI runs recorded against it, the
 sending session's transcript, Tim's record); its key is the hash of what
 was read (`package_gather.unit_of`), noted computed and never kept; its
@@ -1630,18 +1646,21 @@ questions, `tool_of` (the reading roles, the labels, the code) and, for
 prose, Tim's material; only files whose key is not kept are marked,
 together, each one's time its share of the batch); `research`
 (`package_swarm.research_unit`: the request, the evidence as gathered,
-`package_mark.marks_digest`, the Work item's research folder as it stands
-(`step_cache.tree_sha`), the author's role and the code); the swarm's
+`package_mark.marks_digest`, the author's role, model and the code: the
+run's own inputs, so within the package its research is reused unless
+the sender's answers, his words at the check, Tim's Reject, the code, a
+prompt or the model change, never for what the program's searches or the
+Work item's research folder find now); the swarm's
 stages `swarm-outline`, `swarm-fill`, `swarm-passes` and one
 `swarm-revision` a revision, each keyed by the output of the unit before
 it, the answers to an earlier run's findings on it and `package_swarm.
-tool_of` (every participant's role, prompt and engine choice, the
-concerns, the labels, the code) (`stage_unit`, `findings_for`), what each
+tool_of` (every participant's role, prompt and model, the concerns, the
+labels, the embedding model, the code) (`stage_unit`, `findings_for`), what each
 did in this folder in swarm.json's `units`, a stage waiting on the sender
 its `pending`; a stage restored from another run starts every participant,
 on either brain, in a new session given the whole conversation
 (`_fresh_sessions`), so no session carries what was said after the stage
-and no two packages resume one thread; `deck-header`, `deck-source` (one a
+and no two runs resume one thread; `deck-header`, `deck-source` (one a
 slide: the deck slide, its decision and the pictures and references it
 names, keyed by its script slide, `package_deck.writing_tool` (the
 author's role, the format, the code) and the sender's answers to a deck
@@ -1652,9 +1671,12 @@ out, sizes, builds and proves a deck, `PIPELINE_CODE`, the shared
 deck's files and the presentation assets, and the build language,
 `make_package.built_language`), `deck-review` (one a slide: its part, its
 layout data, script slide,
-`review_tool` and the findings answered on it), `deck` (the review and
-conversation) and `deliver` (the deck, the briefing, the message, who
-asked, its code; the check is asked every run). A kept deck source that no
+`review_tool` and the findings answered on it), `deck` (the slides'
+review keys, the source and the build's key, since the review's record
+carries the build's verdict) and `deliver` (the deck, the briefing, the
+message, who asked, the fingerprint of JARVIS's signing key,
+`package_deliver.signer_fingerprint`, and its code; the check is asked
+every run). A kept deck source that no
 longer builds is given up (`Plan.release`): the author writes it all and
 what it writes replaces the kept entries (`step_cache.computed(...,
 replace=True)`, outcome `replaced`), so no later run restores the broken
@@ -1686,8 +1708,9 @@ later package's gather reads them into `jarvis/tim.md` (Part 1: the Work
 item's package runs, or with no Work item every earlier package the same
 session asked with the same handoff, `package_jobs.rejections_of_request`).
 Each cache entry's `used` file is touched when it is reused; entries
-unused for 30 days (`step_cache.PRUNE_AFTER_SEC`) are removed at server
-start (`server._prune_step_cache`, `step_cache.prune`). The sender
+unused for 30 days (`step_cache.PRUNE_AFTER_SEC`) are removed from every
+package's cache (`step_cache.caches`) at server start
+(`server._prune_step_cache`, `step_cache.prune`). The sender
 asks for its package again, without new answers, after a run that ended in
 Error or failed (`make_package --rerun <job> --session <id>`, the agent
 tool `package_rerun`, `POST /api/packages/requests/<job>/rerun`, the
@@ -2042,7 +2065,11 @@ why). The flow (`flow` in `swarm.json`, each stage timed in `times` by
 `Clock`): the outline (from its research and prep the author gives the outline
 in its answer, `outline.yaml`, outline/1, `package_script.OutlineFile`:
 each slide's id, title, one point, the question it answers or is
-background for, and its evidence by source path; the three owners work on
+background for, its evidence by source path, and its `visual`, the form
+that shows its point (`script_visuals.FORMS`: text, steps, figures,
+callout, comparison, table, bar, line or scatter chart, picture; a diagram
+once presentation/1 has one), with `why` that form carries it, both
+required; the three owners work on
 it in parallel, `owners_turn` over `BrainSwarmSession.together`; the
 author settles conflicts, saying why; the owners sign the outline off);
 the fill (the author writes the script from the agreed outline; the
@@ -2064,12 +2091,32 @@ the swarm ends not passed with them. The script is structured YAML,
 `script.yaml` (`package_script.py`, script/1; Tim 2026-11-20): a list of
 slides in order, each with an id (its deck slide's), a title, what is on
 screen (an ordered list of pieces: `text`, `his_words` with its source, a
-`picture` by path, a `table`), what JARVIS says over it (`narration`), the
+`picture` by path, a `table`, or a typed visual with its content,
+`script_visuals.PIECES`, the same types as presentation/1's objects:
+`steps`, `figures` each with its source and position, `callout`,
+`comparison`, `chart` with its columns and rows, every number with its
+source path and position), what JARVIS says over it (`narration`), the
 source path and position of every fact (`facts`), the questions it
-answers and the decision it asks if any; marked slide by slide
+answers and the decision it asks if any. The script describes each slide
+and how it will look, with the information to fill it, for the deck to
+build later (construction-drafts.md "The script describes each slide's
+visual", Tim 2026-11-22): `package_script.problems` checks each visual by
+program as it is written (`script_visuals`: each piece's content; every
+number a chart or key figure shows found in its source at its position,
+`line N`, `lines N-M` or `characters A-B`, read by `Sources` from the
+evidence, the run folder and a Work item's or package's files, the
+swarm's `Run.sources`; every content slide laid out in the first of
+JARVIS's layouts in which each object fits its slot by deck_capacity,
+`fit_problems`; each slide showing the visual its outline slide names,
+`plan_problems`), so a script that cannot be drawn is refused before the
+deck. The structure and decision owner's third question, "Does each slide
+show its point?" (`shows_point`, in the outline and the fix passes), and
+every owner's and the author's first-round wording to plan and review
+visuals are owner-prompts.md's; the program's words at the fill are
+`role_prompts.AUTHOR_VISUALS`. Marked slide by slide
 (`mark_slides`: packed into pages as the evidence is, a page never part
 of two slides, the whole script with each, every part at its slide and
-field, `package_script.units`; the 28
+field, `package_script.units`, each visual's words and data too; the 28
 labels, Tim's material by `package_mark.tim_known`). Each participant's
 first message is made at its first turn (`_Firsts`): its share of the
 evidence (`sessions.SHARES`: Tim's reader what he knows and had access
@@ -2104,7 +2151,17 @@ sent is taken as given only once it answers, `_heard`) between the run's
 processes.
 The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
 workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
-`DECK_CONCERNS`, each of `DECK_QUESTIONS` for each owner and the editor). A round: the author writes `deck/presentation.yaml`
+`DECK_CONCERNS`, each of `DECK_QUESTIONS` for each owner and the editor). The
+program builds every content slide from the script's visuals
+(`script_visuals.built_slides`: each piece its presentation/1 object, a
+chart its dataset, laid out in the first layout that fits), given to the
+author with `BUILT_NOTE`, and before every build puts the script's
+objects back on each content slide (`package_deck.from_script`,
+`script_visuals.apply`: the author's layout and slots kept where it gave
+every object one, matched by id else by type in order; its narration cues
+kept, lighting only what the slide shows); `script_problems` says any
+object that is not the script's (`script_visuals.unmatched`), and
+`SHOW_NOTE` stays as a backstop. A round: the author writes `deck/presentation.yaml`
 (presentation/1) from the passed script alone, one script slide to one
 deck slide, in order and with the same id (a script slide that asks a
 decision is the deck's decision slide asking it, its words the decision's
@@ -4112,8 +4169,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   kept between the run's processes; every search a
   role makes logged, and the hits the passed script used (see "A package's
   evidence")
-- `step_cache.py` — The package steps' cache keyed by their inputs and
-  their tool (code by source hash, roles, prompts, engine choice): each
+- `step_cache.py` — One package's cache of its steps, keyed by their
+  inputs and their tool (code by source hash, roles, prompts, the model
+  that runs them): each
   unit's key, its kept output and timing, reuse, replacing a rejected
   output, pruning, and the run's timing.json units (see "Package requests")
 - `deck_capacity.py` — How much each layout slot holds at 662 x 489 with
@@ -4122,6 +4180,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   their views, and tables and charts drawn from them; `diagram_layout.py` —
   a diagram's kind rules, its layout by program, what a slot holds of each
   kind and its words checked in place at a frame
+- `script_visuals.py` — The script's visuals: the outline's forms, the
+  script's typed visual pieces, each number found at its source, every
+  slide laid out within its slots' capacity as the script is written, and
+  the deck's content slides built from the script by program (see "A
+  package's evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

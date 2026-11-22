@@ -6,6 +6,16 @@ presentation pipeline, and compared slide by slide with the script.
 Run after the swarm passes, in JARVIS's own process (package_jobs.PRODUCERS),
 in the run's folder. A round:
 
+  from_script      JARVIS builds every content slide from the script's
+                   visuals by program (script_visuals: each script piece to
+                   its presentation/1 object, laid out in the first of its
+                   layouts in which every object fits its slot) and gives
+                   them to the author (`built_tag`, `BUILT_NOTE`); before
+                   each build it puts the script's objects back on each
+                   content slide, the author's layout and slots kept
+                   (`from_script`): the author arranges, the script says
+                   what is shown (construction-drafts.md "The script
+                   describes each slide's visual", Tim 2026-11-22).
   write_deck       the author, in the same swarm, writes
                    `deck/presentation.yaml` (presentation/1) from the passed
                    script (script.yaml) alone, choosing JARVIS's named
@@ -34,8 +44,11 @@ in the run's folder. A round:
                    script's, one to one, and every piece of Tim's own words
                    drawn on its slide in the his-words style and said in its
                    narration (his_words_check: the program's check, no
-                   vote). What does not build or check is said into the
-                   conversation as JARVIS's own turn, to the author.
+                   vote), and every object the script's visuals make
+                   shown on its slide as the script gives it
+                   (script_visuals.unmatched). What does not build or check
+                   is said into the conversation as JARVIS's own turn, to
+                   the author.
   deck_review      the program posts, as its own turn in the same
                    conversation, slide by slide, each slide of the passed
                    script beside its deck slide's layout data (the deck
@@ -124,7 +137,7 @@ import yaml
 
 from jarvis import (data_paths, decision_package as dp, layout_spec, make_package,
                     package_evidence as pe, package_inbox, package_jobs, package_script,
-                    package_swarm as ps, presentation_proof, sessions,
+                    package_swarm as ps, presentation_proof, script_visuals, sessions,
                     spoken_words, step_cache)
 from jarvis.presentation_schema import HIS_WORDS
 
@@ -220,6 +233,42 @@ SHOW_NOTE = (
     "visuals example below shows each part.")
 
 
+# What the author is told of the slides JARVIS builds from the script's
+# visuals (construction-drafts.md "The script describes each slide's visual",
+# first-round wording, role-prompts.md "Author: the deck from the script's
+# visuals"); SHOW_NOTE stays beside it as a backstop.
+BUILT_NOTE = (
+    "JARVIS has built every content slide from the script's visuals, below: each object with its "
+    "content, the datasets its charts draw and the pictures it shows, laid out in the first of "
+    "JARVIS's layouts in which every object fits its slot. Use them as given. You arrange: you "
+    "may choose another layout and another slot for each object, and split the narration into "
+    "cues that light each object; JARVIS puts the script's content back on every object by its "
+    "id, so a word changed in an object is not kept. Write the deck's header and its decision "
+    "slides yourself.")
+
+
+def built_tag(run: ps.Run) -> str:
+    """The content slides JARVIS built from the passed script's visuals."""
+    built = script_visuals.built_slides(package_script.read(run.script) or {})
+    return sessions._tag("built", yaml.safe_dump(built, sort_keys=False, allow_unicode=True,
+                                                 width=100), file=SOURCE)
+
+
+def from_script(run: ps.Run) -> None:
+    """The deck source with the script's objects put on each content slide
+    by program (script_visuals.apply): the author's layout and slots kept
+    where they take every object; written back only when it changed."""
+    path = source_of(run)
+    script = package_script.read(run.script)
+    if not script or not path.is_file():
+        return
+    before = _read_source(run)
+    after = script_visuals.apply(before, script, run.folder / FOLDER, run.sources(),
+                                 revision=package_script.VERSION)
+    if after != before:
+        _write_source(run, after)
+
+
 def write_note(run: ps.Run) -> str:
     """The program's words to the author for writing the deck (workflow.yaml
     deck write_deck and his_words_highlighted), and what can be shown."""
@@ -236,11 +285,13 @@ def write_note(run: ps.Run) -> str:
         f"runs with emphasis {HIS_WORDS}, which JARVIS draws highlighted in a very bright, "
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
         f"with a block of text. JARVIS checks every one.",
+        BUILT_NOTE,
         SHOW_NOTE,
         "JARVIS fills each picture's size and hash, builds the deck and proves it; what does "
         "not build comes back to you here. The owners and the editor then compare each slide "
         "with the script.",
         sessions._tag("script", ps._read(run.script), file=ps.SCRIPT),
+        built_tag(run),
         sessions._tag("format", deck_format()),
         sessions._tag("example", example(), file=SOURCE),
         sessions._tag("visuals", visuals_example(), file=SOURCE)])
@@ -261,8 +312,10 @@ def revise_deck_note(run: ps.Run, slides: list[str], kept: list[str]) -> str:
         f"changed (the script changed on: {', '.join(slides) or 'none'}). Each script slide is "
         f"still one deck slide, in the same order and with the same id. Say which slides you "
         f"changed.",
+        BUILT_NOTE,
         SHOW_NOTE,
         sessions._tag("script", ps._read(run.script), file=ps.SCRIPT),
+        built_tag(run),
         sessions._tag("format", deck_format()),
         sessions._tag("example", example(), file=SOURCE),
         sessions._tag("visuals", visuals_example(), file=SOURCE)])
@@ -299,7 +352,9 @@ def script_problems(script: dict, deck: dict) -> list[str]:
     (workflow.yaml deck): one script slide to one deck slide, in order, by
     id (write_deck); and each piece of Tim's own words drawn on its slide in
     the his-words style and said in its narration (his_words_check), its
-    words as they are, in order."""
+    words as they are, in order; and every object the script's visuals
+    make shown on its slide as the script gives it (script_visuals.
+    unmatched: the deck only arranges)."""
     out = []
     want = [s["id"] for s in script.get("slides") or []]
     have = [s.get("id") for s in deck.get("slides") or [] if isinstance(s, dict)]
@@ -334,7 +389,7 @@ def script_problems(script: dict, deck: dict) -> list[str]:
         if not _within(words, _words(said)):
             out.append(f"Slide {quote['slide']}'s narration does not say Tim's words "
                        f"{quote['text']!r}.")
-    return out
+    return out + script_visuals.unmatched(script, deck)
 
 
 HEADER, SLIDE_SOURCE, BUILD, SLIDE_REVIEW, STEP_UNIT = (
@@ -353,7 +408,7 @@ PIPELINE_CODE = ("jarvis.presentation", "jarvis.presentation_source",
                  "jarvis.picture_proof", "jarvis.decision_package",
                  "jarvis.layout_spec", "jarvis.make_package")
 # The code that shapes what the author and the reviewers write.
-DECK_CODE = ("jarvis.package_deck",)
+DECK_CODE = ("jarvis.package_deck", "jarvis.script_visuals")
 
 
 def format_digest() -> str:
@@ -501,6 +556,7 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
     source = source_of(run)
     if not source.is_file():
         return None, [f"There is no {SOURCE} at {source}."]
+    from_script(run)
     out = run.folder / BUILT / str(round_no)
     if out.exists():
         shutil.rmtree(out)

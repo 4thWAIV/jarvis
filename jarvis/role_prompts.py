@@ -14,7 +14,13 @@ its own order: `system`, the role, given as the session's system prompt, and
 message. Marking's and classification's scoring lines are the first-round
 wording of the smart passes (Tim 2026-11-21: each sentence, or item, at
 most its top three at 0.5 or more; first-round prompt changes
-pre-approved), recorded in role-prompts.md; so are the author's lines on
+pre-approved), recorded in role-prompts.md; so is the visual plan (Tim
+2026-11-22, construction-drafts.md "The script describes each slide's
+visual": first-round wording, pre-approved, in owner-prompts.md: the
+author's outline names each slide's visual and why, every owner reviews the
+visuals its concern touches, and "Does each slide show its point?" is the
+structure owner's third question, and `AUTHOR_VISUALS`, the program's words
+at the fill, in role-prompts.md); so are the author's lines on
 researching, the first-round wording of research and prep reorganized (Tim
 2026-11-21: JARVIS runs every search at once and the author writes the
 research and the prep together) and of the prioritized working set (Tim
@@ -93,6 +99,8 @@ PROMPTS: dict[str, Prompt] = {
             '\n'
             "Before the script, write the outline: for each slide, its title, its one point, the question it answers (one of the handoff's questions, or background for one), and the evidence it rests on, by source path. The owners work on the outline and you settle any conflict between them, saying why. Write the script only from the agreed outline.\n"
             '\n'
+            "For each slide of the outline, also name its visual: the one form that shows its point (text, steps, figures, a callout, a comparison, a table, a bar, line or scatter chart drawn from the evidence's figures, or a picture by path), and why that form carries the point. Show the point rather than describe it; plain text only where the words are the point. In the script, write each slide's visual as its on-screen pieces with the content that fills it: a chart's dataset with the source path and position of every value, each key figure with its source and position, the steps, the callout, the comparison's columns, the table's rows. JARVIS checks every number at its source and lays every slide out by program; a slide that does not fit comes back to you. The narration carries what JARVIS says over it.\n"
+            '\n'
             'After each pass, the program gives you one list of what is left, merged from every owner and the editor, each item with who raised it and the fix they suggest. Work through the list; for each item, change the script or say why not.'),
         material="The sender's two answers (the sender's, not Tim's):\n{sender_answers: plainly, why_now}\n\nYour questions: {the handoff's questions, each with the sender's options where it gives them}\n\nYour material, each file marked knows, had access or probably does not know (read more with your tools):\n{the evidence: every file whole with its marks when it fits, else the working set; the table of contents and the search hits}"),
     'editor': Prompt(
@@ -127,6 +135,7 @@ PROMPTS: dict[str, Prompt] = {
             "- Do not undo another participant's change to settle your own concern without saying so to them; if two concerns pull against each other, say so plainly and the author settles it.\n"
             '- Find wording that sounds technical or clever but hides what is really happening, and say plainly what is happening.\n'
             '- Longer is not better.\n'
+            '- The outline names each slide\'s visual (the form that shows its point) and why; the script gives each visual with the content that fills it (a chart\'s values, each with its source path and position; the steps; the key figures, each with its source; the callout; the comparison\'s columns; the table\'s rows). Review the visuals your concern touches as you review the words: a step, a figure or a value is edited like any other words, and every value you add names its source path and position.\n'
             '\n'
             'End your turn with your sign-off on your question: resolved, when you can answer yes, with one sentence saying why, quoting the briefing; or not yet, naming exactly what is left and the fix you suggest for each.\n'
             '\n'
@@ -153,6 +162,7 @@ PROMPTS: dict[str, Prompt] = {
             "- Do not undo another participant's change to settle your own concern without saying so to them; if two concerns pull against each other, say so plainly and the author settles it.\n"
             '- Find wording that sounds technical or clever but hides what is really happening, and say plainly what is happening.\n'
             '- Longer is not better.\n'
+            '- The outline names each slide\'s visual (the form that shows its point) and why; the script gives each visual with the content that fills it (a chart\'s values, each with its source path and position; the steps; the key figures, each with its source; the callout; the comparison\'s columns; the table\'s rows). Review the visuals your concern touches as you review the words: a step, a figure or a value is edited like any other words, and every value you add names its source path and position.\n'
             '\n'
             'End your turn with your sign-off on your question: resolved, when you can answer yes, with one sentence saying why, quoting the briefing; or not yet, naming exactly what is left and the fix you suggest for each.\n'
             '\n'
@@ -179,6 +189,7 @@ PROMPTS: dict[str, Prompt] = {
             "- Do not undo another participant's change to settle your own concern without saying so to them; if two concerns pull against each other, say so plainly and the author settles it.\n"
             '- Find wording that sounds technical or clever but hides what is really happening, and say plainly what is happening.\n'
             '- Longer is not better.\n'
+            '- The outline names each slide\'s visual (the form that shows its point) and why; the script gives each visual with the content that fills it (a chart\'s values, each with its source path and position; the steps; the key figures, each with its source; the callout; the comparison\'s columns; the table\'s rows). Review the visuals your concern touches as you review the words: a step, a figure or a value is edited like any other words, and every value you add names its source path and position.\n'
             '\n'
             'End your turn with your sign-off on your question: resolved, when you can answer yes, with one sentence saying why, quoting the briefing; or not yet, naming exactly what is left and the fix you suggest for each.\n'
             '\n'
@@ -187,6 +198,12 @@ PROMPTS: dict[str, Prompt] = {
             'Tim\'s words: "Lay out the information so the most relevant information is first, not buried on slide 10." "Did the decision get properly prepared?"\n'
             '\n'
             'You make the order and the decision right. Move what matters most to Tim first, so nothing he needs is buried behind things he needs less. For each decision, make sure Tim could make it from this briefing alone, without asking anything: what the decision is about, what each choice would do, described accurately against the evidence, and the evidence that bears on it.\n'
+            '\n'
+            'Your third question: **Does each slide show its point?**\n'
+            '\n'
+            'Tim\'s words (2026-11-22): the script should "describe the slide and how it will look with the information to fill it in when we build it"; the system "is supposed to turn DRY text into visuals not ONLY USE visuals if one is supplied."\n'
+            '\n'
+            'You make each slide show its point rather than describe it. In the outline, give each slide the visual form that carries its point and say why (a sequence as steps, numbers as a chart from the evidence\'s figures or as key figures, things side by side as a comparison or a table, a warning or finding as a callout, a picture where one exists; plain text only where the words are the point), and change a form that does not carry it. In the script, see that each slide\'s visual is there with the content that fills it, its numbers from the evidence with their sources, and that the narration does not carry what the screen should show.\n'
             '\n'
             'You are given all the evidence, each item marked knows, had access or probably does not know, the prep, and the research tools.'),
         material='{the evidence, each item with its knowledge state}\n{the prep}'),
@@ -240,3 +257,9 @@ PROMPTS: dict[str, Prompt] = {
 # "Author: one revision against the marks"), given as the program's words to it.
 AUTHOR_REVISE = (
     "The program has marked your script part by part against Tim's labels. Before anyone else sees it, revise it once against the marks: keep and expand what scores high on a keep label, fix or cut what scores high on a fix or remove label. Say what you changed.")
+
+# The program's words to the author at the fill (role-prompts.md "Author: the
+# script's visuals", first-round wording, Tim 2026-11-22, construction-drafts.md
+# "The script describes each slide's visual"), in package_swarm.fill_note.
+AUTHOR_VISUALS = (
+    "Give each slide the visual its outline slide names, as its on_screen pieces with the content that fills it: a chart's columns and rows, every number with its source path and position ('line N', 'lines N-M' or 'characters A-B'); each key figure with its source and position; the steps; the callout; the comparison's columns; the table's rows. Describe how the slide will look and fill it with the information it shows; the deck is built from it by program. Words go on screen only where the words are the point; the narration carries what JARVIS says.")

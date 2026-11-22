@@ -587,6 +587,38 @@ EXEMPT = {
         "slide 1 of the passed script's words, which open the message that carries the package "
         "and reach Tim as a message in his Inbox, read by the brain walled as every message is; "
         "never a brain header, never said. Driven by tests/test_package_script.py"),
+    "package_script._visual_units": (
+        "it returns a typed visual's words and data with their slide and field, as "
+        "package_script.units does, which marking scores and the owners edit; it prints "
+        "nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals._build": (
+        "it turns a script slide's typed visuals into presentation/1 objects for the deck "
+        "source, the script's words as data in their fields; it prints nothing. Driven by "
+        "tests/test_script_visuals.py"),
+    "script_visuals._dataset": (
+        "it turns a script chart's columns and rows into a presentation/1 dataset, the "
+        "script's words as data; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals._chart_problems": (
+        "it checks a script chart's columns and values and names what does not check, each "
+        "value quoted; said into the package swarm's own conversation as the program's turn to "
+        "the author, never a brain header, never said. Driven by tests/test_script_visuals.py"),
+    "script_visuals._targets": (
+        "it collects the ids a narration cue may light on a built slide; it prints nothing. "
+        "Driven by tests/test_script_visuals.py"),
+    "script_visuals.narration": (
+        "a built slide's one narration cue, the script's own narration as data in the deck "
+        "source; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals.plan_problems": (
+        "it names each script slide whose visual is not the one its outline slide names, said "
+        "into the package swarm's own conversation as the program's turn to the author, never a "
+        "brain header, never said. Driven by tests/test_script_visuals.py"),
+    "script_visuals.sourced_values": (
+        "it lists the numbers a script slide's visuals show with their sources, for the "
+        "program's own check; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals.unmatched": (
+        "it names each deck object that is not the script's, said into the package swarm's own "
+        "conversation as the program's turn to the author, never a brain header, never said. "
+        "Driven by tests/test_script_visuals.py"),
     "package_deliver.deliver": (
         "the deliver step: the only field it reads is the job's id, JARVIS's own, to keep where "
         "the signed package is and its message on the job record for its own sender; never a "

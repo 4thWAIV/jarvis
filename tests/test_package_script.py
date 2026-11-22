@@ -56,8 +56,10 @@ def test_the_schema_is_the_answer_format_of_both_brains():
     assert set(slide) == {"id", "title", "on_screen", "narration", "facts", "answers",
                           "decision"}
     assert slide["answers"]["items"]["enum"] == ["merge-171"]
-    assert slide["on_screen"]["items"]["properties"]["kind"]["enum"] == [
-        "text", "his_words", "picture", "table"]
+    kinds = [k for form in slide["on_screen"]["items"]["anyOf"]
+             for k in form["properties"]["kind"]["enum"]]
+    assert kinds == ["text", "his_words", "picture", "table", "steps", "figures", "callout",
+                     "comparison", "chart"]
 
 
 def test_a_script_checks_and_every_problem_is_named():
@@ -151,9 +153,11 @@ def test_the_engine_embeds_texts_with_its_own_model(tmp_path, monkeypatch):
 def test_the_outline_checks_and_its_owners_edits_are_applied_where_their_old_text_is(tmp_path):
     outline = {"version": "outline/1", "slides": [
         {"id": "ask", "title": "The ask", "point": "Approve 0.85.", "answers": "q1",
-         "background": False, "evidence": ["files/situation.md"]},
+         "background": False, "evidence": ["files/situation.md"], "visual": "figures",
+         "why": "One number is the point."},
         {"id": "ask", "title": "Why", "point": "It was measured.", "answers": "q2",
-         "background": True, "evidence": []}]}
+         "background": True, "evidence": [], "visual": "line_chart",
+         "why": "The measurements over time show it."}]}
     assert script_.outline_problems(outline, ["q1"]) == [
         "the outline.slides[1].answers is 'q2', not one of q1."]
     assert script_.outline_problems(outline, ["q1", "q2"]) == [

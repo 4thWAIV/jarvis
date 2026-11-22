@@ -129,6 +129,10 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     assert "<example file=\"presentation.yaml\">" in told
     # It is told to turn dry text into visuals, with an example that does.
     assert pd.SHOW_NOTE in told and "Never put long paragraphs on a slide" in told
+    # Every content slide built by program from the script's visuals; the
+    # author arranges.
+    assert pd.BUILT_NOTE in told and '<built file="presentation.yaml">' in told \
+        and "opening-v1" in told
     assert '<visuals file="presentation.yaml">' in told and "type: steps" in told \
         and "type: chart" in told and "type: figures" in told and "type: callout" in told
     # JARVIS's own turn: slide by slide, each script slide beside its deck
@@ -167,7 +171,8 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     assert words["size_px"]["smallest"][0] > 0 and words["size_px"]["largest"][0] > \
         words["size_px"]["smallest"][0]
     runs = [r for p in words["paragraphs"] for r in p["runs"]]
-    assert {"id": "opening-words-his-1", "text": "Keep it in the office.",
+    # The script's words, built by program; his words in his style.
+    assert {"id": "opening-v1-p2-r1", "text": "Keep it in the office.",
             "emphasis": "his-words"} in runs
     assert opening["narration"][0]["say"].startswith("This tells you")
     assert layout[-1]["type"] == "decision" and layout[-1]["question"] == \
@@ -221,7 +226,8 @@ def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
     assert pd.deck(doc) is None
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     said = _said_on_the_deck(review)
-    assert "does not draw Tim's words 'Keep it in the office.' in the his-words style" in said[0]
+    # His words are drawn in his style by program (the script's objects);
+    # his words said in the narration is still checked.
     assert "narration does not say Tim's words 'Keep it in the office.'" in said[0]
     assert "the script's are ['opening', 'what-changed', 'where']" in said[1]
     assert json.loads((Path(doc["folder"]) / ps.STATE).read_text())["deck"]["builds"] == 3
@@ -231,8 +237,19 @@ def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
 def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
     # presentation/1 asks a decision on a slide of its own, so the one deck
     # slide of a script slide that asks one is that decision slide.
-    script, deck = deck_script(), deck_with_his_words()
+    from jarvis import script_visuals
+    script = deck_script()
+    deck = script_visuals.apply(deck_with_his_words(), script)
     assert pd.script_problems(script, deck) == []
+    # Backstops: an object that is not the script's, and his words not in
+    # his style, are each said.
+    plain = copy.deepcopy(deck)
+    plain["slides"][0]["objects"][0]["paragraphs"][-1]["runs"][0]["emphasis"] = "normal"
+    assert pd.script_problems(script, plain) == [
+        "Slide opening does not draw Tim's words 'Keep it in the office.' in the his-words "
+        "style.",
+        "Slide opening's text opening-v1 is not the script's: JARVIS builds every visual from "
+        "the script, and the deck only arranges its layout and slots."]
     content = copy.deepcopy(deck)
     content["slides"][2] = {**deck["slides"][1], "id": "where"}
     assert pd.script_problems(script, content) == [
@@ -294,29 +311,32 @@ def test_each_object_s_capacity_is_a_fact_for_the_reviewers_and_no_browser_draws
 
 
 def test_a_slot_over_its_capacity_goes_back_to_the_author_never_the_sender(marked, deck_plan):
-    # The author first writes a slide of only prose, far over one paragraph
-    # and over its slot; told how much over, it shows it as steps instead.
-    sentence = "Food is brought in at noon and nobody has to book a table anywhere. "
-    long = deck_with_his_words()
-    long["slides"][1]["objects"][0]["paragraphs"] = [
-        {"id": f"changes-{n}", "role": "paragraph",
-         "runs": [{"id": f"changes-{n}-words", "text": sentence * 6, "emphasis": "normal"}]}
-        for n in range(1, 6)]
-    shown = deck_with_his_words()
-    shown["slides"][1]["objects"] = [{
-        "id": "changes", "type": "steps", "slot": "body", "source": {"reference": "lunch-plan"},
-        "items": [{"id": "changes-food", "title": "Food is brought in."},
-                  {"id": "changes-table", "title": "Nobody has to book a table."}]}]
-    deck_plan.decks = [long, shown]
+    # The author arranges the script's objects: first the steps in the
+    # small words slot, over its capacity; told how much over, it takes
+    # JARVIS's arrangement.
+    from jarvis import script_visuals
+    changed = deck_plan.script["slides"][1]
+    changed["on_screen"] += [
+        {"kind": "callout", "label": "", "says": "Nobody has to book a table."},
+        {"kind": "steps", "steps": [{"title": f"Step {n}", "says": "Food is brought in at noon "
+                                     "and set out on the long table."} for n in range(1, 5)]}]
+    built = script_visuals.built_slides(deck_plan.script)["slides"][1]
+    assert built["layout"] == "two-pictures"
+    assert [o["slot"] for o in built["objects"]] != ["first", "second", "words"]
+    over = deck_with_his_words()
+    over["slides"][1] = copy.deepcopy(built)
+    for obj, slot in zip(over["slides"][1]["objects"], ("first", "second", "words")):
+        obj["slot"] = slot
+    fits = deck_with_his_words()
+    fits["slides"][1] = copy.deepcopy(built)
+    deck_plan.decks = [over, fits]
     doc = _passed(marked)
     assert pd.deck(doc) is None
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     said = _said_on_the_deck(review)
     assert said[0].startswith("The deck did not build.")
-    assert "The body slot of slide what-changed (title-and-body) is over its capacity" in said[0]
-    assert "lines of body text where it holds 22: " in said[0] and "%) over" in said[0]
-    assert "Slide what-changed is only prose" in said[0]
-    assert "a sequence as numbered steps" in said[0]
+    assert "The words slot of slide what-changed (two-pictures) is over its capacity" in said[0]
+    assert "lines of body text where it holds" in said[0] and "%) over" in said[0]
     assert pj.get(doc["id"])["deck"]["result"] == "passed"
     assert pj.get(doc["id"])["rounds"] == [], "nothing goes to the sender"
 
