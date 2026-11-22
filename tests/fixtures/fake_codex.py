@@ -38,18 +38,19 @@ def limits(reached=False):
 
 
 def turn(rid, text):
+    tid = {"threadId": TURN.get("threadId")} if TURN.get("threadId") else {}
     out({"id": rid, "result": {"turn": {"id": "turn-x", "status": "inProgress"}}})
     if text == "die":
         sys.exit(3)
     if os.environ.get("FAKE_CODEX_FORCE") == "AUTHERROR":
-        out({"method": "turn/completed", "params": {"turn": {
+        out({"method": "turn/completed", "params": {**tid, "turn": {
             "id": "turn-x", "status": "failed",
             "error": {"message": "Not logged in. Please log in again."}}}})
         return
     if text == "use the web":
-        out({"method": "item/started", "params": {"item": {"type": "webSearch", "id": "w1"}}})
+        out({"method": "item/started", "params": {**tid, "item": {"type": "webSearch", "id": "w1"}}})
     if text == "use capture":
-        out({"method": "item/started", "params": {"item": {"type": "mcpToolCall", "id": "m1",
+        out({"method": "item/started", "params": {**tid, "item": {"type": "mcpToolCall", "id": "m1",
                                                             "server": "jarvis", "tool": "capture"}}})
     if text == "hit the limit":
         out({"method": "account/rateLimits/updated", "params": {"rateLimits": limits(reached=True)}})
@@ -57,14 +58,18 @@ def turn(rid, text):
     if TURN.get("outputSchema") is not None:
         # An answer in the turn's form: $FAKE_CODEX_ANSWER, as given.
         reply = [os.environ.get("FAKE_CODEX_ANSWER", "{}")]
+    if text.startswith("which thread"):
+        # The thread's own id and the words asked, so a test sees each
+        # thread on a shared app server answered as itself.
+        reply = [json.dumps({"answer": f"{TURN.get('threadId')}:{text}"})]
     for part in reply:
-        out({"method": "item/agentMessage/delta", "params": {"delta": part}})
-    out({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "a1",
+        out({"method": "item/agentMessage/delta", "params": {**tid, "delta": part}})
+    out({"method": "item/completed", "params": {**tid, "item": {"type": "agentMessage", "id": "a1",
                                                          "text": "".join(reply)}}})
     used = 1000 if text == WARMUP else 1500
-    out({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {
+    out({"method": "thread/tokenUsage/updated", "params": {**tid, "tokenUsage": {
         "last": {"inputTokens": used, "outputTokens": 7}, "modelContextWindow": 258400}}})
-    out({"method": "turn/completed", "params": {"turn": {"id": "turn-x", "status": "completed"}}})
+    out({"method": "turn/completed", "params": {**tid, "turn": {"id": "turn-x", "status": "completed"}}})
 
 
 def app_server():

@@ -1361,6 +1361,97 @@ async def test_codex_keeps_one_app_server_across_a_role_s_pages(tmp_path, codex_
     assert [e["turn"]["threadId"] for e in log if "turn" in e] == ["thread-1", "thread-2"]
 
 
+@pytest.mark.asyncio
+async def test_a_step_keeps_one_codex_app_server_per_role_each_call_a_thread(
+        tmp_path, codex_log, monkeypatch):
+    # The standard design (package-870e45145b2d: 20 app servers started for
+    # 22 calls of the mark step): every session of a role in a step is a
+    # thread on the role's one app server, its lockdown the same; the
+    # server goes on when a session closes and is closed when the step ends.
+    from jarvis import codex_provider, run_report
+    from tests.settings_fixtures import hold_setting
+    hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
+    pick = model_tiers.Pick("codex", "gpt-6-luna", 4, "fixed", ["gpt-6-luna"])
+    form = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    doc = {"id": "j", "package": "p", "run": "run-1", "folder": str(tmp_path)}
+
+    def chat(role="marking"):
+        return sessions.BrainChatSession(role, "THE ROLE", tmp_path, pick=pick,
+                                         answer_format=form)
+
+    async def page(n):
+        one = chat()
+        await one.open()
+        answer = (await one.ask(f"which thread {n}", 20)).answer["answer"]
+        await one.fresh()
+        again = (await one.ask(f"which thread {n} again", 20)).answer["answer"]
+        await one.close()
+        return answer, again
+
+    with run_report.step(doc, "mark"):
+        async with codex_provider.role_servers() as held:
+            answers = await asyncio.gather(*(page(n) for n in range(4)))
+            other = chat("classification")
+            await other.open()
+            await other.ask("which thread c", 20)
+            await other.close()
+            servers = list(held.values())
+            assert len(servers) == 2 and all(s.alive for s in servers), \
+                "each role's server goes on after its sessions close, until the step ends"
+        assert not any(s.alive for s in servers), "closed when the step ends"
+    for n, (answer, again) in enumerate(answers):
+        thread, said = answer.split(":", 1)
+        assert said == f"which thread {n}", "each thread answered as itself"
+        assert again.split(":", 1)[1] == f"which thread {n} again"
+        assert again.split(":", 1)[0] != thread, "a new conversation, a new thread"
+    log = codex_log()
+    starts = [e for e in log if "argv" in e and "app-server" in e["argv"]]
+    assert len(starts) == 2, "one app server per role, not one a call"
+    threads = [e["thread"] for e in log if "thread" in e]
+    assert len(threads) == 9
+    marking = [t for t in threads if t["baseInstructions"] == "THE ROLE"]
+    assert all(t["config"] == marking[0]["config"] for t in marking), "the same lockdown"
+    step, = json.loads((tmp_path / run_report.TIMING).read_text())["steps"]
+    assert step["app_server_starts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_outside_a_step_a_codex_role_session_keeps_its_own_app_server(tmp_path, codex_log):
+    from tests.settings_fixtures import hold_setting
+    hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
+    pick = model_tiers.Pick("codex", "gpt-6-luna", 4, "fixed", ["gpt-6-luna"])
+    form = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    chats = [sessions.BrainChatSession("marking", "R", tmp_path, pick=pick, answer_format=form)
+             for _ in range(2)]
+    for one in chats:
+        await one.open()
+        await one.ask("which thread", 20)
+        assert one._child.started_server and one._child.proc is not None
+        await one.close()
+    assert sum(1 for e in codex_log() if "argv" in e and "app-server" in e["argv"]) == 2
+
+
+def test_a_shared_app_server_routes_each_notification_to_its_thread(tmp_path):
+    from jarvis import brain_provider, codex_provider
+    server = codex_provider.RoleAppServer(tmp_path, 5)
+    seen: dict[str, list] = {"a": [], "b": []}
+    made = {}
+    for name in seen:
+        one = codex_provider.CodexSession(brain.BrainConfig(home=tmp_path, provider="openai"),
+                                          lambda s, ev, n=name: seen[n].append(ev), None)
+        one._server, one.thread_id = server, f"thread-{name}"
+        server.attach(one)
+        made[name] = one
+    server._route({"method": "item/agentMessage/delta",
+                   "params": {"threadId": "thread-b", "delta": "for b"}})
+    assert seen["b"] == [brain_provider.TextDelta("for b")] and seen["a"] == []
+    made["a"]._in_turn = True        # naming no thread: the one thread in a turn
+    server._route({"method": "item/agentMessage/delta", "params": {"delta": "for a"}})
+    assert seen["a"] == [brain_provider.TextDelta("for a")]
+    server.detach(made["a"])
+    assert list(server.threads) == ["thread-b"]
+
+
 # ── rate limits and the run's report of each call ─────────────────────────
 
 class _Limited:

@@ -29,6 +29,8 @@ on is used, as Claude Code is from its minimum (preflight). See
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -426,21 +428,296 @@ class RpcCalls:
                 future.set_exception(RuntimeError(why))
 
 
+# ── one app server process ────────────────────────────────────────────────
+
+class _Connection:
+    """One `codex app-server` process over stdio and its JSON-RPC: started
+    and initialised, written to, read, closed. A response settles its
+    request; every other message goes to `on_message`; each line read
+    stamps `heard_at`; its end goes to `on_end(code)`."""
+
+    def __init__(self, home: Path, warmup_timeout: float, on_message, on_end):
+        self.home = home
+        self.warmup_timeout = warmup_timeout
+        self._on_message = on_message
+        self._on_end = on_end
+        self.proc: Optional[asyncio.subprocess.Process] = None
+        self._killed = False
+        self._reader: Optional[asyncio.Task] = None
+        self._stderr_task: Optional[asyncio.Task] = None
+        self._calls = RpcCalls()
+        self.heard_at = time.monotonic()
+
+    @property
+    def alive(self) -> bool:
+        proc = self.proc
+        # Killed is not alive, from the moment it is killed: the exit is
+        # only seen once asyncio reaps the child, and until then a brain
+        # that has given up on it would still read as running.
+        return (proc is not None and not self._killed and proc.returncode is None
+                and proc.stdin is not None)
+
+    async def start(self, argv: list[str], env: dict) -> None:
+        """The app server running and initialised."""
+        self.proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=str(self.home), env=env,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
+        self._reader = asyncio.create_task(self._read_stdout(self.proc))
+        self._stderr_task = asyncio.create_task(self._drain_stderr(self.proc))
+        try:
+            await self.call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
+                            timeout=self.warmup_timeout)
+            self.notify("initialized")
+        except (asyncio.TimeoutError, RuntimeError, OSError) as e:
+            self.kill()
+            raise OSError(f"codex app-server did not start: {e}") from e
+
+    def write(self, msg: dict) -> None:
+        if self.proc is None or self.proc.stdin is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
+
+    def notify(self, method: str, params: Optional[dict] = None) -> None:
+        self.write({"method": method, "params": params})
+
+    async def _send(self, msg: dict) -> None:
+        self.write(msg)
+        await self.proc.stdin.drain()
+
+    async def call(self, method: str, params: dict, timeout: float) -> dict:
+        return await self._calls.call(self._send, method, params, timeout)
+
+    def kill(self) -> None:
+        if self.proc is None:
+            return
+        self._killed = True
+        try:
+            self.proc.kill()
+        except ProcessLookupError:
+            pass
+
+    async def close(self, timeout: float = 5.0) -> None:
+        proc = self.proc
+        if proc and proc.returncode is None:
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+                await asyncio.wait_for(proc.wait(), timeout)
+            except asyncio.TimeoutError:
+                self.kill()
+            except Exception as e:
+                log.warning(f"codex: error while stopping: {e}")
+                self.kill()
+        for task in (self._reader, self._stderr_task):
+            if task and not task.done():
+                try:
+                    await asyncio.wait_for(task, 2.0)
+                except asyncio.TimeoutError:
+                    task.cancel()
+                except Exception as e:
+                    log.warning(f"codex: reader task ended with {e}")
+
+    async def _read_stdout(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stdout is not None
+        try:
+            while True:
+                try:
+                    raw = await proc.stdout.readline()
+                except ValueError as e:
+                    log.warning(f"codex: skipping oversized stdout line ({e})")
+                    continue
+                if not raw:
+                    break
+                self.heard_at = time.monotonic()
+                try:
+                    msg = json.loads(raw.decode(errors="replace"))
+                except ValueError:
+                    continue
+                if self._calls.resolve(msg):                 # a response
+                    continue
+                try:
+                    self._on_message(msg)
+                except Exception as e:  # one malformed message must not kill the reader
+                    log.warning(f"codex: bad message ignored: {e}")
+        finally:
+            self._calls.end("the codex app-server ended")
+            code = await proc.wait()
+            await self._on_end(code)
+
+    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stderr is not None
+        try:
+            while True:
+                try:
+                    raw = await proc.stderr.readline()
+                except ValueError:
+                    continue
+                if not raw:
+                    return
+                log.debug(f"codex stderr: {raw.decode(errors='replace').rstrip()}")
+        except Exception as e:
+            log.warning(f"codex: stderr reader stopped: {e}")
+
+
+def _usage_seen(params: dict) -> UsageSeen:
+    """An `account/rateLimits/updated` notification recorded as the openai
+    brain's usage, and the event that says it."""
+    report, plan = usage_report(params.get("rateLimits") or {})
+    try:
+        usage_store.record(report, provider={"service": SERVICE, "subscription": plan})
+    except Exception as e:
+        log.warning(f"codex: could not record usage ({e})")
+    blocked = report["status"] == "rejected"
+    return UsageSeen(blocked=blocked, resets_at=report.get("resetsAt"),
+                     window=report.get("rateLimitType"),
+                     summary={"status": report["status"],
+                              "utilization": report.get("utilization"),
+                              "windows": report["unifiedWindows"]},
+                     detail=report)
+
+
+# ── one app server per role for a step ─────────────────────────────────────
+
+class RoleAppServer:
+    """One `codex app-server` shared by every thread of one role in a step
+    (the standard design, measured on package-870e45145b2d: 20 app servers
+    started for 22 calls of the mark step). Started by the first of the
+    role's sessions to open, with the role's lockdown (its features off,
+    the home's servers off, its own tool server); each session of the role
+    is a thread on it (`CodexSession`), and each thread's notifications go
+    to its own session by the thread's id. Closed when the step ends
+    (`role_servers`), never by a session's close, which only leaves it."""
+
+    def __init__(self, home: Path, warmup_timeout: float):
+        self.home = home
+        self.warmup_timeout = warmup_timeout
+        self.disabled: list[str] = []
+        self.threads: dict[str, "CodexSession"] = {}
+        self.starts = 0
+        self._conn: Optional[_Connection] = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def alive(self) -> bool:
+        return self._conn is not None and self._conn.alive
+
+    @property
+    def heard_at(self) -> float:
+        return self._conn.heard_at if self._conn is not None else 0.0
+
+    async def ensure(self, argv_of, env: dict) -> bool:
+        """The app server running: started (True) with `argv_of()`'s
+        argv when it is not, else left as it is (False)."""
+        async with self._lock:
+            if self.alive:
+                return False
+            argv, self.disabled = await argv_of()
+            conn = _Connection(self.home, self.warmup_timeout, self._route, self._ended)
+            await conn.start(argv, env)
+            self._conn = conn
+            self.starts += 1
+            return True
+
+    def attach(self, session: "CodexSession", old: Optional[str] = None) -> None:
+        if old:
+            self.threads.pop(old, None)
+        if session.thread_id:
+            self.threads[session.thread_id] = session
+
+    def detach(self, session: "CodexSession") -> None:
+        for tid in [t for t, s in self.threads.items() if s is session]:
+            del self.threads[tid]
+
+    def write(self, msg: dict) -> None:
+        if self._conn is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        self._conn.write(msg)
+
+    async def call(self, method: str, params: dict, timeout: float) -> dict:
+        if self._conn is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        return await self._conn.call(method, params, timeout)
+
+    def _route(self, msg: dict) -> None:
+        """A message to its thread's session. A request to us is refused
+        here (approvals are never); rate limits go to every thread, recorded
+        once; another notification naming no thread goes to the one thread
+        in a turn, else the one thread there is."""
+        method = msg.get("method")
+        if "id" in msg:
+            self.write({"id": msg["id"], "result": {"decision": "decline"}})
+            return
+        params = msg.get("params") or {}
+        if method == "account/rateLimits/updated":
+            event = _usage_seen(params)
+            for session in list(self.threads.values()):
+                session._heard = time.monotonic()
+                session._emit(event)
+            return
+        tid = params.get("threadId")
+        session = self.threads.get(str(tid)) if tid else None
+        if session is None and not tid:
+            turning = [s for s in self.threads.values() if s._in_turn]
+            candidates = turning or list(self.threads.values())
+            session = candidates[0] if len(candidates) == 1 else None
+        if session is None:
+            log.debug("codex: %s for no thread here (%s)", method, tid)
+            return
+        session._handle(msg)
+
+    async def _ended(self, code) -> None:
+        threads, self.threads = list(self.threads.values()), {}
+        for session in threads:
+            await session._on_exit(session, code)
+
+    async def close(self, timeout: float = 5.0) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            await conn.close(timeout)
+
+
+_ROLE_SERVERS: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "codex_role_servers", default=None)
+
+
+@contextlib.asynccontextmanager
+async def role_servers():
+    """While it is open, every Codex role session opened in it shares one
+    app server per role and lockdown (`RoleAppServer`); each is closed when
+    it ends. Outside it, each role session has an app server of its own.
+    Yields the servers, by role and lockdown."""
+    held: dict = {}
+    token = _ROLE_SERVERS.set(held)
+    try:
+        yield held
+    finally:
+        _ROLE_SERVERS.reset(token)
+        for server in held.values():
+            with contextlib.suppress(Exception):
+                await server.close()
+
+
 # ── the session ───────────────────────────────────────────────────────────
 
 class CodexSession:
-    """One `codex app-server` process with one thread: one conversation."""
+    """One thread: one conversation. On a `codex app-server` process of its
+    own, or, for a role while `role_servers` is open, on its role's one
+    shared app server (`RoleAppServer`), whose other threads are the same
+    role's other sessions."""
 
     def __init__(self, config: "BrainConfig", on_event: EventSink, on_exit: ExitSink):
         self.config = config
         self._on_event = on_event
         self._on_exit = on_exit
         self.codex = getattr(config, "codex_path", None)
-        self.proc: Optional[asyncio.subprocess.Process] = None
-        self._killed = False
-        self._reader: Optional[asyncio.Task] = None
-        self._stderr_task: Optional[asyncio.Task] = None
-        self._calls = RpcCalls()
+        self._conn: Optional[_Connection] = None        # its own app server
+        self._server: Optional[RoleAppServer] = None    # its role's shared one
+        self._attached = False
+        # Whether opening it started an app server (one shared and already
+        # running is not one), for the run's count of app server starts.
+        self.started_server = False
+        self._in_turn = False
         self.thread_id: Optional[str] = None
         self._rollout: Optional[Path] = None      # the thread's transcript
         self._rollout_read = 0                    # bytes of it already read
@@ -456,18 +733,27 @@ class CodexSession:
         self._reply: Optional[str] = None
         self.disabled: list[str] = []
         self._role_thread: Optional[dict] = None  # how a role's new thread is started
-        # When it last wrote a line (time.monotonic()): what a role
-        # session's idle bound is measured from (sessions.BrainChatSession).
-        self.heard_at = time.monotonic()
+        self._heard = time.monotonic()
+
+    @property
+    def heard_at(self) -> float:
+        """When it last heard from its brain (time.monotonic()): what a role
+        session's idle bound is measured from (sessions.BrainChatSession).
+        On its own app server every line counts; on a shared one, its own
+        thread's."""
+        if self._conn is not None:
+            return max(self._heard, self._conn.heard_at)
+        return self._heard
+
+    @property
+    def proc(self) -> Optional[asyncio.subprocess.Process]:
+        return self._conn.proc if self._conn is not None else None
 
     @property
     def alive(self) -> bool:
-        proc = self.proc
-        # Killed is not alive, from the moment it is killed: the exit is
-        # only seen once asyncio reaps the child, and until then a brain
-        # that has given up on it would still read as running.
-        return (proc is not None and not self._killed and proc.returncode is None
-                and proc.stdin is not None)
+        if self._server is not None:
+            return self._attached and self._server.alive
+        return self._conn is not None and self._conn.alive
 
     def _cmd(self, *args: str) -> list[str]:
         return _codex_binary(self.codex) + list(args)
@@ -521,24 +807,21 @@ class CodexSession:
                  self.thread_id, home, len(self.disabled))
 
     async def _start(self, argv: list[str], env: dict) -> None:
-        """The app server running and initialised."""
-        self.proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(self.config.home), env=env,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
-        self._reader = asyncio.create_task(self._read_stdout(self.proc))
-        self._stderr_task = asyncio.create_task(self._drain_stderr(self.proc))
-        try:
-            await self._call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
-                             timeout=self.config.warmup_timeout)
-            self._notify("initialized")
-        except (asyncio.TimeoutError, RuntimeError, OSError) as e:
-            self.kill()
-            raise OSError(f"codex app-server did not start: {e}") from e
+        """Its own app server running and initialised."""
+        self._conn = _Connection(self.config.home, self.config.warmup_timeout, self._handle,
+                                 self._ended)
+        self.started_server = True
+        await self._conn.start(argv, env)
+
+    async def _ended(self, code) -> None:
+        await self._on_exit(self, code)
 
     async def _thread_started(self, started: dict) -> dict:
         thread = started.get("thread") or {}
-        self.thread_id = thread.get("id")
+        old, self.thread_id = self.thread_id, thread.get("id")
+        if self._server is not None:
+            self._server.attach(self, old)
+            self._attached = True
         self._rollout = Path(thread["path"]) if thread.get("path") else None
         return await self._call("mcpServerStatus/list", {}, timeout=self.config.warmup_timeout)
 
@@ -570,10 +853,25 @@ class CodexSession:
         role = launch.role
         keep, config, overrides = role_release(launch, self.config.home)
         env = child_env()
-        await self._features_off(env, keep)
-        argv = (self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
-                + overrides)
-        await self._start(argv, env)
+
+        async def argv_of() -> tuple[list[str], list[str]]:
+            await self._features_off(env, keep)
+            return (self._cmd("app-server")
+                    + [a for f in self.disabled for a in ("--disable", f)] + overrides,
+                    self.disabled)
+        held = _ROLE_SERVERS.get()
+        if held is None:
+            await self._start((await argv_of())[0], env)
+        else:
+            # The role's one app server for the step: started by its first
+            # session, each later one a thread on it.
+            key = (role.name, str(self.config.home), tuple(self._cmd()), keep, tuple(overrides))
+            server = held.get(key)
+            if server is None:
+                server = held[key] = RoleAppServer(self.config.home, self.config.warmup_timeout)
+            self._server = server
+            self.started_server = await server.ensure(argv_of, env)
+            self.disabled = list(server.disabled)
         settings = {
             "model": self.config.model, "cwd": str(self.config.home),
             "approvalPolicy": "never",
@@ -620,6 +918,7 @@ class CodexSession:
     async def send(self, text: str, answer_format: Optional[dict] = None) -> None:
         if not self.alive or not self.thread_id:
             raise BrokenPipeError("the codex app-server is not running")
+        self._in_turn = True
         if self._info is not None:
             info, self._info = self._info, None
             self._emit(info)
@@ -634,53 +933,42 @@ class CodexSession:
         try:
             await self._call("turn/start", turn, timeout=self.config.turn_timeout)
         except RuntimeError as e:          # refused: the turn never started
+            self._in_turn = False
             self._emit(TurnEnded(0, 0, error=str(e)))
 
+    def _leave(self) -> None:
+        """Off its role's shared app server, which goes on for the others."""
+        if self._server is not None:
+            self._server.detach(self)
+        self._attached = False
+
     def kill(self) -> None:
-        if self.proc is None:
-            return
-        self._killed = True
-        try:
-            self.proc.kill()
-        except ProcessLookupError:
-            pass
+        if self._server is not None:
+            self._leave()
+        elif self._conn is not None:
+            self._conn.kill()
 
     async def close(self, timeout: float = 5.0) -> None:
-        proc = self.proc
-        if proc and proc.returncode is None:
-            try:
-                if proc.stdin:
-                    proc.stdin.close()
-                await asyncio.wait_for(proc.wait(), timeout)
-            except asyncio.TimeoutError:
-                self.kill()
-            except Exception as e:
-                log.warning(f"codex: error while stopping: {e}")
-                self.kill()
-        for task in (self._reader, self._stderr_task):
-            if task and not task.done():
-                try:
-                    await asyncio.wait_for(task, 2.0)
-                except asyncio.TimeoutError:
-                    task.cancel()
-                except Exception as e:
-                    log.warning(f"codex: reader task ended with {e}")
+        if self._server is not None:
+            self._leave()
+        elif self._conn is not None:
+            await self._conn.close(timeout)
 
     # ── JSON-RPC ─────────────────────────────────────────────────────────
     def _write(self, msg: dict) -> None:
-        if self.proc is None or self.proc.stdin is None:
+        if self._server is not None:
+            self._server.write(msg)
+        elif self._conn is not None:
+            self._conn.write(msg)
+        else:
             raise BrokenPipeError("the codex app-server is not running")
-        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
-
-    def _notify(self, method: str, params: Optional[dict] = None) -> None:
-        self._write({"method": method, "params": params})
-
-    async def _send(self, msg: dict) -> None:
-        self._write(msg)
-        await self.proc.stdin.drain()
 
     async def _call(self, method: str, params: dict, timeout: float) -> dict:
-        return await self._calls.call(self._send, method, params, timeout)
+        if self._server is not None:
+            return await self._server.call(method, params, timeout)
+        if self._conn is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        return await self._conn.call(method, params, timeout)
 
     def _emit(self, event) -> None:
         try:
@@ -688,34 +976,10 @@ class CodexSession:
         except Exception as e:  # a listener must never kill the reader
             log.warning(f"codex: event listener failed: {e}")
 
-    async def _read_stdout(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stdout is not None
-        try:
-            while True:
-                try:
-                    raw = await proc.stdout.readline()
-                except ValueError as e:
-                    log.warning(f"codex: skipping oversized stdout line ({e})")
-                    continue
-                if not raw:
-                    break
-                self.heard_at = time.monotonic()
-                try:
-                    msg = json.loads(raw.decode(errors="replace"))
-                except ValueError:
-                    continue
-                try:
-                    self._handle(msg)
-                except Exception as e:  # one malformed message must not kill the reader
-                    log.warning(f"codex: bad message ignored: {e}")
-        finally:
-            self._calls.end("the codex app-server ended")
-            code = await proc.wait()
-            await self._on_exit(self, code)
-
     def _handle(self, msg: dict) -> None:
-        if self._calls.resolve(msg):                         # a response
-            return
+        """A message from the app server for this thread (a response has
+        already settled its request)."""
+        self._heard = time.monotonic()
         method = msg.get("method")
         if "id" in msg:                                     # a request to us
             # Approvals are set to never; anything that still asks is refused.
@@ -766,22 +1030,12 @@ class CodexSession:
                                for k in ("inputTokens", "cachedInputTokens", "outputTokens")}
             self._turn_from = dict(self._total_usage)
             reply, self._reply = self._reply, None
+            self._in_turn = False
             self._emit(TurnEnded(context_tokens=int(u.get("inputTokens") or 0),
                                  output_tokens=int(u.get("outputTokens") or 0), error=error,
                                  reply=None if error else reply))
         elif method == "account/rateLimits/updated":
-            report, plan = usage_report(params.get("rateLimits") or {})
-            try:
-                usage_store.record(report, provider={"service": SERVICE, "subscription": plan})
-            except Exception as e:
-                log.warning(f"codex: could not record usage ({e})")
-            blocked = report["status"] == "rejected"
-            self._emit(UsageSeen(blocked=blocked, resets_at=report.get("resetsAt"),
-                                 window=report.get("rateLimitType"),
-                                 summary={"status": report["status"],
-                                          "utilization": report.get("utilization"),
-                                          "windows": report["unifiedWindows"]},
-                                 detail=report))
+            self._emit(_usage_seen(params))
         elif method == "error":
             log.warning(f"codex: {json.dumps(params)[:300]}")
 
@@ -805,20 +1059,6 @@ class CodexSession:
             except ValueError:
                 continue
         return code_mode_failures(objs, self._call_names)
-
-    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stderr is not None
-        try:
-            while True:
-                try:
-                    raw = await proc.stderr.readline()
-                except ValueError:
-                    continue
-                if not raw:
-                    return
-                log.debug(f"codex stderr: {raw.decode(errors='replace').rstrip()}")
-        except Exception as e:
-            log.warning(f"codex: stderr reader stopped: {e}")
 
 
 # ── usage, history and checks ─────────────────────────────────────────────

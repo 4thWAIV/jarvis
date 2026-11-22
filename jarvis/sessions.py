@@ -310,7 +310,6 @@ class BrainChatSession:
     async def _open_one(self, model: str) -> None:
         provider = brain_provider.provider(brain_provider.ENGINES[self.pick.engine])
         self._child = provider.session(self._config(model), self._event, self._exited)
-        run_report.app_server(self.pick.engine)
         wall, _ = run_executor.bounds()
         try:
             async with asyncio.timeout(wall):
@@ -320,6 +319,11 @@ class BrainChatSession:
                             f"{wall:.0f} s (Settings, Agents: run_timeout_sec)") from e
         except OSError as e:
             raise SessionFailed(str(e)) from e
+        finally:
+            # A thread on its role's app server already running (Codex,
+            # codex_provider.role_servers) starts none.
+            if getattr(self._child, "started_server", True):
+                run_report.app_server(self.pick.engine)
         self.model = model
 
     def _refused(self, model: str, error: str) -> None:

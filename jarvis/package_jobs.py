@@ -136,9 +136,27 @@ def asked(step: str, role: str, tried: str, ask: Awaitable[T]) -> T:
     """A role session's answer to one call of a step. A model sweep that
     finds no model, or a session that cannot answer, puts the run in Error
     (Blocked), saying which role and what was tried."""
+    return in_step(answered(step, role, tried, ask))
+
+
+def in_step(work: Awaitable[T]) -> T:
+    """A step's role calls run, on one event loop, each role's Codex
+    sessions sharing one app server for them all, closed when they end
+    (codex_provider.role_servers)."""
+    from jarvis import codex_provider
+
+    async def go() -> T:
+        async with codex_provider.role_servers():
+            return await work
+    return asyncio.run(go())
+
+
+async def answered(step: str, role: str, tried: str, ask: Awaitable[T]) -> T:
+    """`ask`'s answer; no model found, or a session that cannot answer, is
+    the run's Error (Blocked), saying which role and what was tried."""
     from jarvis import model_tiers, sessions
     try:
-        return asyncio.run(ask)
+        return await ask
     except model_tiers.NoModel as e:
         raise Blocked(step, f"No model could be found for {role}: {e}", tried,
                       f"Make a model of the {role} role's tier available (Settings, Brains), "
