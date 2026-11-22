@@ -16,12 +16,13 @@ earlier version wrote. Deleting a document deletes every edge on it.
 
 The walk is a small JSON pattern, bounded by construction: a start key, at
 most four steps, each an edge kind, a direction, node kinds, conditions on
-the nodes and edges, and a limit, with `max_nodes` and `budget_ms`.
+the nodes and edges, and a limit, with `max_nodes`. No timer stops a walk
+(construction-drafts "Knowledge search: no deadline that drops results"):
+it is bounded by its size alone.
 """
 from __future__ import annotations
 
 import json
-import time
 from typing import Iterable, Iterator, Optional
 
 from jarvis.knowledge import encoding, kinds, paths
@@ -41,7 +42,6 @@ ITEM_ORIGINS = (HIERARCHY, REFERENCE, DERIVED)
 STEPS_MAX = 4
 STEP_LIMIT_MAX = 2000
 MAX_NODES_MAX = 5000
-BUDGET_MS_MAX = 500
 
 _RECORD_KINDS = ("project", "work", "topic")
 EDGE_KINDS: dict[str, tuple[frozenset, frozenset]] = {
@@ -255,8 +255,6 @@ class Graph:
         if not isinstance(steps, list) or not 0 < len(steps) <= STEPS_MAX:
             raise DocumentError(f"a walk has 1 to {STEPS_MAX} steps")
         max_nodes = min(int(spec.get("max_nodes") or 500), MAX_NODES_MAX)
-        budget = min(int(spec.get("budget_ms") or 200), BUDGET_MS_MAX) / 1000.0
-        deadline = time.monotonic() + budget
         parsed = [self._step(s) for s in steps]
         at = spec.get("at")
         partial = False
@@ -271,7 +269,7 @@ class Graph:
             for step in parsed:
                 reached: list[dict] = []
                 for key in frontier:
-                    if time.monotonic() > deadline or total >= max_nodes:
+                    if total >= max_nodes:
                         partial = True
                         break
                     taken = 0

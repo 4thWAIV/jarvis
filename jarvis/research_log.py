@@ -4,8 +4,8 @@ log_searches and record_hits_used, approved by Tim 2026-11-18).
 
 One file a run, `research-log.jsonl` in the run's folder, one JSON line a
 search, appended by the role's own tool server (role_mcp.py, `--log`) as it
-answers: when, which role, the tool, what it was asked (its arguments), the
-hits (the paths its answer names, read by program, `hit_paths`) and the
+answers: when, which role, the tool, what it was asked (its arguments), how
+long it took (`seconds`, from the call to its answer), the hits (the paths its answer names, read by program, `hit_paths`) and the
 answer itself. Once the script passes the swarm, `mark_used` matches each
 hit's path against the script, and records every hit whose path the script
 cites as used, in `research-used.json` beside it.
@@ -52,11 +52,14 @@ def hit_paths(tool: str, arguments: dict, text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def record(log: Path, role: str, tool: str, arguments: dict, ok: bool, text: str) -> None:
+def record(log: Path, role: str, tool: str, arguments: dict, ok: bool, text: str,
+           seconds: Optional[float] = None) -> None:
     """One search, appended as one line. Never raises: a search the log
     cannot keep still answers."""
     line = {"at": time.time(), "role": role, "tool": tool, "arguments": arguments or {},
             "ok": bool(ok), "hits": hit_paths(tool, arguments, text), "answer": text}
+    if seconds is not None:
+        line["seconds"] = round(float(seconds), 3)
     try:
         with open(log, "a", encoding="utf-8") as out:
             out.write(json.dumps(line, ensure_ascii=False) + "\n")

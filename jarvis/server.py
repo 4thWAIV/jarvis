@@ -3095,11 +3095,14 @@ class _ReplyText:
         _queue_voice(frame)
 
 
-async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
+async def _handle_utterance(text: str, heard: Optional[int] = None, origin: str = "user") -> None:
     """One user utterance → one brain turn → streamed speech. Runs as a task so
     the socket loop keeps receiving `played` acks and interim text meanwhile.
     `heard` is the id the page gave this transcript; a capture made on this
-    turn records it, so the page can move those words to the capture."""
+    turn records it, so the page can move those words to the capture.
+    `origin` is "system" for a turn JARVIS gives the brain itself (the
+    answer to a search it said it was looking for, `_look_on`): spoken the
+    same way, but no acting tool runs in it."""
     global _turn_utt, _turn_heard, _turn_reads
     if brain_instance is None or speech is None:
         return
@@ -3145,7 +3148,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                     # in what he hears: it is neither read nor seen.
                     _reads_unsaid(reads)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
-                                                   origin="user",
+                                                   origin=origin,
                                                    on_delta=delta,
                                                    on_tool=tool)
                 if result.stop_reason == "result":
@@ -5268,12 +5271,31 @@ async def internal_tool(request: Request):
     stage = tool_activity.FAILED
     caller = _tool_caller.set(f"role:{role}") if role is not None else None
     try:
-        reply, stage = await _dispatch_tool(tool, handler, args)
+        reply, stage = await _until_caller_leaves(request, _dispatch_tool(tool, handler, args))
         return reply
     finally:
         if caller is not None:
             _tool_caller.reset(caller)
         tool_activity.activity.end(call, stage)
+
+
+async def _until_caller_leaves(request: Request, call):
+    """A tool call run until it answers, cancelled once its caller's request
+    has gone (the brain's MCP child, a role's or an agent's tool server gave
+    up or ended): what it was doing for that caller, a knowledge search
+    above all, is then no longer needed (knowledge_api.until_unneeded)."""
+    task = asyncio.ensure_future(call)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=knowledge_api.CALLER_LOOK_SEC)
+            if done:
+                return task.result()
+            if await request.is_disconnected():
+                task.cancel()
+                raise asyncio.CancelledError()
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
 
 
 @app.post(agent_rights.AGENT_TOOL_PATH)
@@ -5305,7 +5327,7 @@ async def api_agent_tool(request: Request):
                                       f"{tool!r}."}, status_code=403)
     token = _tool_caller.set(principal)
     try:
-        reply, stage = await _dispatch_tool(tool, handler, args)
+        reply, stage = await _until_caller_leaves(request, _dispatch_tool(tool, handler, args))
     finally:
         _tool_caller.reset(token)
     log.info("agent tool: %s called %s (%s)", principal, tool, stage)
@@ -13473,9 +13495,19 @@ def _hint_knowledge() -> None:
 knowledge_routes.mount(app, knowledge_calls, on_change=_hint_knowledge)
 
 
-async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) -> str:
+async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool,
+                          search: bool = False) -> str:
+    """One knowledge call, its answer worded for the brain. A search
+    (`search`: `work` takes a `knowledge_client.Cancel`) is waited for to
+    the end, cancelled only when the call itself is (its request gone,
+    `_until_caller_leaves`), never by a timer."""
     try:
-        answer = await asyncio.to_thread(work)
+        if search:
+            answer = await knowledge_api.until_unneeded(work)
+        else:
+            answer = await asyncio.to_thread(work)
+    except knowledge_client.Cancelled:
+        raise asyncio.CancelledError()
     except (knowledge_api.Unavailable, knowledge_client.EngineUnavailable) as e:
         return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
     except knowledge_api.Refused as e:
@@ -13483,6 +13515,12 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
         # kind, a target), so it is walled like the answers.
         return ("Nothing was done, sir. The knowledge engine's refusal, which may "
                 "repeat what it was given:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, str(e)))
+    return _knowledge_said(args, answer, what, tool, walled)
+
+
+def _knowledge_said(args: dict, answer, what: str, tool: str, walled: bool) -> str:
+    """A knowledge answer as the brain reads it: JSON, paged, other people's
+    words walled."""
     text = json.dumps(answer, ensure_ascii=False)
     if not walled and len(text) <= REPLY_PAGE_CHARS:
         return text
@@ -13519,14 +13557,79 @@ async def tool_install_embedding_model(args: dict) -> str:
     return json.dumps(answer, ensure_ascii=False)
 
 
+# Voice does not block on a search (construction-drafts "Knowledge search:
+# no deadline that drops results"): a search for him not back within this
+# moment goes on, the brain says it is looking, and the answer comes to it
+# in a turn of its own when it arrives (`_look_on`).
+KNOWLEDGE_LOOKING_SEC = 2.0
+_KNOWLEDGE_SEARCH_WHAT = "What JARVIS has read that matches, as JSON"
+# The searches still running for him after the brain said it is looking.
+_lookups: set[asyncio.Task] = set()
+
+
 async def tool_knowledge_search(args: dict) -> str:
-    said = await _knowledge_tool(args, lambda: knowledge_api.search(
-        knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
-        include_untrusted=args.get("include_received", True) is not False,
-        kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase"),
-        under=args.get("under")),
-        "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
-    return said
+    def work(cancel: knowledge_client.Cancel) -> dict:
+        return knowledge_api.search(
+            knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
+            include_untrusted=args.get("include_received", True) is not False,
+            kinds=args.get("kinds"), limit=args.get("limit") or 10, phrase=args.get("phrase"),
+            under=args.get("under"), cancel=cancel)
+    searched = asyncio.ensure_future(_knowledge_tool(
+        args, work, _KNOWLEDGE_SEARCH_WHAT, "knowledge_search", walled=True, search=True))
+    try:
+        if _for_him() and brain_instance is not None:
+            done, _ = await asyncio.wait({searched}, timeout=KNOWLEDGE_LOOKING_SEC)
+            if not done:
+                _look_on(args, searched)
+                return ("Still looking, sir: the search is running and goes on until it answers. "
+                        "Tell him in a few words that you are looking. Its answer comes to you in "
+                        "a turn of its own as soon as it arrives; do not search again for it.")
+        return await searched
+    except asyncio.CancelledError:
+        if searched not in _lookups:
+            searched.cancel()
+        raise
+
+
+def _look_on(args: dict, searched: asyncio.Task) -> None:
+    """A search for him the brain has said it is looking for: when it
+    answers, the brain is given the answer in a turn of its own and tells
+    him. It is cancelled only when the brain it would answer no longer
+    needs it: that brain stopped, or its conversation replaced (cleared,
+    rotated, restarted; its generation moved)."""
+    brain = brain_instance
+    generation = getattr(brain, "generation", None)
+    query = str(args.get("query") or args.get("phrase") or "")
+
+    def unneeded() -> bool:
+        return (brain_instance is not brain or brain is None or getattr(brain, "_stopping", False)
+                or getattr(brain, "generation", None) != generation)
+
+    async def follow() -> None:
+        try:
+            while True:
+                done, _ = await asyncio.wait({searched}, timeout=knowledge_api.CALLER_LOOK_SEC)
+                if done:
+                    break
+                if unneeded():
+                    log.info("knowledge search for %r cancelled: the brain that asked is gone", query)
+                    searched.cancel()
+                    return
+            try:
+                said = searched.result()
+            except asyncio.CancelledError:
+                return
+            if unneeded():
+                return
+            _spawn(_handle_utterance(
+                f"The knowledge search you told him you were looking for (for {query!r}) has "
+                f"answered. Tell him now what it found, in your own words:\n{said}",
+                origin="system"))
+        finally:
+            _lookups.discard(task)
+    task = _spawn(follow())
+    _lookups.add(searched)
+    _lookups.add(task)
 
 
 async def tool_knowledge_entity(args: dict) -> str:
@@ -13644,10 +13747,12 @@ def _records_scope(args: dict) -> Optional[dict]:
 
 
 async def tool_work_context(args: dict) -> str:
-    said = await _knowledge_tool(args, lambda: knowledge_api.work_context(
+    said = await _knowledge_tool(args, lambda cancel: knowledge_api.work_context(
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
-        include_received=args.get("include_received") is True, scope=_records_scope(args)),
-        "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
+        include_received=args.get("include_received") is True, scope=_records_scope(args),
+        cancel=cancel),
+        "What JARVIS already holds about this work, as JSON", "work_context", walled=True,
+        search=True)
     return said
 
 

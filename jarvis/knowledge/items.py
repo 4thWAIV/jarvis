@@ -42,7 +42,7 @@ import re
 import struct
 import threading
 import time
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from jarvis import spoken_words
 from jarvis.knowledge import encoding, kinds, paths, rights
@@ -73,11 +73,20 @@ OPS = ("put", "merge", "delete", "check", "link", "unlink")
 ITEM_OPS = ("put", "merge", "delete", "check")
 LINK_KIND_MAX = 200
 SEARCH_LIMIT_MAX = 200
-SEARCH_BUDGET_MS = 2000
 QUERY_TEXT_MAX = 2000
 RRF_K = 60
 PROPOSALS = "/proposals/links"
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+
+
+class Cancelled(Exception):
+    """A search its caller no longer needs (its request went away): it
+    stops at the next check and answers nothing. A search is never stopped
+    by a timer."""
+
+
+def never_gone() -> bool:
+    return False
 
 
 class ConditionFailed(DocumentError):
@@ -1343,14 +1352,21 @@ class Items:
         return {"path": path, "links": out[:limit], "lsn": lsn}
 
     # -- search: four indexes, one hit an item -----------------------------------
-    def search(self, body: dict) -> dict:
+    def search(self, body: dict, gone: Callable[[], bool] = never_gone) -> dict:
         """Items by meaning (the whole-item vectors, the sections saying
         where), by words and exact phrase (the full-text index over their
         content), by field values (the data index) and by links (the
         graph): one hit an item, `matched_by` naming every index that found
         it. `where`, `phrase`, `linked_to`, `under` and `types` are
         conditions every hit meets; `meaning` and `words` rank. Vectors and
-        full text need the content right; a hidden field matches nothing."""
+        full text need the content right; a hidden field matches nothing.
+
+        It runs to the end and answers in full, never stopped by a timer
+        (construction-drafts "Knowledge search: no deadline that drops
+        results"); `gone` says when its caller no longer needs it, checked
+        between its stages and as it reads, and then it raises `Cancelled`.
+        The sections where a word matched are read only for the hits it
+        answers with, never for every candidate."""
         person = self._reader(body)
         limit = body.get("limit", 20)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= SEARCH_LIMIT_MAX:
@@ -1359,10 +1375,10 @@ class Items:
         linked_to = body.get("linked_to")
         if linked_to is not None:
             paths.check(linked_to)
-        budget = body.get("budget_ms", SEARCH_BUDGET_MS)
-        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 0 < budget <= 30000:
-            raise DocumentError("budget_ms is 1 to 30000")
-        end = time.monotonic() + budget / 1000.0
+
+        def check() -> None:
+            if gone():
+                raise Cancelled()
         preds, prefix, _, types = self._preds(body)
         has_where = bool(body.get("where"))
         matched: dict[str, set] = {}
@@ -1420,10 +1436,9 @@ class Items:
                     docs = (d for d in self._select([], prefix, None, types, lsn, person=person))
                 else:
                     docs = (self.docs.by_ordinal(o, lsn) for o in sorted(candidates))
-                for doc in docs:
-                    if time.monotonic() > end:
-                        partial = True
-                        break
+                for n, doc in enumerate(docs):
+                    if n % 256 == 0:
+                        check()
                     if not readable(doc):
                         continue
                     if doc.get("_content") is None:
@@ -1440,10 +1455,11 @@ class Items:
                         matched.setdefault(doc["_key"], set()).add("fulltext")
                 cond = hits if cond is None else cond & hits
 
+            check()
             rankings: list[list[str]] = []
+            query_terms = set(lexical_terms(words)) if words else set()
             if words and self.lexical is not None:
                 ranked = []
-                query_terms = set(lexical_terms(words))
                 for o, _, _ in self.lexical.search(words, k=max(limit * 5, 50), items=True):
                     doc = self.docs.by_ordinal(o, lsn)
                     if not readable(doc):
@@ -1455,19 +1471,15 @@ class Items:
                     ords[path] = o
                     ranked.append(path)
                     matched.setdefault(path, set()).add("fulltext")
-                    for s in sections_of(path):
-                        if query_terms & set(lexical_terms(f"{s.get('heading') or ''} {s.get('text') or ''}")):
-                            where.setdefault(path, set()).add(s["index"])
                 rankings.append(ranked)
+            check()
             if meaning:
                 if self.vectors is None or self.vectors.embedder is None:
                     notes.append("no embedding model: nothing was searched by meaning")
                 else:
-                    vector = self.vectors.embed_query(meaning, timeout=max(end - time.monotonic(), 0.05))
-                    if vector is None:
-                        partial = True
-                        notes.append("the question was not embedded in time")
-                    else:
+                    vector = self.vectors.embed_query(meaning)
+                    check()
+                    if vector is not None:
                         within = None
                         if cond is not None:
                             within = {ords.get(p) or self.docs._ord_from_store(p.encode()) for p in cond}
@@ -1501,6 +1513,15 @@ class Items:
             for p in scores:
                 scores[p] += len(matched.get(p, ())) * 1e-6
             best = sorted(scores.items(), key=lambda ps: (-ps[1], ps[0]))[:limit]
+            check()
+            # Where a word matched, for the hits answered only.
+            if query_terms:
+                for p, _ in best:
+                    if "fulltext" not in matched.get(p, ()):
+                        continue
+                    for s in sections_of(p):
+                        if query_terms & set(lexical_terms(f"{s.get('heading') or ''} {s.get('text') or ''}")):
+                            where.setdefault(p, set()).add(s["index"])
         return {"hits": [{"path": p, "score": round(s, 6), "sections": sorted(where.get(p, ())),
                           "matched_by": sorted(matched.get(p, ()))} for p, s in best],
                 "partial": partial, "notes": notes, "lsn": lsn}

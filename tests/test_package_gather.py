@@ -391,7 +391,7 @@ def test_knowledge_search_keeps_to_the_path_it_is_given_under():
     from jarvis import knowledge_api
 
     class Here(knowledge_api.Context):
-        def uds(self, deadline=knowledge_api.SEARCH_DEADLINE_SEC):
+        def uds(self, deadline=knowledge_api.CALL_DEADLINE_SEC):
             return records.uds()
     ctx = Here(lambda: None)
     uds = records.uds()

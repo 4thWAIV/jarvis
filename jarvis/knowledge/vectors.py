@@ -22,9 +22,10 @@ transaction, then embedded again in the background: a vector never answers
 for text it was not made from. With no embedder (the default until one is
 chosen) nothing is embedded and a search says so.
 
-The vector search has its own deadline after the query embedding is ready;
-past it the answer is marked partial, and the remaining files are still
-scanned in the background, which leaves their pages warm.
+A search scans every file and answers in full: nothing on the search path
+is stopped by a timer (construction-drafts "Knowledge search: no deadline
+that drops results"). A question is embedded on the searching thread
+itself, never queued behind a build batch on the embedding thread.
 """
 from __future__ import annotations
 
@@ -62,8 +63,6 @@ IDS = struct.Struct("<IIQ")              # ordinal, property id | flags, lsn
 DELETED = 0x80000000
 ORD = struct.Struct(">I")
 GATHER_MAX = 4096
-DEADLINE_SEC = 0.100
-QUERY_EMBED_SEC = 0.150
 NONE = 0
 WHOLE = 0                       # an item's whole-item row; section i is prop i + 1
 ITEM_SPACE_SUFFIX = "#items"
@@ -1077,20 +1076,23 @@ class VectorIndex:
         return self._working or (self.queue is not None and not self.queue._q.empty())
 
     # -- searching -----------------------------------------------------------
-    def embed_query(self, text: str, timeout: float = QUERY_EMBED_SEC) -> Optional[array]:
-        if self.queue is None:
+    def embed_query(self, text: str) -> Optional[array]:
+        """The question's vector, embedded here on the searching thread (the
+        fast lane): onnxruntime runs one session's calls side by side, so a
+        question never waits for the build's batch on the embedding
+        thread. None with no model."""
+        embedder = self.embedder
+        if self.queue is None or embedder is None:
             return None
-        found = self.queue.embed_now([text], timeout)
-        return found[0] if found else None
+        return embedder.embed([emb.prepare(text)], "query")[0]
 
     def search(self, query: array, k: int = 50, within: Optional[set[int]] = None,
-               deadline_s: float = DEADLINE_SEC, space_name: Optional[str] = None) -> dict:
+               space_name: Optional[str] = None) -> dict:
         """The top `k` ordinals by cosine to `query` in one space; refused
         and stale rows never come back."""
         space = self.spaces.get(space_name or self.space_id or "")
         if space is None or not space.dim:
             return {"hits": [], "partial": False, "space": space_name or self.space_id}
-        end = time.monotonic() + deadline_s
         d = space.dim
         q = (c_float * d)(*query)
         hits: list[tuple[float, int]] = []
@@ -1100,14 +1102,8 @@ class VectorIndex:
         if within is not None and len(within) <= GATHER_MAX:
             hits = self._gathered(space, files, mem, q, d, within, k)
             return {"hits": [(o, s) for s, o in hits], "partial": False, "space": space.name}
-        partial = False
-        late: list[SpaceFile] = []
         for f in files:
             if not f.n or f.rows is None:
-                continue
-            if time.monotonic() > end:
-                partial = True
-                late.append(f)
                 continue
             scores = (c_float * f.n)()
             vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
@@ -1123,20 +1119,16 @@ class VectorIndex:
                 hits.append((s, f.ordinals[row]))
         if mem:
             hits.extend(self._score_mem(mem, q, d, within))
-        if late:
-            threading.Thread(target=self._finish_late, args=(late, q, d), daemon=True).start()
         hits.sort(key=lambda h: (-h[0], h[1]))
-        return {"hits": [(o, s) for s, o in hits[:k]], "partial": partial, "space": space.name}
+        return {"hits": [(o, s) for s, o in hits[:k]], "partial": False, "space": space.name}
 
-    def search_items(self, query: array, k: int = 50, within: Optional[set[int]] = None,
-                     deadline_s: float = DEADLINE_SEC) -> dict:
+    def search_items(self, query: array, k: int = 50, within: Optional[set[int]] = None) -> dict:
         """Items by meaning: ranked by their whole-item vectors, one hit an
         item, each naming the sections whose vectors come closest (where in
         the item it matched): (ordinal, score, [section index, ...])."""
         space = self.spaces.get(self.item_space_id or "")
         if space is None or not space.dim:
             return {"hits": [], "partial": False, "space": self.item_space_id}
-        end = time.monotonic() + deadline_s
         d = space.dim
         q = (c_float * d)(*query)
         with self._lock:
@@ -1144,15 +1136,11 @@ class VectorIndex:
             mem = dict(space.mem)
         whole_mem = {key: v for key, v in mem.items() if key[1] == WHOLE}
         ranked: list[tuple[float, int]] = []
-        partial = False
         if within is not None and len(within) <= GATHER_MAX:
             ranked = self._gathered(space, files, whole_mem, q, d, within, k, props=(WHOLE,))
         else:
             for f in files:
                 if not f.n or f.rows is None:
-                    continue
-                if time.monotonic() > end:
-                    partial = True
                     continue
                 scores = (c_float * f.n)()
                 vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
@@ -1174,7 +1162,7 @@ class VectorIndex:
                 continue
             where = sorted(self._section_scores(space, files, mem, q, d, o), key=lambda h: (-h[0], h[1]))
             hits.append((o, s, [p - 1 for _, p in where[:WHERE_SECTIONS]]))
-        return {"hits": hits, "partial": partial, "space": space.name}
+        return {"hits": hits, "partial": False, "space": space.name}
 
     def _section_scores(self, space: Space, files: list[SpaceFile], mem: dict, q, d: int,
                         o: int) -> list[tuple[float, int]]:
@@ -1244,11 +1232,6 @@ class VectorIndex:
             out.extend((scores[i], o) for i, (o, _, _) in enumerate(picked))
         out.sort(key=lambda h: (-h[0], h[1]))
         return out[:k]
-
-    def _finish_late(self, files: list[SpaceFile], q, d: int) -> None:
-        for f in files:
-            scores = (c_float * f.n)()
-            vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
 
     def warm(self) -> None:
         for space in self.spaces.values():

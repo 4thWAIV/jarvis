@@ -50,17 +50,17 @@ def test_tier_one_keeps_to_his_words_and_caps_each_document():
     seed_world()
     hits = ([{"label": "doc-a", "source": "jref:a", "trust": "own", "text": f"own passage {i}"} for i in range(5)]
             + [{"label": "doc-b", "source": "jref:b", "trust": "untrusted", "text": "SOMEONE ELSE said this"}])
-    p = cs.pack(purpose="step checker", project="chitauri", search=lambda t, own, d: hits)
+    p = cs.pack(purpose="step checker", project="chitauri", search=lambda t, own: hits)
     assert p.tier == 1 and "SOMEONE ELSE" not in p.text
     assert sum(1 for line in p.text.splitlines() if "(doc-a)" in line) == cs.PER_DOCUMENT
-    walled = cs.pack(purpose="step checker", project="chitauri", trust="all", search=lambda t, own, d: hits)
+    walled = cs.pack(purpose="step checker", project="chitauri", trust="all", search=lambda t, own: hits)
     assert "SOMEONE ELSE" in walled.text
 
 
 def test_a_late_engine_gives_tier_zero_marked_partial():
     seed_world()
     jarvis_memory.write_memory("Step checker", "The step checker refuses unknown tools.")
-    p = cs.pack(purpose="step checker", project="chitauri", search=lambda t, own, d: None)
+    p = cs.pack(purpose="step checker", project="chitauri", search=lambda t, own: None)
     assert p.partial and p.tier == 0 and "partial" in p.text.splitlines()[0]
     assert "refuses unknown tools" in p.text
 

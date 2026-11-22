@@ -11,7 +11,7 @@ documents. It is a small pattern, not a query language:
      "weights": {"match": 1, "near": 1, "about": 1},
      "visible": {"trust": ["own"], "namespaces": ["local"]},
      "return": {"properties": [...], "limit": 20},
-     "at": null, "budget_ms": 200}
+     "at": null}
 
 Each clause gives a set of ordinals: `where` from the general index,
 `walk` from the graph, `match` from the keyword index, `near` from the
@@ -36,8 +36,10 @@ with neither, results come in the requested order, newest first by
 default. Every hit carries its key, source, trust, namespace and `why`.
 
 `match` and `near` read the newest state; a request with `at` may use only
-`from` and `walk`, which read exactly at that LSN. Past `budget_ms` the
-answer is returned with what is done and marked partial (I3).
+`from` and `walk`, which read exactly at that LSN. A query runs to the
+end and answers in full: no timer stops it (construction-drafts
+"Knowledge search: no deadline that drops results"); `gone` says when its
+caller no longer needs it, and it then raises `items.Cancelled`.
 
 `/v1/search` is a fixed form of this.
 """
@@ -54,7 +56,6 @@ RRF_K = 60
 DEFAULT_WEIGHTS = {"match": 1.0, "near": 1.0, "about": 2.0}
 K_MAX = 200
 LIMIT_MAX = 200
-BUDGET_MS_MAX = 500
 SMALL_WHERE = 20000
 HEADER = ("_key", "_kind", "_label", "_status", "_trust", "_ns", "_owner", "_source", "_lsn")
 
@@ -67,18 +68,22 @@ def _list(value, name) -> list:
     return value
 
 
-def run(engine, body: dict) -> dict:
+def run(engine, body: dict, gone=None) -> dict:
+    from jarvis.knowledge.items import Cancelled, never_gone
+    gone = gone or never_gone
+
+    def check() -> None:
+        if gone():
+            raise Cancelled()
+
     if not isinstance(body, dict):
         raise DocumentError("a query is an object")
-    unknown = set(body) - {"from", "walk", "near", "match", "about", "weights", "visible", "return", "at",
-                           "budget_ms"}
+    unknown = set(body) - {"from", "walk", "near", "match", "about", "weights", "visible", "return", "at"}
     if unknown:
         raise DocumentError(f"unknown clauses: {', '.join(sorted(unknown))}")
     if not any(body.get(c) for c in ("from", "walk", "near", "match", "about")):
         raise DocumentError("a query has at least one of from, walk, near, match and about")
     start = time.monotonic()
-    budget = min(int(body.get("budget_ms") or 200), BUDGET_MS_MAX) / 1000.0
-    deadline = start + budget
     source = body.get("from") or {}
     kind_names = _list(source.get("kinds"), "kinds") or None
     for k in kind_names or []:
@@ -131,7 +136,6 @@ def run(engine, body: dict) -> dict:
         if body.get("walk") is not None:
             spec = dict(body["walk"])
             spec["at"] = lsn
-            spec["budget_ms"] = max(1, int((deadline - time.monotonic()) * 1000))
             walked = graph.walk(spec)
             partial = partial or walked["partial"]
             walk_set = set()
@@ -163,38 +167,31 @@ def run(engine, body: dict) -> dict:
             allowed = where_set & walk_set
 
         rankings: list[tuple[str, list[tuple[int, float, Any]]]] = []
+        check()
         if match:
-            if time.monotonic() > deadline:
-                partial = True
-            else:
-                hits = engine.lexical.search(match, k_match, within=allowed)
-                rankings.append(("match", [(o, s, w) for o, s, w in hits]))
+            hits = engine.lexical.search(match, k_match, within=allowed)
+            rankings.append(("match", [(o, s, w) for o, s, w in hits]))
+            check()
         if near:
             vectors = engine.vectors
             if vectors.space_id is None:
                 notes.append("near: no embedder, so vectors were not used")
             else:
-                left = deadline - time.monotonic()
-                q = vectors.embed_query(near["text"], timeout=max(0.0, min(left, 0.150)))
-                if q is None:
-                    partial = True
-                    notes.append("near: the query embedding was late")
-                else:
-                    found = vectors.search(q, k_near, within=allowed,
-                                           deadline_s=max(0.0, min(deadline - time.monotonic(), 0.100)))
-                    partial = partial or found["partial"]
+                q = vectors.embed_query(near["text"])
+                check()
+                if q is not None:
+                    found = vectors.search(q, k_near, within=allowed)
                     rankings.append(("near", [(o, s, None) for o, s in found["hits"]]))
+                    check()
 
         if about:
-            if time.monotonic() > deadline:
-                partial = True
-            else:
-                lexical_rank = {o: r for r, (o, _s, _w) in enumerate(next(
-                    (h for n, h in rankings if n == "match"), []))}
-                found = _about(engine, about["text"], allowed, lexical_rank,
-                               min(int(about.get("k") or K_MAX), K_MAX), lsn)
-                if found:
-                    rankings.append(("about", found))
+            lexical_rank = {o: r for r, (o, _s, _w) in enumerate(next(
+                (h for n, h in rankings if n == "match"), []))}
+            found = _about(engine, about["text"], allowed, lexical_rank,
+                           min(int(about.get("k") or K_MAX), K_MAX), lsn)
+            if found:
+                rankings.append(("about", found))
+            check()
 
         # Asked to rank: only what a ranking found is returned, nothing when
         # none found anything.
@@ -224,9 +221,8 @@ def run(engine, body: dict) -> dict:
         for o in order:
             if len(out) >= (limit if ranked else 1 << 30):
                 break
-            if time.monotonic() > deadline and out:
-                partial = True
-                break
+            if len(out) % 256 == 0:
+                check()
             doc = docs.by_ordinal(o, lsn)
             if doc is None:
                 continue
@@ -282,7 +278,7 @@ def _about(engine, text: str, allowed: Optional[set[int]], lexical_rank: dict[in
     return out
 
 
-def search(engine, body: dict) -> dict:
+def search(engine, body: dict, gone=None) -> dict:
     """`/v1/search`: hybrid search: words matched, the entities they name
     through the graph, and, when an embedder exists, near, over the
     documents `kinds` and `where` allow."""
@@ -290,12 +286,11 @@ def search(engine, body: dict) -> dict:
     if not isinstance(text, str) or not text.strip():
         raise DocumentError("search has text")
     query: dict = {"match": text, "near": {"text": text, "k": int(body.get("k") or 50)},
-                   "about": {"text": text}, "return": {"limit": int(body.get("limit") or 20)},
-                   "budget_ms": body.get("budget_ms") or 200}
+                   "about": {"text": text}, "return": {"limit": int(body.get("limit") or 20)}}
     if body.get("weights") is not None:
         query["weights"] = body["weights"]
     if body.get("kinds") or body.get("where"):
         query["from"] = {"kinds": body.get("kinds"), "where": body.get("where")}
     if body.get("visible"):
         query["visible"] = body["visible"]
-    return run(engine, query)
+    return run(engine, query, gone)

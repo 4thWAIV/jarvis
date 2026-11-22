@@ -44,9 +44,18 @@ _CONTEXT = {"purpose", "project", "include_received"}
 
 def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda: None) -> None:
 
-    async def run(work: Callable[[], object], changes: bool = False):
+    async def run(work: Callable[[], object], changes: bool = False,
+                  search: Optional[Request] = None):
+        """`work` off the event loop. A search (`search`, its request) is
+        waited for to the end, cancelled only once that request has gone
+        (`ka.until_unneeded`), and then answers nothing anyone reads."""
         try:
-            result = await asyncio.to_thread(work)
+            if search is not None:
+                result = await ka.until_unneeded(work, search.is_disconnected)
+            else:
+                result = await asyncio.to_thread(work)
+        except ka.knowledge_client.Cancelled:
+            return JSONResponse({"error": "cancelled"}, status_code=499)
         except ka.Refused as e:
             return JSONResponse({"error": "refused", "message": str(e)}, status_code=400)
         except (ka.Unavailable, ka.knowledge_client.EngineUnavailable) as e:
@@ -87,10 +96,11 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         b = await fields(request, _SEARCH)
         if b is None:
             return bad()
-        return await run(lambda: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
-                                           include_untrusted=b.get("include_untrusted", True) is not False,
-                                           kinds=b.get("kinds"), limit=b.get("limit") or 10,
-                                           phrase=b.get("phrase"), under=b.get("under")))
+        return await run(lambda cancel: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
+                                                  include_untrusted=b.get("include_untrusted", True) is not False,
+                                                  kinds=b.get("kinds"), limit=b.get("limit") or 10,
+                                                  phrase=b.get("phrase"), under=b.get("under"), cancel=cancel),
+                         search=request)
 
     async def entity(name: Optional[str] = None, key: Optional[str] = None):
         return await run(lambda: ka.entity(ctx, name=name, key=key))
@@ -143,9 +153,11 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         b = await fields(request, _CONTEXT)
         if b is None:
             return bad()
-        return await run(lambda: ka.work_context(ctx, purpose=str(b.get("purpose") or ""),
-                                                 project=b.get("project"),
-                                                 include_received=b.get("include_received") is True))
+        return await run(lambda cancel: ka.work_context(ctx, purpose=str(b.get("purpose") or ""),
+                                                        project=b.get("project"),
+                                                        include_received=b.get("include_received") is True,
+                                                        cancel=cancel),
+                         search=request)
 
     async def embedder():
         return await run(lambda: ka.embedding_model(ctx))

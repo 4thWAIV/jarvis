@@ -13,7 +13,8 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 from jarvis.knowledge import lanes, oscompat
 
@@ -105,6 +106,10 @@ class Engine:
         self.boot_id = uuid.uuid4().hex
         self.started = time.time()
         self.pace = "free"
+        # Searches running now: while any runs the background lane is held
+        # (`searching`), as it is while the pace holds.
+        self._searches = 0
+        self._searches_cond = threading.Condition()
         self._closed = False
         self._close_lock = threading.Lock()
         self.store = None  # the storage core, opened by open()
@@ -164,6 +169,7 @@ class Engine:
         from jarvis.knowledge.linker import Linker
         self.linker = Linker(self.docs, self.graph, self.lexical, self.transaction)
         self.linker.items = self.items
+        self.linker.wait_free = self.wait_for_searches
         self._link_lock = threading.Lock()
         from jarvis.knowledge.cards import Cards
         self.cards = Cards(self)
@@ -202,13 +208,53 @@ class Engine:
         if mode not in ("hold", "free"):
             raise ValueError("pace is hold or free")
         self.pace = mode
+        self._apply_hold()
+        if self.vectors is not None:
+            self.vectors.set_paused(not self.indexing_enabled())
+
+    def held(self) -> bool:
+        """Whether the background lane is held: the pace holds, or a search
+        is running."""
+        return self.pace == "hold" or self._searches > 0
+
+    def _apply_hold(self) -> None:
+        held = self.held()
         if self.store is not None:
-            self.store.set_paused(mode == "hold")
+            self.store.set_paused(held)
         if self.vectors is not None:
             # Held, the background build waits; a package's evidence, urgent,
             # goes on (vectors.VectorIndex.set_held).
-            self.vectors.set_held(mode == "hold")
-            self.vectors.set_paused(not self.indexing_enabled())
+            self.vectors.set_held(held)
+
+    @contextmanager
+    def searching(self) -> Iterator[None]:
+        """A search in the fast lane (construction-drafts "Knowledge
+        search: no deadline that drops results"): it runs on its request
+        thread at normal priority, and while any search runs the background
+        lane (the vector build, compaction, the linker, maintenance) is
+        held, then freed with the last."""
+        with self._searches_cond:
+            self._searches += 1
+            first = self._searches == 1
+        if first:
+            self._apply_hold()
+        try:
+            with lanes.foreground():
+                yield
+        finally:
+            with self._searches_cond:
+                self._searches -= 1
+                last = self._searches == 0
+                self._searches_cond.notify_all()
+            if last:
+                self._apply_hold()
+
+    def wait_for_searches(self) -> None:
+        """For a background step (the linker's next topic): until no search
+        runs."""
+        with self._searches_cond:
+            while self._searches > 0 and not self._closed:
+                self._searches_cond.wait(1.0)
 
     def transaction(self, body: dict) -> int:
         """One atomic write: documents put and deleted together; readers see
@@ -275,28 +321,28 @@ class Engine:
     def maintain(self) -> None:
         """One maintenance step, run by the engine's own timer in the
         background lane (serve._maintenance) while the floor is free: flush on the time rule, then compact a full tier."""
-        if self.pace == "hold" or self.store is None or not self.store.writable:
+        if self.held() or self.store is None or not self.store.writable:
             return
         self.store.maybe_flush()
-        if self.pace == "free" and self.store.pick_tier():
+        if not self.held() and self.store.pick_tier():
             self.store.compact()
         if self.vectors is not None:
             enabled = self.indexing_enabled()
             self.vectors.set_paused(not enabled)
-        if self.pace == "free" and self.vectors is not None and enabled:
+        if not self.held() and self.vectors is not None and enabled:
             if self.vectors.embedder is None:
                 from jarvis.knowledge import embedder
                 self.vectors.attach(embedder.current())
             self.vectors.warm()
-        if self.pace == "free":
+        if not self.held():
             age = self.store.newest_snapshot_age()
             if age is None or age >= SNAPSHOT_EVERY_SEC:
                 self.store.snapshot()
-        if self.pace == "free" and self.cards is not None and \
+        if not self.held() and self.cards is not None and \
                 time.monotonic() - self._cards_refreshed >= CARDS_REFRESH_SEC:
             self._cards_refreshed = time.monotonic()
             self.cards.refresh()
-        if self.pace == "free" and self.advisor is not None and self.advisor.due():
+        if not self.held() and self.advisor is not None and self.advisor.due():
             self.advisor.save()
             self.advisor.advise(rebuild=self.rebuild_indexes)
 

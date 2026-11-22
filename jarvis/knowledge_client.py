@@ -4,8 +4,10 @@ supervisor (design sections 7.2, 7.3 and 18).
 Only the JARVIS server holds the engine token. Before sending it, the
 client checks that the address record's pid is the child the supervisor
 started, so a stale or planted record never receives it. Every call has a
-deadline (I3); a call past it raises `EngineUnavailable`, and the caller
-answers from SQLite and Markdown instead.
+deadline (I3), past which it raises `EngineUnavailable`, but a search: a
+search is waited for until it answers (deadline None) and ends early only
+when its caller no longer needs it (`Cancel`), never by a timer
+(construction-drafts "Knowledge search: no deadline that drops results").
 
 Python tests reach the engine only through this module, with
 `InProcessTransport` in place of HTTP, so a bare `pytest` starts no engine.
@@ -90,8 +92,51 @@ class EngineUnavailable(RuntimeError):
     """The engine is down, late, or not the one we started."""
 
 
+class Cancelled(EngineUnavailable):
+    """The caller no longer needed the call, and ended it."""
+
+
+class Cancel:
+    """A call's caller saying it no longer needs it: `cancel()` closes the
+    call's connection, so the engine sees its caller gone and stops the
+    search (serve's `gone`), and the waiting call raises `Cancelled`. Safe
+    from any thread; a cancel before the call starts ends it at once."""
+
+    def __init__(self) -> None:
+        import threading
+        self._lock = threading.Lock()
+        self._conn: Optional[http.client.HTTPConnection] = None
+        self.cancelled = False
+
+    def attach(self, conn: http.client.HTTPConnection) -> None:
+        with self._lock:
+            self._conn = conn
+            if self.cancelled:
+                raise Cancelled("its caller no longer needed it")
+
+    def release(self) -> None:
+        with self._lock:
+            self._conn = None
+
+    def cancel(self) -> None:
+        import socket
+        with self._lock:
+            self.cancelled = True
+            conn = self._conn
+        sock = getattr(conn, "sock", None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def gone(self) -> bool:
+        return self.cancelled
+
+
 class Transport(Protocol):
-    def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]: ...
+    def request(self, method: str, path: str, body: Any, deadline: Optional[float],
+                cancel: Optional[Cancel] = None) -> tuple[int, Any]: ...
 
 
 class HTTPTransport:
@@ -102,7 +147,9 @@ class HTTPTransport:
         self._expected_pid = expected_pid
         self._token = token
 
-    def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]:
+    def request(self, method: str, path: str, body: Any, deadline: Optional[float],
+                cancel: Optional[Cancel] = None) -> tuple[int, Any]:
+        """One call; `deadline` None waits until it answers (a search)."""
         found = engine_address.read()
         child = self._expected_pid()
         if found is None or child is None or child not in found.started_by:
@@ -116,13 +163,20 @@ class HTTPTransport:
                        "Host": f"{found.host}:{found.port}"}
             if data is not None:
                 headers["Content-Type"] = "application/json"
+            conn.connect()
+            if cancel is not None:
+                cancel.attach(conn)
             conn.request(method, path, body=data, headers=headers)
             response = conn.getresponse()
             raw = response.read()
             return response.status, (json.loads(raw) if raw else None)
         except (OSError, http.client.HTTPException, ValueError) as e:
+            if cancel is not None and cancel.cancelled:
+                raise Cancelled("its caller no longer needed it") from e
             raise EngineUnavailable(str(e)) from e
         finally:
+            if cancel is not None:
+                cancel.release()
             conn.close()
 
 
@@ -132,12 +186,15 @@ class InProcessTransport:
     def __init__(self, engine) -> None:
         self.engine = engine
 
-    def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]:
+    def request(self, method: str, path: str, body: Any, deadline: Optional[float],
+                cancel: Optional[Cancel] = None) -> tuple[int, Any]:
         from jarvis.knowledge.serve import dispatch
         # The same JSON round trip HTTP would make, so nothing passes that
         # the wire could not carry.
         sent = None if body is None else json.loads(json.dumps(body))
-        answer = dispatch(self.engine, method, path, sent)
+        answer = dispatch(self.engine, method, path, sent, gone=cancel.gone if cancel is not None else None)
+        if cancel is not None and cancel.cancelled:
+            raise Cancelled("its caller no longer needed it")
         return answer.status, json.loads(json.dumps(answer.payload))
 
 
@@ -146,7 +203,7 @@ class KnowledgeClient:
         self.transport = transport
 
     def call(self, method: str, path: str, body: Any = None,
-             deadline: float = DEFAULT_DEADLINE_SEC) -> Any:
+             deadline: Optional[float] = DEFAULT_DEADLINE_SEC) -> Any:
         status, payload = self.transport.request(method, path, body, deadline)
         if status >= 500:
             raise EngineUnavailable(f"engine answered {status}")

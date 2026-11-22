@@ -225,6 +225,10 @@ class Linker:
             self.items.transact({"by": {"person": OWNER, "model": MODEL}, "writes": writes[i:i + BATCH],
                                  "change": "linked", "summary": "the linker's mentions"})
 
+    # Set by the engine: waits while a search runs (the background lane is
+    # held then, Engine.searching).
+    wait_free = staticmethod(lambda: None)
+
     def run(self) -> dict:
         topics = self.topics()
         self._sync_nodes(topics)
@@ -232,6 +236,7 @@ class Linker:
         proposals: dict[str, dict] = {}
         names: dict[str, list[str]] = {}
         for topic in topics:
+            self.wait_free()
             exact = list(dict.fromkeys([topic.name] + topic.aliases("exact")))
             ambiguous = topic.aliases("ambiguous")
             turned_down = set(topic.links("not_linked"))

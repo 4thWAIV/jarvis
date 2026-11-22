@@ -15,7 +15,10 @@ Two files beside each run (its folder, package_jobs.folder_of):
   (`answered`, `refused` by the brain's model list, `time_limit`,
   `rate_limited`, `failed`); the pages each paged role asked (pages.Report:
   pages, calls, asked again, halved, rate-limit hits and the wait); the
-  app servers started; the swarm's stages with their times. Its `totals`
+  app servers started; the swarm's stages with their times; every search a
+  role made in the step (`searches`: role, tool and seconds, from the run's
+  research-log.jsonl, research_log.py) and their seconds summed
+  (`search_seconds`). Its `totals`
   sum them, and a step over `STEP_FAILS_AFTER_SEC` is flagged `too_slow`
   (Tim 2026-11-21: more than a few minutes for a step is a failure).
 - `quality.json` (`QUALITY`): per pass of the swarm, each concern signed
@@ -116,7 +119,17 @@ def _tokens(record: dict) -> tuple[int, int, int]:
             int(record.get("tokens_out") or 0))
 
 
-def step_entry(step: _Step, ended: float, outcome: str, resumed: bool) -> dict:
+def _searches(folder: Path, began: float, ended: float) -> list[dict]:
+    """The searches the run's roles made between `began` and `ended`, each
+    with its role, tool and seconds (research_log.py)."""
+    from jarvis import research_log
+    return [{"role": e.get("role"), "tool": e.get("tool"), "seconds": e.get("seconds"), "at": e.get("at")}
+            for e in research_log.read(folder / research_log.NAME)
+            if began <= float(e.get("at") or 0) <= ended]
+
+
+def step_entry(step: _Step, ended: float, outcome: str, resumed: bool,
+               searches: Optional[list[dict]] = None) -> dict:
     seconds = round(ended - step.began, 1)
     tin = sum(_tokens(c)[0] for c in step.calls)
     cached = sum(_tokens(c)[1] for c in step.calls)
@@ -132,6 +145,8 @@ def step_entry(step: _Step, ended: float, outcome: str, resumed: bool) -> dict:
             "time_limits": sum(1 for c in step.calls if c.get("outcome") == TIME_LIMIT),
             "rate_limited": (sum(1 for c in step.calls if c.get("outcome") == RATE_LIMITED)),
             "app_server_starts": step.app_servers,
+            "searches": list(searches or []),
+            "search_seconds": round(sum(float(x.get("seconds") or 0) for x in searches or []), 3),
             "tokens": {"in": tin, "cached": cached, "out": out}}
 
 
@@ -139,12 +154,14 @@ def totals(steps: list[dict]) -> dict:
     """The steps summed: seconds, calls, pages, retries, time-limit and
     rate-limit hits, app servers, tokens; the steps too slow by name."""
     out = {"seconds": 0.0, "calls": 0, "pages": 0, "retries": 0, "time_limits": 0,
-           "rate_limited": 0, "app_server_starts": 0,
+           "rate_limited": 0, "app_server_starts": 0, "searches": 0, "search_seconds": 0.0,
            "tokens": {"in": 0, "cached": 0, "out": 0}, "too_slow": []}
     for s in steps:
         out["seconds"] = round(out["seconds"] + float(s.get("seconds") or 0), 1)
         out["calls"] += len(s.get("calls") or [])
         out["pages"] += int(s.get("pages_asked") or 0)
+        out["searches"] += len(s.get("searches") or [])
+        out["search_seconds"] = round(out["search_seconds"] + float(s.get("search_seconds") or 0), 3)
         for key in ("retries", "time_limits", "rate_limited", "app_server_starts"):
             out[key] += int(s.get(key) or 0)
         for key in ("in", "cached", "out"):
@@ -183,7 +200,9 @@ def step(doc: dict, name: str) -> Iterator[None]:
                                    "run": doc.get("run"), "work": doc.get("work"),
                                    "steps": []}
             resumed = any(s.get("step") == name for s in body["steps"])
-            body["steps"].append(step_entry(entry, time.time(), outcome, resumed))
+            ended = time.time()
+            body["steps"].append(step_entry(entry, ended, outcome, resumed,
+                                            _searches(folder, entry.began, ended)))
             body["stages"] = _stages(folder)
             body["totals"] = totals(body["steps"])
             _write(path, body)

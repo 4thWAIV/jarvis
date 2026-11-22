@@ -1755,7 +1755,7 @@ search under, an earlier run's research copied into `earlier/` by
 `_carry_earlier`) and where `research.md` goes; a turn that leaves none is
 the step's Error. Every call a role makes on its own tool server is logged
 there (`role_mcp.py --log`, `research_log.record`: one line a search in
-`research-log.jsonl`, the role, the tool, its arguments, the hits by
+`research-log.jsonl`, the role, the tool, its arguments, its `seconds`, the hits by
 program, `research_log.hit_paths`: a history search's sources without
 their line numbers, so a fact citing the source is matched, and the
 answer), and once the script
@@ -1928,7 +1928,9 @@ waiting is one more entry, `resumed`), with every role call made in it
 (`BrainChatSession._record`: role, engine, model, tier, effort, seconds,
 tokens in, cached and out, and how it ended: answered, refused by the
 model sweep, time limit, rate limited, failed), each paged role's pages
-(`pages.Report`), the app servers started and the swarm's stages; a step
+(`pages.Report`), the app servers started, every search a role made in it
+with its seconds (`searches`, `search_seconds`, from research-log.jsonl)
+and the swarm's stages; a step
 over `STEP_FAILS_AFTER_SEC` (five minutes; Tim 2026-11-21: more than a
 few minutes a step is a failure) is flagged `too_slow`, and `totals` sums
 them. `quality.json` (`run_report.quality`, written after the swarm and
@@ -2790,7 +2792,35 @@ words' postings intersected, then checked in each section
 (`lexical.phrase_in`). `POST /v1/items/search` (`EngineUDS.search`) takes
 meaning and words (they rank) and where, phrase, linked_to, under and
 types (conditions), one hit an item with `matched_by` and the sections
-where it matched. AccessRights (`knowledge/rights.py`, family `RIGHTS`):
+where it matched (a word's sections read only for the hits it answers
+with). No search has a deadline (Tim's yes, 2026-11-21, construction-drafts
+"Knowledge search: no deadline that drops results"): `items.search`,
+`query.run` and a graph walk run to the end and answer in full, never
+partial for time, and a search ends early only when its caller no longer
+needs it: the engine's HTTP handler sees the caller's connection closed
+(`serve._caller_gone`, a route's `Request.gone`, `items.Cancelled`, answered
+`CANCELLED` and never sent). The client waits for a search with no timeout
+(`uds.NO_DEADLINE`) and closes its connection on `knowledge_client.Cancel`;
+`knowledge_api.until_unneeded` is the one waiter, cancelling once the task
+awaiting it is cancelled or its request has gone (the page's route, looked
+at every `CALLER_LOOK_SEC`; the brain's, a role's and an agent's tool calls
+through `server._until_caller_leaves`, and their tool servers wait for
+`knowledge_search` and `work_context` with no timeout,
+`jarvis_mcp.TIMEOUT_FOR`). A search runs in the fast lane
+(`Engine.searching`: its request thread at normal priority, and while any
+search runs the background lane is held, the build, compaction,
+maintenance and the linker's next topic, `wait_for_searches`), and a
+question is embedded on the searching thread itself
+(`VectorIndex.embed_query`; onnxruntime runs one session's calls side by
+side), never queued behind the build's batch on the embedding thread,
+which measured 1.3 to 1.7 s of the searches' seconds on the owner's
+records. Its time is in the engine's route times and the answer's
+`took_sec`. By voice it never blocks: a search for him not back within
+`server.KNOWLEDGE_LOOKING_SEC` goes on, the brain is told to say it is
+looking, and its answer comes to the brain in a turn of its own
+(`server._look_on`, `_handle_utterance` origin `system`), cancelled only
+when that brain is stopped or its conversation replaced (its generation
+moved). AccessRights (`knowledge/rights.py`, family `RIGHTS`):
 grants on a path (person or `*`; data, content, write; hidden fields),
 inherited below it and only added to; the owner (`OWNER`, tim) has
 everything and alone sets rights (`/v1/items/rights`). Every items route
@@ -2958,7 +2988,8 @@ proposes topics, each a silent attention item acted on only on his yes. The
 page's /api/knowledge routes (`knowledge_routes.py`, the Knowledge view) and
 the brain's knowledge tools call the same `knowledge_api` functions.
 `context_service.pack` is the context pack: tier 0 from notes and topics,
-tier 1 with the engine's search; `work_context` gives it to the brain
+tier 1 with the engine's search, waited for to the end (no deadline);
+`work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
 Settings, Knowledge's `run_context` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.

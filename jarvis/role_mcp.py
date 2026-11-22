@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 if not __package__:
@@ -53,9 +54,10 @@ def _answer(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
 
 
 def call(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
+    began = time.monotonic()
     ok, text, image = _answer(tool, arguments)
     if LOG is not None:
-        research_log.record(LOG, ROLE, tool, arguments, ok, text)
+        research_log.record(LOG, ROLE, tool, arguments, ok, text, seconds=time.monotonic() - began)
     return ok, text, image
 
 

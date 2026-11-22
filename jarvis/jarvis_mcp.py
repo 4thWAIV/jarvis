@@ -67,12 +67,18 @@ TIMEOUT_SEC = 20.0
 # its own limit, self_update.GIT_TIMEOUT_SEC and GITHUB_TIMEOUT_SEC);
 # update_jarvis checks the same way and leaves the update itself to run after
 # the turn.
-TIMEOUT_FOR = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0,
+TIMEOUT_FOR: dict[str, float | None] = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0,
                "update_status": 90.0, "update_jarvis": 90.0,
                # A download and a check, or a reader's page or render.
                "inspect_attachment": 120.0, "read_bundle_member": 60.0,
                "look_at_bundle_page": 60.0, "add_companion_files": 120.0,
-               "prepare_repair": 120.0}
+               "prepare_repair": 120.0,
+               # A knowledge search runs to the end, however long, and is never
+               # dropped by a timer (construction-drafts "Knowledge search: no
+               # deadline that drops results"): waited for with no timeout.
+               # For him the server answers within a moment either way, saying
+               # it is looking (server.KNOWLEDGE_LOOKING_SEC).
+               "knowledge_search": None, "work_context": None}
 
 # The engine one agent goes on (spawn_run, start_build, run_package_agent).
 _ENGINE_PROPERTY = {

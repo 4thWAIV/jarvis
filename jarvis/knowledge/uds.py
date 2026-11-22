@@ -273,6 +273,9 @@ def _streams(streams) -> list[str]:
 DEFAULT = frozenset({Stream.ENTRY, Stream.DATA})
 
 
+NO_DEADLINE = object()     # a call waited for until it answers: a search
+
+
 class EngineUDS:
     """The UDS interface over the engine's `/v1/items/*` routes."""
 
@@ -285,10 +288,15 @@ class EngineUDS:
         such as the records move, in place of the ordinary deadline)."""
         return EngineUDS(self.transport, deadline=deadline)
 
-    def _call(self, route: str, body: dict, deadline: Optional[float] = None) -> tuple[int, Any]:
+    def _call(self, route: str, body: dict, deadline: Optional[float] = None,
+              cancel=None) -> tuple[int, Any]:
         from jarvis.knowledge_client import EngineUnavailable
-        status, payload = self.transport.request("POST", "/v1/items/" + route, body,
-                                                 deadline or self.deadline)
+        given = deadline or self.deadline
+        wait = None if given is NO_DEADLINE else given
+        if cancel is not None:
+            status, payload = self.transport.request("POST", "/v1/items/" + route, body, wait, cancel=cancel)
+        else:
+            status, payload = self.transport.request("POST", "/v1/items/" + route, body, wait)
         if status == 409:
             raise Conflict(payload.get("detail", "conflict"), payload.get("path"),
                            payload.get("expected"), payload.get("found"))
@@ -435,15 +443,19 @@ class EngineUDS:
         return [Link(k["from"], k["kind"], k["to"], k["origin"], k.get("model"), k.get("at"),
                      float(k.get("weight", 1.0))) for k in found["links"]]
 
-    def search(self, caller: Caller, query: Query, *, budget_ms: Optional[int] = None) -> list[Hit]:
+    def search(self, caller: Caller, query: Query) -> list[Hit]:
         """One hit per item, from every index the query names: meaning (the
         whole-item vectors, the section vectors saying where), words and an
         exact phrase (full text), field values (data) and links (graph),
-        through the caller's rights."""
-        return list(self.search_page(caller, query, budget_ms=budget_ms)["hits"])
+        through the caller's rights. It runs to the end, waited for with no
+        deadline (construction-drafts "Knowledge search: no deadline that
+        drops results")."""
+        return list(self.search_page(caller, query)["hits"])
 
-    def search_page(self, caller: Caller, query: Query, *, budget_ms: Optional[int] = None) -> dict:
-        """`search` with whether the answer is partial and why."""
+    def search_page(self, caller: Caller, query: Query, cancel=None) -> dict:
+        """`search` with whether the answer is partial and why. `cancel` (a
+        `knowledge_client.Cancel`) ends it when its caller no longer needs
+        it, the only way a search ends early."""
         body: dict = {"caller": caller.by(), "under": query.under, "limit": query.limit}
         for k in ("meaning", "phrase", "words", "linked_to"):
             if getattr(query, k):
@@ -452,9 +464,7 @@ class EngineUDS:
             body["where"] = [[k, "=", v] for k, v in query.where.items()]
         if query.types:
             body["types"] = list(query.types)
-        if budget_ms is not None:
-            body["budget_ms"] = budget_ms
-        found = self._call("search", body)[1]
+        found = self._call("search", body, NO_DEADLINE, cancel)[1]
         return {"hits": tuple(Hit(h["path"], float(h["score"]), tuple(h["sections"]), frozenset(h["matched_by"]))
                               for h in found["hits"]),
                 "partial": found.get("partial", False), "notes": tuple(found.get("notes") or ())}
