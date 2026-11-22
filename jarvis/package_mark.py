@@ -19,19 +19,23 @@ what is marked and only waits for it to be indexed. In order:
                       position. A prose file is not extracted: the design
                       names no facts for one, and its marks say so
                       (`NO_PROSE_FACTS`)
-  mark_prose          each prose file (evidence_structured.is_prose_file:
+  mark_prose          every prose file (evidence_structured.is_prose_file:
                       Tim's messages, the sender's reason and situation,
-                      docs, notes, PR descriptions) to MarkingSession (tier
-                      3), in batches small enough to be answered whole,
-                      each given the whole file: split into sentences and
-                      parts by program (text_parts), every part scored
-                      against the 28 labels (briefing_labels); with Tim's
-                      material and its knowledge states, for the labels
-                      that depend on him
-  relate_to_questions every fact and marked part of a file to
-                      ClassificationSession (tier 3), one call a file, scored
-                      against each of the handoff's questions, plus
-                      background; given without knowledge states
+                      docs, notes, PR descriptions), each in full, to
+                      MarkingSession (tier 3): split into sentences and parts
+                      by program (text_parts), every part scored against the
+                      28 labels (briefing_labels); with Tim's material and
+                      its knowledge states, for the labels that depend on
+                      him. The files are grouped so similar ones share pages
+                      (`grouped`: the same type, the same folder, close in
+                      meaning), packed into pages that fit the model and
+                      asked in parallel (pages.py, Mark rebuilt for speed,
+                      Tim 2026-11-21)
+  relate_to_questions every fact and marked part, in the same order, to
+                      ClassificationSession (tier 3), packed and asked the
+                      same way, scored against each of the handoff's
+                      questions, plus background; given without knowledge
+                      states
 
 What it read is kept beside the evidence, one file for each stored file,
 `mark/<stored file>.json` (its type, facts, marked parts and their scores
@@ -205,16 +209,6 @@ def extract_prose(doc: dict, files: list[FileMarks]) -> None:
                    confidence=value["confidence"], context=value["context"])
 
 
-def tims_material(file: FileMarks, files: list[FileMarks], rows: list[Row]):
-    """What the MarkingSession is told of Tim for one file: the file itself
-    with its knowledge state; every other item he knows or had access to,
-    whole, with its state; and every item he probably does not know named
-    by its source and state, without its words (he does not have them)."""
-    from jarvis import sessions
-    return ([sessions.Known(file.view.text, file.row.knowledge_state, file.stored)]
-            + tim_known(rows, {f.stored: f.text for f in files}, skip=file.stored))
-
-
 def tim_known(rows: list[Row], texts: dict[str, str], skip: str = ""):
     """Tim's material as the MarkingSession is told it: each stored item he
     knows or had access to, whole, with its state; each he probably does not
@@ -232,21 +226,32 @@ def tim_known(rows: list[Row], texts: dict[str, str], skip: str = ""):
     return out
 
 
+def grouped(files: list[FileMarks]) -> list[FileMarks]:
+    """The files in the order they are marked and scored, so similar ones
+    share pages: the same type, then the same folder, then close in meaning
+    (pages.grouped)."""
+    from jarvis import pages
+    return pages.grouped(files, kind=lambda f: f.row.file_type or "",
+                         folder=lambda f: str(Path(f.stored).parent),
+                         text=lambda f: f.view.text or f.text, name=lambda f: f.stored)
+
+
 def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row]) -> None:
-    """Each prose file to MarkingSession, in batches each given the whole
-    file, every part scored against every one of the 28 labels; each
-    part's position read back into the file."""
-    from jarvis import package_jobs
+    """Every prose file, in full, to MarkingSession at once, every part
+    scored against every one of the 28 labels; each part's position read
+    back into the file."""
+    from jarvis import package_jobs, sessions
+    prose = [f for f in files if f.view.text and f.prose_file]
+    if not prose:
+        return
     session = MARKING(doc)
-    labels = briefing_labels.for_marking()
-    for f in files:
-        prose = f.view.text
-        if not prose or not f.prose_file:
-            continue
-        marked = package_jobs.asked(STEP, "marking", f"JARVIS asked marking to mark {f.stored}.",
-                                    session.mark(prose, labels, tims_material(f, files, rows),
-                                                 None))
-        for part in marked:     # a part is text_parts' cut of the prose: never all separator
+    marked = package_jobs.asked(
+        STEP, "marking", f"JARVIS asked marking to mark {len(prose)} prose file(s).",
+        session.mark_files([sessions.Text(f.stored, f.view.text, f.row.file_type or "")
+                            for f in prose], briefing_labels.for_marking(),
+                           tim_known(rows, {f.stored: f.text for f in files}), None))
+    for f in prose:
+        for part in marked[f.stored]:   # a part is text_parts' cut of the prose: never all separator
             f.parts.append({**part, "position": f.position(part["position"]["start"],
                                                            part["position"]["end"])})
 
@@ -258,9 +263,10 @@ def _source(f: FileMarks, position: dict) -> str:
 
 def _items(f: FileMarks):
     from jarvis import sessions
-    out = [sessions.Item(x["id"], x["value"], f"{_source(f, x['position'])}, {x['field']}")
-           for x in f.facts]
-    out += [sessions.Item(p["id"], p["segment"], _source(f, p["position"])) for p in f.parts]
+    out = [sessions.Item(x["id"], x["value"], f"{_source(f, x['position'])}, {x['field']}",
+                         f.stored) for x in f.facts]
+    out += [sessions.Item(p["id"], p["segment"], _source(f, p["position"]), f.stored)
+            for p in f.parts]
     return out
 
 
@@ -271,20 +277,23 @@ def questions_of(doc: dict):
 
 
 def relate_to_questions(doc: dict, files: list[FileMarks]) -> None:
-    """Every fact and marked part of each file to ClassificationSession, one
-    call a file, scored against each of the handoff's questions, plus
-    background."""
+    """Every fact and marked part of every file to ClassificationSession at
+    once, in the files' order, scored against each of the handoff's
+    questions, plus background."""
     from jarvis import package_jobs
-    session = CLASSIFICATION(doc)
-    classes = questions_of(doc)
-    for f in files:
-        items = _items(f)
-        if not items:
-            continue
-        f.questions = package_jobs.asked(
-            STEP, "classification",
-            f"JARVIS asked classification to score the facts and parts of {f.stored} against "
-            f"the handoff's questions.", session.classify(items, classes, None))
+    by_file = [(f, _items(f)) for f in files]
+    items = [i for _, found in by_file for i in found]
+    if not items:
+        return
+    scored = package_jobs.asked(
+        STEP, "classification",
+        f"JARVIS asked classification to score the facts and parts of {len(files)} file(s) "
+        f"against the handoff's questions.",
+        CLASSIFICATION(doc).classify(items, questions_of(doc), None))
+    at = 0
+    for f, found in by_file:
+        f.questions = scored[at:at + len(found)]
+        at += len(found)
 
 
 # ── the step ──────────────────────────────────────────────────────────────
@@ -333,7 +342,7 @@ def mark(doc: dict) -> None:
     if folder.exists():                     # a run that stopped part way: marked again
         shutil.rmtree(folder)
     rows = pe.read_manifest(place)
-    files = type_files(place, rows)
+    files = grouped(type_files(place, rows))
     read_structured(files)
     extract_prose(doc, files)
     mark_prose(doc, files, rows)

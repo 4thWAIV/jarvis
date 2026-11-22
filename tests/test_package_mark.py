@@ -11,8 +11,9 @@ import re
 
 import pytest
 
-from jarvis import (briefing_labels, evidence_structured as es, package_evidence as pe,
-                    package_gather, package_jobs as pj, package_mark, records, sessions)
+from jarvis import (briefing_labels, evidence_structured as es, model_tiers,
+                    package_evidence as pe, package_gather, package_jobs as pj, package_mark,
+                    records, sessions)
 from jarvis.knowledge.uds import Caller, Query, Stream
 from tests.test_package_gather import (FakeRetrieval, _evidence, _job, _work, checkout,  # noqa: F401
                                        gh, indexing, transcript)
@@ -36,7 +37,22 @@ class Roles:
         outer = self
 
         class Session:
+            pick = model_tiers.Pick("claude", "sonnet", 3, "test", ["sonnet"])
+            last_turn = None
+
             async def once(self, text, timeout):
+                return await self.ask(text, timeout)
+
+            async def open(self):
+                pass
+
+            async def fresh(self):
+                pass
+
+            async def close(self):
+                pass
+
+            async def ask(self, text, timeout, answer_format=None, strict=True):
                 outer.given.setdefault(role, []).append({"prompt": prompt, "text": text,
                                                          **kwargs})
                 answer = getattr(outer, role)(text)
@@ -60,16 +76,15 @@ class Roles:
 
     @staticmethod
     def marking(text):
-        labels = _ids(text, "label")
-        return {"scores": [{"id": i, "scores": {n: (0.8 if n == "evidence" else 0.0)
-                                                for n in labels}}
-                           for i in _ids(text, "part")]}
+        return {"parts": [{"id": i, "labels": [{"label": "evidence", "score": 0.8}]}
+                          for i in _ids(text, "part")]}
 
     @staticmethod
     def classification(text):
         questions = _ids(text, "question") + ["background"]
-        return {"scores": [{"item": i, "scores": {q: 0.5 for q in questions}}
-                           for i in _ids(text, "item")]}
+        return {"items": [{"id": i, "questions": [{"question": q, "score": 0.5}
+                                                  for q in questions]}
+                          for i in _ids(text, "item")]}
 
 
 @pytest.fixture
@@ -146,20 +161,24 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
         assert by_file[stored]["extraction"] == package_mark.NO_PROSE_FACTS
         assert not [f for f in by_file[stored]["facts"] if f["by"] == "extraction"]
 
-    # mark_prose: in batches small enough to be answered whole (sessions.yaml
-    # MarkingSession batches); every part scored against all 28 labels;
-    # each part's segment is the file's own characters at its position.
+    # mark_prose: every prose file in full, packed into pages that fit the
+    # model (Mark rebuilt for speed); every part scored against all 28
+    # labels, the sparse answer's left-out labels 0; each part's segment is
+    # the file's own characters at its position.
     situation = by_file["files/situation.md"]["parts"]
     assert situation and all(set(p["scores"]) == set(briefing_labels.NAMES) for p in situation)
+    assert all(p["scores"]["evidence"] == 0.8 and p["scores"]["filler"] == 0.0
+               for p in situation)
     for p in situation:
         assert text_of("files/situation.md")[p["position"]["start"]:p["position"]["end"]] \
             == p["segment"]
     # Only prose files are marked: Tim's record, the sender's words, docs,
     # a PR's description; never the prose parts of a log or a transcript.
     marked_files = [g["text"] for g in roles.given["marking"]]
-    assert len(marked_files) > sum(1 for m in by_file.values() if m["parts"]), \
-        "a long file goes in more than one batch"
-    assert all(g.count("<part ") <= sessions.BATCH_PARTS for g in marked_files)
+    prose_files = sum(1 for m in by_file.values() if m["parts"])
+    assert len(marked_files) < prose_files, "several files to a page"
+    assert sum(g.count("<file name=") for g in marked_files) >= prose_files
+    assert len(roles.given["classification"]) == 1, "every file's items on one page"
     assert {s for s, m in by_file.items() if m["parts"]} == \
         {s for s, m in by_file.items() if m["prose_file"]} >= {
             "files/situation.md", "jarvis/tim.md", "handoff.json", "retrieved/pr-171.md"}
@@ -216,7 +235,7 @@ def test_marked_once_and_every_run_reuses_it(tmp_path, gh, checkout, transcript,
 def test_a_session_that_cannot_answer_puts_the_run_in_error(tmp_path, gh, checkout,  # noqa: F811
                                                             transcript, monkeypatch, roles):
     doc = _gathered(tmp_path, checkout, monkeypatch)
-    monkeypatch.setattr(Roles, "marking", staticmethod(lambda text: {"scores": []}))
+    monkeypatch.setattr(Roles, "marking", staticmethod(lambda text: {"parts": []}))
     with pytest.raises(pj.Blocked) as blocked:
         package_mark.mark(pj.get(doc["id"]))
     assert blocked.value.step == "mark"

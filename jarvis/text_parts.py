@@ -45,6 +45,11 @@ class Segment:
     within: Optional[str]       # the sentence a phrase belongs to
 
 
+def is_heading(text: str) -> bool:
+    """Whether a sentence is a heading: a section of its own starts there."""
+    return bool(_HEADING.match(text))
+
+
 def _trimmed(text: str, start: int, end: int) -> Optional[tuple[int, int]]:
     while start < end and text[start].isspace():
         start += 1

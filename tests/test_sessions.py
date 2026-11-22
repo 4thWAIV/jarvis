@@ -5,6 +5,7 @@ sessions' inputs and outputs, with the model faked at the session.
 """
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -726,9 +727,29 @@ class _Once:
         self.seen.append({"role": role, "prompt": prompt, **kwargs})
         outer = self
 
+        seen = outer.seen[-1]
+
         class Session:
+            pick = model_tiers.Pick("claude", "sonnet", 3, "test", ["sonnet"])
+            last_turn = None
+
             async def once(self, text, timeout):
-                outer.seen[-1]["text"] = text
+                return await self.ask(text, timeout)
+
+            async def open(self):
+                pass
+
+            async def fresh(self):
+                pass
+
+            async def close(self):
+                pass
+
+            async def ask(self, text, timeout, answer_format=None, strict=True):
+                if "text" in seen:
+                    outer.seen.append({**seen, "text": text})
+                else:
+                    seen["text"] = text
                 answer = outer.answer(text) if callable(outer.answer) else outer.answer
                 return sessions.Reply(json.dumps(answer), answer)
         return Session()
@@ -759,7 +780,10 @@ async def test_marking_scores_every_part_against_every_label(monkeypatch, tmp_pa
     labels = [sessions.Label("background", "Why it matters.", "an example"),
               sessions.Label("filler", "Words that say nothing.")]
     ids = [s.id for s in text_parts.split(text)]
-    once = _Once({"scores": [{"id": i, "scores": {"background": 0.5, "filler": 0}} for i in ids]})
+    # The answer is sparse (Mark rebuilt for speed, Tim 2026-11-21): each
+    # part with only the labels that apply; one left out is 0.
+    once = _Once({"parts": [{"id": f"1:{i}", "labels": [{"label": "background", "score": 0.5}]}
+                            for i in ids]})
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     marked = await sessions.BrainMarkingSession(tmp_path).mark(
         text, labels, [sessions.Known("He said fix it.", "knows")], 5)
@@ -769,9 +793,15 @@ async def test_marking_scores_every_part_against_every_label(monkeypatch, tmp_pa
                          "scores": {"background": 0.5, "filler": 0.0}}
     sent = once.seen[0]["text"]
     assert '<material state="knows">He said fix it.</material>' in sent
-    once.answer = {"scores": [{"id": "s1", "scores": {"background": 1, "filler": 0}}]}
-    with pytest.raises(sessions.SessionFailed):
-        await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
+    form = once.seen[0]["answer_format"]["properties"]["parts"]["items"]["properties"]
+    assert form["labels"]["items"]["properties"]["label"]["enum"] == ["background", "filler"]
+    for wrong in ({"parts": [{"id": "1:s1", "labels": []}]},                      # parts missing
+                  {"parts": [{"id": f"1:{i}", "labels": []} for i in ids + ["9:s1"]]},
+                  {"parts": [{"id": f"1:{i}", "labels": [{"label": "made-up", "score": 1}]}
+                             for i in ids]}):
+        once.answer = wrong
+        with pytest.raises(sessions.SessionFailed):
+            await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
 
 
 def _script(title="It broke.", narration="It broke on Tuesday.", words="", question="q1"):
@@ -787,51 +817,131 @@ def _script(title="It broke.", narration="It broke on Tuesday.", words="", quest
 
 
 def _scores_for(text, names=("background", "filler")):
-    """A marking answer scoring exactly the parts a call was given."""
+    """A sparse marking answer for exactly the parts a call was given, the
+    first label on each."""
     import re as _re
-    ids = _re.findall(r'<part id="([^"]+)"', text)
-    return {"scores": [{"id": i, "scores": {n: 0.1 for n in names}} for i in ids]}
+    return {"parts": [{"id": i, "labels": [{"label": names[0], "score": 0.1}]}
+                      for i in _re.findall(r'<part id="([^"]+)"', text)]}
+
+
+def _small_window(monkeypatch, answer_most):
+    """A Claude model whose answer is at most `answer_most` tokens, so the
+    pages are small enough to see."""
+    monkeypatch.setitem(model_tiers.ANSWER_MOST, "claude", answer_most)
 
 
 @pytest.mark.asyncio
-async def test_marking_goes_in_batches_of_whole_sentences_each_given_the_whole_file(
-        monkeypatch, tmp_path):
-    # sessions.yaml MarkingSession batches (Tim 2026-11-20): one call per
-    # file failed on real models; each batch is given the whole file and
-    # scores only its own parts, every part against every label.
-    monkeypatch.setattr(sessions, "BATCH_PARTS", 4)
-    text = " ".join(f"Part {n} broke, so we fixed it." for n in range(1, 5))
+async def test_several_files_share_a_page_each_given_whole(monkeypatch, tmp_path):
     labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
+    texts = [sessions.Text("files/a.md", "Alpha broke. We fixed it."),
+             sessions.Text("files/b.md", "Beta broke, so we fixed it too.")]
     once = _Once(_scores_for)
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
-    marked = await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
-    assert [m["id"] for m in marked] == [s.id for s in text_parts.split(text)]
-    assert len(once.seen) == 4, "three parts a sentence, at most four parts a batch"
-    for call in once.seen:
-        assert f"<text>{text}</text>" in call["text"], "each batch is given the whole file"
-        assert call["text"].count("<part ") == 3
-    once.seen.clear()
-    await sessions.BrainMarkingSession(tmp_path).mark(
-        text, labels, [sessions.Known(text, sessions.KNOWS, "notes.md")], 5)
-    assert "<text>" not in once.seen[0]["text"], "given once, among Tim's material"
+    marked = await sessions.BrainMarkingSession(tmp_path).mark_files(
+        texts, labels, [sessions.Known("Alpha broke. We fixed it.", sessions.KNOWS,
+                                       "files/a.md")], 5)
+    assert len(once.seen) == 1, "both files on one page"
+    page = once.seen[0]["text"]
+    assert '<file name="files/a.md">\n<text>Alpha broke. We fixed it.</text>' in page
+    assert '<file name="files/b.md">\n<text>Beta broke, so we fixed it too.</text>' in page
+    assert '<material state="knows" source="files/a.md"></material>' in page, \
+        "a file on the page is given once: Tim's material names it by its state"
+    assert [p["id"] for p in marked["files/b.md"]] == [
+        s.id for s in text_parts.split(texts[1].text)]
+    assert marked["files/a.md"][0]["scores"] == {"background": 0.1, "filler": 0.0}
 
 
 @pytest.mark.asyncio
-async def test_a_batch_not_answered_whole_is_halved_and_asked_again(monkeypatch, tmp_path):
-    monkeypatch.setattr(sessions, "BATCH_PARTS", 40)
+async def test_a_long_file_is_split_across_pages_at_its_section_breaks(monkeypatch, tmp_path):
+    labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
+    body = " ".join(f"Point {n} holds." for n in range(1, 9))
+    text = f"# One\n\n{body}\n\n# Two\n\n{body}\n\n# Three\n\n{body}\n"
+    once = _Once(_scores_for)
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
+    _small_window(monkeypatch, 700)
+    marked = await sessions.BrainMarkingSession(tmp_path).mark_files(
+        [sessions.Text("files/long.md", text)], labels, [], 5)
+    assert len(once.seen) > 1, "too long for one page"
+    assert [p["id"] for p in marked["files/long.md"]] == [s.id for s in text_parts.split(text)]
+    pieces = [re.findall(r'<part id="1:(s\d+)"[^>]*>([^<]*)</part>', c["text"])
+              for c in once.seen]
+    starts = [p[0][1] for p in pieces]
+    assert all(s.startswith("# ") for s in starts[1:]), \
+        f"each piece after the first starts at a heading: {starts}"
+    for call in once.seen:
+        assert f"<text>{text}</text>" in call["text"], "each piece given with its whole file"
+    for p in marked["files/long.md"]:
+        assert text[p["position"]["start"]:p["position"]["end"]] == p["segment"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_not_answered_is_asked_again_once_then_halved(monkeypatch, tmp_path):
     text = "One broke. Two broke. Three broke. Four broke."
     labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
 
     def answer(sent):
         found = _scores_for(sent)
-        return found if len(found["scores"]) <= 2 else {"scores": found["scores"][:1]}
+        return found if len(found["parts"]) <= 2 else {"parts": found["parts"][:1]}
     once = _Once(answer)
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
-    marked = await sessions.BrainMarkingSession(tmp_path).mark(text, labels, [], 5)
-    assert len(marked) == 4 and [c["text"].count("<part ") for c in once.seen] == [4, 2, 2]
-    once.answer = {"scores": []}
+    session = sessions.BrainMarkingSession(tmp_path)
+    marked = await session.mark(text, labels, [], 5)
+    assert len(marked) == 4 and sorted(c["text"].count("<part ") for c in once.seen) == \
+        [2, 2, 4, 4], "asked, asked again, then each half"
+    summary = session.paged.reports[-1].summary()
+    assert (summary["pages"], summary["calls"], summary["asked_again"], summary["halved"]) == \
+        (1, 4, 1, 1)
+    once.answer = {"parts": []}
     with pytest.raises(sessions.SessionFailed):
         await sessions.BrainMarkingSession(tmp_path).mark("One broke.", labels, [], 5)
+
+
+@pytest.mark.asyncio
+async def test_pages_are_asked_in_parallel_each_worker_keeping_its_session(monkeypatch,
+                                                                         tmp_path):
+    labels = [sessions.Label("background", "Why."), sessions.Label("filler", "Nothing.")]
+    texts = [sessions.Text(f"files/{n}.md", f"File {n} broke, so we fixed it.")
+             for n in range(8)]
+    made, live, most = [], [0], [0]
+
+    class Session:
+        pick = model_tiers.Pick("claude", "sonnet", 3, "test", ["sonnet"])
+        last_turn = None
+
+        def __init__(self):
+            self.opened, self.fresh_calls, self.asked = 0, 0, 0
+
+        async def open(self):
+            self.opened += 1
+
+        async def fresh(self):
+            self.fresh_calls += 1
+
+        async def close(self):
+            pass
+
+        async def ask(self, text, timeout, answer_format=None, strict=True):
+            live[0] += 1
+            most[0] = max(most[0], live[0])
+            await asyncio.sleep(0.02)
+            live[0] -= 1
+            self.asked += 1
+            answer = _scores_for(text)
+            return sessions.Reply(json.dumps(answer), answer)
+
+    def for_role(role, prompt, folder, **kwargs):
+        made.append(Session())
+        return made[-1]
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", for_role)
+    _small_window(monkeypatch, 150)
+    marked = await sessions.BrainMarkingSession(tmp_path).mark_files(texts, labels, [], 5)
+    assert len(marked) == 8
+    asked = sum(s.asked for s in made)
+    assert asked == 8, "one page a file at this window"
+    assert len(made) == model_tiers.PARALLEL["claude"] == most[0], \
+        "the brain's own number at once, one session each"
+    assert all(s.opened == 1 and s.fresh_calls == s.asked - 1 for s in made), \
+        "each opened once, a new conversation for each page after its first"
 
 
 @pytest.mark.asyncio
@@ -847,25 +957,40 @@ async def test_a_script_is_marked_slide_by_slide_with_the_whole_script(monkeypat
     whole = package_script.dump(script)
     marked = await sessions.BrainMarkingSession(tmp_path).mark_slides(units, whole, labels, [],
                                                                       5)
-    assert len(once.seen) == 2, "one batch a slide: no batch holds two slides' words"
-    assert all(f"<text>{whole}</text>" in c["text"] for c in once.seen)
-    assert "second" not in once.seen[0]["text"].split("</text>")[1]
+    assert len(once.seen) == 1, "a small script is one page"
+    page = once.seen[0]["text"]
+    assert page.startswith(f"<text>{whole}</text>")
+    assert '<slide id="opening">' in page and '<slide id="second">' in page
     words = next(m for m in marked if m["segment"] == "Fix the store.")
     assert words["slide"] == "opening" and words["field"] == "on_screen[1].text"
     assert words["id"] == "opening/on_screen[1].text/s1" and words["position"] == {
         "start": 0, "end": 14}
+    assert words["scores"] == {"background": 0.1, "filler": 0.0}
+    _small_window(monkeypatch, 200)
+    once.seen.clear()
+    await sessions.BrainMarkingSession(tmp_path).mark_slides(units, whole, labels, [], 5)
+    assert len(once.seen) == 2 and all(c["text"].startswith(f"<text>{whole}</text>")
+                                       for c in once.seen), "every page given the script"
+    assert "second" not in once.seen[0]["text"].split("</text>", 1)[1], \
+        "no page holds part of two slides"
 
 
 @pytest.mark.asyncio
 async def test_classification_adds_background_and_takes_no_states(monkeypatch, tmp_path):
-    once = _Once({"scores": [{"item": "f1", "scores": {"q1": 0.9, "background": 0.1}}]})
+    once = _Once({"items": [{"id": "1", "questions": [{"question": "q1", "score": 0.9}]},
+                            {"id": "2", "questions": []}]})
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", once)
     out = await sessions.BrainClassificationSession(tmp_path).classify(
-        [sessions.Item("f1", "CI failed", "ci.log:3")], [sessions.ClassQuestion("q1", "Ship?")], 5)
-    assert out == [{"item": "f1", "scores": {"q1": 0.9, "background": 0.1}}]
+        [sessions.Item("f1", "CI failed", "ci.log:3", "ci.log"),
+         sessions.Item("f1", "It merged", "pr.md:1", "pr.md")],
+        [sessions.ClassQuestion("q1", "Ship?")], 5)
+    assert out == [{"item": "f1", "scores": {"q1": 0.9, "background": 0.0}},
+                   {"item": "f1", "scores": {"q1": 0.0, "background": 0.0}}], \
+        "two files' items on one page, each by its own id there"
     form = once.seen[0]["answer_format"]
-    scores = form["properties"]["scores"]["items"]["properties"]["scores"]
-    assert scores["required"] == ["q1", "background"]
+    entry = form["properties"]["items"]["items"]["properties"]["questions"]["items"]
+    assert entry["properties"]["question"]["enum"] == ["q1", "background"]
+    assert "state=" not in once.seen[0]["text"]
 
 
 @pytest.mark.asyncio
@@ -1177,3 +1302,30 @@ async def test_a_turn_that_fails_leaves_its_first_message_and_the_others_words_t
     assert swarm.saved()["seen"]["structure_owner"] == 0 and swarm.saved()["introduced"] == []
     again = swarm._new_for("structure_owner")
     assert again.startswith("What Tim knows.") and again.endswith("author:\nThe script.")
+
+
+@pytest.mark.asyncio
+async def test_codex_keeps_one_app_server_across_a_role_s_pages(tmp_path, codex_log,
+                                                                monkeypatch):
+    # Mark rebuilt for speed (Tim 2026-11-21): one session reused across a
+    # role's pages where the brain allows: on Codex a new thread on the same
+    # app server, not a new app server a call.
+    from tests.settings_fixtures import hold_setting
+    hold_setting("codex_path", f"{sys.executable} {FAKE_CODEX}")
+    monkeypatch.setenv("FAKE_CODEX_ANSWER", json.dumps({"answer": "yes"}))
+    pick = model_tiers.Pick("codex", "gpt-6-luna", 4, "fixed", ["gpt-6-luna"])
+    form = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    chat = sessions.BrainChatSession("marking", "THE ROLE", tmp_path, pick=pick,
+                                     answer_format=form)
+    await chat.open()
+    first = (await chat.ask("page one", 20)).answer
+    thread = chat.session
+    await chat.fresh()
+    second = (await chat.ask("page two", 20)).answer
+    await chat.close()
+    assert first == second == {"answer": "yes"} and chat.session != thread
+    log = codex_log()
+    assert sum(1 for e in log if "argv" in e and "app-server" in e["argv"]) == 1
+    threads = [e["thread"] for e in log if "thread" in e]
+    assert len(threads) == 2 and threads[0] == threads[1], "each page's thread started alike"
+    assert [e["turn"]["threadId"] for e in log if "turn" in e] == ["thread-1", "thread-2"]

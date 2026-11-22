@@ -165,3 +165,59 @@ def pick(kind: str, tier: int, *, requester: Optional[str] = None,
         raise NoModel(f"no {chosen} model in tier {tier} or the next one up is available "
                       f"(listed: {', '.join(available) or 'none'})")
     return Pick(chosen, tried[0], tier, why, tried)
+
+
+# ── how much a model takes and gives in one turn ──────────────────────────
+
+# Each family's context window and the most it answers in one turn, in
+# tokens, where its brain's own model list does not say (Mark rebuilt for
+# speed, Tim 2026-11-21: a page fits the model's window with the
+# instructions, room for the answer and room to spare). Codex's list
+# (`models_cache.json` in JARVIS's Codex home) gives each model's window;
+# neither brain lists what a model answers at most, so that is here for
+# both, on the low side.
+WINDOW: dict[str, dict[str, int]] = {
+    "claude": {"fable": 200_000, "opus": 200_000, "sonnet": 200_000, "haiku": 200_000},
+    "codex": {"astra": 272_000, "sol": 272_000, "terra": 272_000, "luna": 272_000},
+}
+ANSWER_MOST: dict[str, int] = {"claude": 32_000, "codex": 100_000}
+
+# How many of a role's calls each brain is given at once: the three a
+# managed run is held to (run_executor's permits), for each brain.
+PARALLEL: dict[str, int] = {"claude": 3, "codex": 3}
+
+
+def _listed_window(model: str) -> Optional[int]:
+    """The model's usable window as Codex's own model list gives it (its
+    window times the share Codex lets a turn use), or None when the list
+    does not name it."""
+    import json
+    from jarvis import data_paths
+    try:
+        listed = json.loads((data_paths.codex_home() / "models_cache.json").read_text())
+    except (OSError, ValueError):
+        return None
+    for entry in listed.get("models") or [] if isinstance(listed, dict) else []:
+        if isinstance(entry, dict) and entry.get("slug") == model:
+            window = entry.get("context_window")
+            share = entry.get("effective_context_window_percent") or 100
+            if isinstance(window, int) and window > 0:
+                return window * int(share) // 100
+    return None
+
+
+def context_window(engine: str, model: str) -> int:
+    """A model's context window in tokens: its brain's own list where it
+    gives one (Codex), else its family's in `WINDOW`."""
+    if engine == "codex":
+        found = _listed_window(model)
+        if found:
+            return found
+    family = model if engine == "claude" else (_codex_family(model) or "")
+    table = WINDOW[engine]
+    return table.get(family, min(table.values()))
+
+
+def answer_most(engine: str) -> int:
+    """The most a model of this brain answers in one turn, in tokens."""
+    return ANSWER_MOST[engine]

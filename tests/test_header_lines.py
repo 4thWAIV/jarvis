@@ -3372,6 +3372,22 @@ class _Role:
     async def ask(self, text, timeout, answer_format=None, strict=True):
         return await self.once(text, timeout)
 
+    @property
+    def pick(self):
+        from jarvis import model_tiers
+        return model_tiers.Pick("claude", "sonnet", 3, "test", ["sonnet"])
+
+    last_turn = None
+
+    async def open(self):
+        pass
+
+    async def fresh(self):
+        pass
+
+    async def close(self):
+        pass
+
 
 def _drive_share(monkeypatch, tmp_path):
     from jarvis import sessions
@@ -3401,13 +3417,25 @@ def _drive_marked_parts(monkeypatch, tmp_path):
 
 def _drive_mark(monkeypatch, tmp_path):
     from jarvis import sessions
-    role = _Role({"scores": []})
+    role = _Role({"parts": []})
     monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
     with pytest.raises(sessions.SessionFailed):
         asyncio.run(sessions.BrainMarkingSession(tmp_path).mark(
             HOSTILE, [sessions.Label("plain", HOSTILE, HOSTILE)],
             [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)], 1.0))
     return role.given
+
+
+def _drive_mark_and_classify(monkeypatch, tmp_path):
+    from jarvis import sessions
+    given = _drive_mark(monkeypatch, tmp_path)
+    role = _Role({"items": []})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
+    with pytest.raises(sessions.SessionFailed):
+        asyncio.run(sessions.BrainClassificationSession(tmp_path).classify(
+            [sessions.Item(HOSTILE, HOSTILE, HOSTILE, HOSTILE)],
+            [sessions.ClassQuestion(HOSTILE, HOSTILE)], 1.0))
+    return given + role.given
 
 
 def _drive_resolve(monkeypatch, tmp_path):
@@ -3445,7 +3473,9 @@ ROLE_PROMPT_DRIVERS = {
     "sessions._material": _drive_material,
     "sessions.marked_parts": _drive_marked_parts,
     "sessions.mark": _drive_mark,
-    "sessions._score": _drive_mark,
+    "sessions._marked": _drive_mark,
+    "sessions.values": _drive_mark_and_classify,
+    "sessions._check_sparse": _drive_mark,
     "sessions.resolve": _drive_resolve,
 }
 

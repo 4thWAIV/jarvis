@@ -455,6 +455,7 @@ class CodexSession:
         self.turn_usage: Optional[dict] = None
         self._reply: Optional[str] = None
         self.disabled: list[str] = []
+        self._role_thread: Optional[dict] = None  # how a role's new thread is started
         # When it last wrote a line (time.monotonic()): what a role
         # session's idle bound is measured from (sessions.BrainChatSession).
         self.heard_at = time.monotonic()
@@ -587,9 +588,9 @@ class CodexSession:
                                                              **settings},
                                            timeout=self.config.warmup_timeout)
             else:
-                started = await self._call(
-                    "thread/start", {**settings, "ephemeral": role.lifetime == roles.ONE_SHOT},
-                    timeout=self.config.warmup_timeout)
+                self._role_thread = {**settings, "ephemeral": role.lifetime == roles.ONE_SHOT}
+                started = await self._call("thread/start", self._role_thread,
+                                           timeout=self.config.warmup_timeout)
             status = await self._thread_started(started)
         except (asyncio.TimeoutError, RuntimeError, OSError) as e:
             self.kill()
@@ -597,6 +598,24 @@ class CodexSession:
         self._note_started(started, status, [])
         log.info("codex: %s thread %s, %d features switched off",
                  role.name, self.thread_id, len(self.disabled))
+
+    async def new_thread(self) -> None:
+        """A new conversation for a role on the same app server: a thread
+        started as its first was, so the next item is asked with nothing of
+        the last (Mark rebuilt for speed, Tim 2026-11-21: one session
+        reused across a role's pages, not a new app server a call). Only a
+        role's own new thread; raises OSError otherwise or when it fails."""
+        if self._role_thread is None or not self.alive:
+            raise OSError("only a running role's session starts a new thread")
+        try:
+            started = await self._call("thread/start", self._role_thread,
+                                       timeout=self.config.warmup_timeout)
+            status = await self._thread_started(started)
+        except (asyncio.TimeoutError, RuntimeError) as e:
+            raise OSError(f"codex app-server did not start a new thread: {e}") from e
+        self._total_usage, self._turn_from, self._last_usage = {}, {}, {}
+        self._rollout_read = 0
+        self._note_started(started, status, [])
 
     async def send(self, text: str, answer_format: Optional[dict] = None) -> None:
         if not self.alive or not self.thread_id:

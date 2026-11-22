@@ -14,6 +14,7 @@ import sys
 WARMUP = "(system) Warm-up. Reply with exactly: OK"
 RESUMED = False     # thread/resume was asked for, not thread/start
 TURN: dict = {}     # the turn/start being answered
+THREADS = 0         # the threads started on this app server
 
 
 def log(**entry):
@@ -80,8 +81,11 @@ def app_server():
         if method == "initialize":
             out({"id": rid, "result": {}})
         elif method == "thread/start":
+            global THREADS
+            THREADS += 1
             log(thread=params)
-            out({"id": rid, "result": {"thread": {"id": "thread-1"}, "model": params.get("model")}})
+            out({"id": rid, "result": {"thread": {"id": f"thread-{THREADS}"},
+                                       "model": params.get("model")}})
         elif method == "thread/resume":
             # The same thread goes on (a package author answered by its sender).
             global RESUMED
