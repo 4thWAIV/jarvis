@@ -9,6 +9,7 @@
                                   [--document ID --revision REV]...
     python -m jarvis.make_package --status JOB --session ID
     python -m jarvis.make_package --answer JOB --reply ID=TEXT [--reply ID=TEXT ...] --session ID
+    python -m jarvis.make_package --rerun JOB --session ID
     python -m jarvis.make_package --withdraw INBOX_ID --session ID
 
 `--start` asks JARVIS for the package (package_request.py): the handoff is
@@ -18,7 +19,10 @@ the job with its run (package_jobs.py), and runs it itself; the job, the
 package and the run come back at once. `--status` follows it, and when the
 run has asked its sender questions (waiting_on_sender) `--answer` gives the
 answers and the run goes on. A run that cannot go on is in Error: `--status`
-says the step, why, what was tried and what would fix it.
+says the step, why, what was tried and what would fix it. `--rerun` asks for
+the package again after a run that ended in Error or failed, with no new
+answers: the next run goes on from the step that failed, reusing everything
+that run kept (package_resume).
 
 docs/making-a-package.md is the whole of how to use it. In short:
 
@@ -649,7 +653,7 @@ def withdraw(inbox_id: str, session: str, base: str = dp.LIVE) -> int:
 
 
 def _job_command(parser, args) -> int:
-    """--start, --status and --answer: the sender's calls to JARVIS
+    """--start, --status, --answer and --rerun: the sender's calls to JARVIS
     (package_request.py), signed with the session's own key, as the agent
     MCP server's tools make them, printed as JSON."""
     from jarvis import package_request
@@ -659,6 +663,8 @@ def _job_command(parser, args) -> int:
     try:
         if args.status:
             result = package_request.status(args.status, session=session)
+        elif args.rerun:
+            result = package_request.rerun(args.rerun, session=session)
         elif args.answer:
             answers = {}
             for reply in args.reply:
@@ -740,13 +746,17 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--answer", metavar="JOB", default="",
                         help="answer a package job's questions with --reply ID=TEXT; the run "
                              "goes on")
+    parser.add_argument("--rerun", metavar="JOB", default="",
+                        help="ask for the package again after this run ended in Error or "
+                             "failed: the next run goes on from the step that failed, "
+                             "reusing what this run kept")
     parser.add_argument("--reply", action="append", default=[], metavar="ID=TEXT",
                         help="one answer to --answer's job, by the question's id")
     parser.add_argument("--deliver-to", default=dp.LIVE, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.withdraw:
         return withdraw(args.withdraw, args.session, args.deliver_to)
-    if args.status or args.answer or args.start:
+    if args.status or args.answer or args.rerun or args.start:
         return _job_command(parser, args)
     if len(args.document) != len(args.revision):
         parser.error("--document and --revision go together")

@@ -88,6 +88,7 @@ RIGHTS: dict[str, Right] = {
         "opening or running them.",
         (("POST", r"/api/packages/requests"), ("GET", r"/api/packages/requests/[^/]+"),
          ("POST", r"/api/packages/requests/[^/]+/answer"),
+         ("POST", r"/api/packages/requests/[^/]+/rerun"),
          ("POST", r"/api/packages/inbox"), ("POST", r"/api/packages/inbox/[^/]+/withdraw"),
          ("POST", r"/api/language-documents"),
          ("POST", r"/api/team/messages/[^/]+/files/[^/]+/(location|download)"),

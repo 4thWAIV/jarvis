@@ -35,9 +35,9 @@ JSON object of exactly these fields:
 `conclusion` and `audience` are refused (the sender's view is its labelled
 recommendation; the audience is always Tim), as is any structure for the
 briefing. `check` is the one reader, run by JARVIS as it accepts the
-request (package_jobs.accept); `start`, `status` and `answer` are the
-sender's calls, signed with its own key (make_package --start, --status
-and --answer, and the agent MCP server's package tools, call them).
+request (package_jobs.accept); `start`, `status`, `answer` and `rerun` are the
+sender's calls, signed with its own key (make_package --start, --status,
+--answer and --rerun, and the agent MCP server's package tools, call them).
 """
 from __future__ import annotations
 
@@ -310,3 +310,11 @@ def answer(job: str, answers: dict, *, session: str) -> dict:
     with _client(session) as client:
         return _answer(client.post(f"{ROUTE}/{urllib.parse.quote(job, safe='')}/answer",
                                    {"answers": answers}))
+
+
+def rerun(job: str, *, session: str) -> dict:
+    """Ask for the package again after the run `job` ended in Error or
+    failed, with no new answers: the next run goes on from the step that
+    failed, reusing what that run kept (package_resume). The new run's job."""
+    with _client(session) as client:
+        return _answer(client.post(f"{ROUTE}/{urllib.parse.quote(job, safe='')}/rerun", {}))

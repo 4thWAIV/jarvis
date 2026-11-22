@@ -296,7 +296,8 @@ def test_the_server_lists_every_tool_and_dispatches(monkeypatch):
     names = [t["name"] for t in listed["result"]["tools"]]
     assert set(RESEARCH) <= set(names)
     assert {"send_message", "work_piece", "workflow_event", "retrieve_attachment",
-            "language_document", "package_start", "package_status", "package_answer"} \
+            "language_document", "package_start", "package_status", "package_answer",
+            "package_rerun"} \
         <= set(names)
     assert len(names) == len(set(names))
     assert all("as_session" in t["inputSchema"]["properties"]

@@ -19,6 +19,12 @@ each calls the server's one function for it.
         job asked it; the run goes on. Its answer to its check of the
         finished package (`check`: approve, or what is wrong) delivers it,
         or starts a new run with its words
+  POST /api/packages/requests/{job}/rerun
+        the asking agent asks for its package again after this run ended in
+        Error or failed, with no new answers: the next run goes on from the
+        step that failed, reusing what this run kept (package_resume);
+        answers the new run's job. Refused (409) while a later run of the
+        package is still going, or when this run did neither
 """
 from __future__ import annotations
 
@@ -43,6 +49,7 @@ class Calls:
     accept: Callable[[str, str, bool, dict], dict]
     status: Callable[[str, str], dict]
     answer: Callable[[str, str, dict], Awaitable[dict]]
+    rerun: Callable[[str, str], dict]
 
 
 def _refused(why: str, status: int, problems=None) -> JSONResponse:
@@ -98,6 +105,16 @@ def mount(app: FastAPI, calls: Calls) -> None:
         except package_jobs.JobError as e:
             return _refused(str(e), 404 if "no package job" in str(e) else 409)
 
+    async def rerun(job: str, request: Request):
+        session = _session(request)
+        if not session:
+            return _refused(ONLY_AN_AGENT, 403)
+        try:
+            return await asyncio.to_thread(calls.rerun, session, job)
+        except package_jobs.JobError as e:
+            return _refused(str(e), 404 if "no package job" in str(e) else 409)
+
     app.add_api_route(ROUTE, report_keys.once(ask), methods=["POST"])
+    app.add_api_route(ROUTE + "/{job}/rerun", rerun, methods=["POST"])
     app.add_api_route(ROUTE + "/{job}", one, methods=["GET"])
     app.add_api_route(ROUTE + "/{job}/answer", answer, methods=["POST"])

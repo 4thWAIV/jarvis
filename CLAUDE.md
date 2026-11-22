@@ -1428,8 +1428,8 @@ briefing, and only the package workflow makes one, from a request (see
 author (`make_package --handoff` without `--start`) writes a hand-made
 folder (a working tool's page, an agent's brief, a conversation's skill)
 or an architecture document's explanation, and a deck it writes is refused
-(`package_author.BRIEFING_BY_REQUEST`). No package goes through a browser on its way to
-Tim: make_package builds the author's source once (no screenshot review),
+(`package_author.BRIEFING_BY_REQUEST`). make_package puts no package through a browser on its way to
+Tim: it builds the author's source once (no screenshot review),
 signs it with the session's key and delivers it unshown to his package
 inbox. Every unpack
 (`server._decision_problem`) refuses a deck (`deck-data.js` and
@@ -1438,7 +1438,9 @@ by an onboarded agent's key, and makes a carried proof again from the
 zip's own bytes (`presentation_proof.reprove`), opening none that does not
 prove; a deck from before, with no proof, is admitted on its signer's old
 statement that it passed the end-to-end check
-(`package_signature.DECISION_CHECKED`). What only a browser shows is held
+(`package_signature.DECISION_CHECKED`). Beyond each slide's fit, which the
+package workflow's deck step measures in headless Chromium (`deck_fit`, see
+"A package's evidence"), what only a browser shows is held
 in CI on fixture decks, never in a package's path: the page tests' isolated
 JARVIS (`tests/isolated_jarvis.py`, `tests/isolated_jarvis_server.py`,
 seeded with the agent's key, `JARVIS_DECISION_CHECK_SERVER`) proves voting
@@ -1521,10 +1523,36 @@ answer by its id, and the findings on the Work item as JARVIS's message
 there (proof `jarvis`, source `package_failed`; for no Work item in his
 Inbox), with one update (`package_job`, `failed`); its answer ends the run
 `failed` and starts the package's next run (`_answer_package_job`), which
-starts from the kept research; no answer within 2 hours is Error as any.
+goes on from where it failed; no answer within 2 hours is Error as any.
 A package's next run (`server._new_package_run`,
 `package_jobs.new_run`) keeps the package id and names the run before it
-(`after`). JARVIS signs the packages it makes with its own key
+(`after`). Only what failed is run again (Tim 2026-11-22,
+`package_resume.py`): the next run after a failed swarm or deck review
+(answered findings) or a run in Error starts at the step that failed
+(`package_resume.failed_at`) and, in the swarm or the deck, at the stage
+that failed (a stage of the fix passes starts them again, `pass` or
+`deck-pass`, the deck rebuilt and reviewed again, `review_again`; a stage
+that never finished is that stage again); every step before it is `done`,
+its outcome on the new job (`swarm`, `deck`, paths moved to the new
+folder); what the run kept (`package_resume.KEPT_FILES`: research, prep,
+search log, outline, script, conversation, `swarm.json` with each
+participant's session, and the deck's source folder) is copied into the new
+run's folder; the program says into the conversation where it goes on from,
+then the findings' answers as the sender's; a Codex participant's thread is
+resumed, a Claude one (its session found only in its own folder) starts
+anew with the whole conversation; the job records `reused` (from, run,
+step, stage, steps, files, fresh sessions). Gather and mark are once a
+package. A check answered with what is wrong and Tim's Reject start from
+research, with the earlier research carried (`_carry_earlier`). The sender
+asks for its package again, without new answers, after a run that ended in
+Error or failed (`make_package --rerun <job> --session <id>`, the agent
+tool `package_rerun`, `POST /api/packages/requests/<job>/rerun`, the
+`packages` right): `package_jobs.rerun` checks it is its own, refused while
+a later run of the package is still going (a run waiting on its findings
+ends `failed`, unanswered), and `server._rerun_package_job` starts the next
+run resumed. A new run clears the Error every earlier run of its package
+left (`package_jobs.errored_work`: a run in Error counts until any later
+run of its package). JARVIS signs the packages it makes with its own key
 (`agent_keys.jarvis_key`, made once in `<data>/jarvis/agent-keys/jarvis/`;
 `package_jobs.sign`, `package_signature.sign_as_jarvis`: session `jarvis`,
 `requested_by` the asking agent), never an agent's: `_package_signer` reads
@@ -1953,6 +1981,24 @@ own items; never the author on its own deck. Passed
 two fix passes, or a deck the author could not make build,
 its findings go to the sender as a failed swarm's do. The proof also holds
 every text style at least the text floor at both sizes (`prove_text`).
+Every build's fit is measured (Tim 2026-11-22, `deck_fit.py`): the program
+draws the built deck as the package frame does (`html.hosted`, inside a
+frame) in headless Chromium at every frame the proof covers
+(`deck_fit.frames()`, layout_spec.frames(), 662 x 489 to 1600 x 900) and
+reads for each slide whether anything on it (words, pictures, a decision's
+options and Choose bars, Decide later, None of these, his words field and
+the recorded line) is clipped or needs scrolling (`.jarvis/fit.json`;
+`package_deck.MEASURE`, faked outside the page tests). The shared deck fits
+its own decision and answers slides (deck.js `fitSlide`, deck.css "the
+program's own fit": tighter gaps, headings at the body size, shorter bars,
+never words under 13 px; `data-fit`); `tests/test_voice_page_deck_fit.py`
+holds a decision as long as the first real one at every frame. The fit is
+a fact beside each slide's layout data for the reviewers (`fit`), never a
+question for them or the sender. A slide that still does not fit does not
+build (`Problems.unfit`): told to the author, an owner's edit making one
+unfit not applied, and a deck JARVIS cannot make fit (or cannot measure,
+`deck_fit.Unavailable`) is the run's Error (`NOT_FIT_FIX`), never findings
+for the sender.
 The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
 design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
 (`briefing_files`: research.md, prep.md, outline.yaml, script.yaml,
@@ -3863,6 +3909,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   fix passes, its sign-offs, questions to the sender and what is left,
   kept between the run's processes; every search a
   role makes logged, and the hits the passed script used (see "A package's
+  evidence")
+- `package_resume.py` — A package's next run going on from the step and
+  stage the run before failed at, reusing what it kept (see "Package
+  requests")
+- `deck_fit.py` — Each slide of a built deck measured at every frame in
+  headless Chromium: what is clipped or needs scrolling (see "A package's
   evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks

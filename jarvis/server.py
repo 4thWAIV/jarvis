@@ -11247,13 +11247,15 @@ async def _answer_package_job(session: str, job: str, answers) -> dict:
     of the package starts from the kept research (workflow.yaml swarm
     when_it_fails); so does its answer to its check of the finished package
     saying what is wrong, with its words (deliver sender_check), while its
-    approval delivers it (`_deliver_package_run`)."""
+    approval delivers it (`_deliver_package_run`). A run whose swarm or deck
+    review failed goes on from the step and stage that failed, reusing what
+    the run before kept (package_resume, Tim 2026-11-22)."""
     doc = await asyncio.to_thread(package_jobs.answer, job, answers, session=session)
     if doc["state"] == package_jobs.FAILED:
-        why = ("the sender said what is wrong at its check"
-               if package_jobs.kind_of(doc["rounds"][-1]) == package_jobs.CHECK
+        check = package_jobs.kind_of(doc["rounds"][-1]) == package_jobs.CHECK
+        why = ("the sender said what is wrong at its check" if check
                else "the sender answered the swarm's findings")
-        return await asyncio.to_thread(_new_package_run, job, why)
+        return await asyncio.to_thread(_new_package_run, job, why, not check)
     if package_jobs.to_deliver(doc):
         return await _deliver_package_run(doc)
     return await asyncio.to_thread(package_jobs.start, doc)
@@ -11289,16 +11291,29 @@ async def _deliver_package_run(doc: dict) -> dict:
         "archive": sent["archive"]})
 
 
-def _new_package_run(job_id: str, why: str) -> dict:
-    """The next run of a package, started (package_jobs.new_run): the Error
-    the run before left on its Work item is cleared once no other remains,
-    and its update is no longer news. Blocking."""
-    errored = package_jobs.get(job_id)["state"] == package_jobs.ERROR
-    doc = package_jobs.new_run(job_id, why)
-    _attention_resolved("package_job", job_id)
+def _new_package_run(job_id: str, why: str, resume: bool = False) -> dict:
+    """The next run of a package, started (package_jobs.new_run; with
+    `resume`, going on from the step the run before failed at): the Error
+    a run of the package left on its Work item is cleared once no other
+    remains, and their updates are no longer news. Blocking."""
+    package = package_jobs.get(job_id)["package"]
+    errored = [d["id"] for d in package_jobs.runs_of(package)
+               if d["state"] == package_jobs.ERROR]
+    doc = package_jobs.new_run(job_id, why, resume=resume)
+    for done in {job_id, *errored}:
+        _attention_resolved("package_job", done)
     if errored and doc.get("work"):
         _clear_work_errors([doc["work"]], f"a new run of package {doc['package']} started")
     return package_jobs.start(doc)
+
+
+def _rerun_package_job(session: str, job: str) -> dict:
+    """The asking agent asks for its package again, after a run that ended
+    in Error or failed, without new answers (make_package --rerun,
+    package_rerun): the next run goes on from the step that failed, reusing
+    what that run kept (package_jobs.rerun, package_resume). Blocking."""
+    package_jobs.rerun(job, session)
+    return _new_package_run(job, "the sender asked for it again", True)
 
 
 # What JARVIS tells an agent whose package run is in Error may do next
@@ -11481,7 +11496,8 @@ async def _watch_package_jobs() -> None:
 
 
 package_jobs_api.mount(app, package_jobs_api.Calls(
-    accept=_accept_package_request, status=_package_job_status, answer=_answer_package_job))
+    accept=_accept_package_request, status=_package_job_status, answer=_answer_package_job,
+    rerun=_rerun_package_job))
 
 
 # The states as the brain reads them.

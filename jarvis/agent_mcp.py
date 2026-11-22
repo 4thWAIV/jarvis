@@ -315,6 +315,11 @@ PACKAGE_SPECS: tuple[dict, ...] = (
          "job": _STR,
          "answers": {"type": "object", "description": "Each question's id and your answer."}},
          "required": ["job", "answers"]}},
+    {"name": "package_rerun",
+     "description": "Ask for a package again after its run ended in Error or failed, with no "
+                    "new answers: the next run goes on from the step that failed, reusing "
+                    "everything that run kept. Returns the new run's job.",
+     "inputSchema": {"type": "object", "properties": {"job": _STR}, "required": ["job"]}},
 )
 
 
@@ -332,6 +337,8 @@ def _package(name: str, arguments: dict) -> tuple[bool, str, None]:
                                            general=bool(arguments.get("general")))
         elif name == "package_status":
             result = package_request.status(str(arguments.get("job") or ""), session=session)
+        elif name == "package_rerun":
+            result = package_request.rerun(str(arguments.get("job") or ""), session=session)
         else:
             answers = arguments.get("answers")
             if not isinstance(answers, dict):

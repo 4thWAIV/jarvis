@@ -294,20 +294,60 @@ def _record_run(package: str, run: str, request: dict, *, session: str, work: st
     return doc
 
 
-def new_run(job_id: str, why: str) -> dict:
+def new_run(job_id: str, why: str, resume: bool = False) -> dict:
     """The next run of the same package (the sender answered a failed run's
-    findings, said what is wrong at its check, or Tim rejected it): the
-    package keeps its id, a new job names the next run id, asked as the
-    first was."""
+    findings or asked for it again, said what is wrong at its check, or Tim
+    rejected it): the package keeps its id, a new job names the next run id,
+    asked as the first was. With `resume`, a run that failed at a step goes
+    on from that step, reusing what the run before kept
+    (package_resume.carry, Tim 2026-11-22: only what failed is run again)."""
     before = get(job_id)
     runs = _jobs([["package", "=", before["package"]]])
     n = 1 + max(int(str(d["run"]).rsplit("-", 1)[-1]) for d in runs)
-    return _record_run(before["package"], f"run-{n}", before["request"],
-                       session=before["session"], work=before["work"] or "",
-                       general=before["general"], engine=before["engine"] or "",
-                       project=before["project"], workflow=before["workflow"],
-                       source=before["source"], documents=tuple(map(tuple, before["documents"])),
-                       submitted=before["submitted"], change=f"new run: {why}", after=before)
+    doc = _record_run(before["package"], f"run-{n}", before["request"],
+                      session=before["session"], work=before["work"] or "",
+                      general=before["general"], engine=before["engine"] or "",
+                      project=before["project"], workflow=before["workflow"],
+                      source=before["source"], documents=tuple(map(tuple, before["documents"])),
+                      submitted=before["submitted"], change=f"new run: {why}", after=before)
+    from jarvis import package_resume
+    step = package_resume.failed_at(before) if resume else None
+    if step is None:
+        return doc
+    carried = package_resume.carry(before, doc, step)
+    return _change(doc["id"], f"goes on from {before['run']} at the {step} step",
+                   lambda d: d.update(carried))
+
+
+def rerun(job_id: str, session: str) -> dict:
+    """The sender asks for its package again after a run that ended in
+    Error, or failed (its swarm's or deck's findings, answered or not),
+    without new answers (make_package --rerun, package_rerun): checked here;
+    the server starts the next run, which goes on from the step that failed
+    (`new_run` with `resume`). Refused while a later run of the package is
+    still going. A run waiting on its findings ends `failed`, unanswered."""
+    doc = status(job_id, session)
+    going = [d for d in runs_of(doc["package"]) if d["state"] in GOING + (WAITING,)
+             and d["id"] != job_id and _run_no(d) > _run_no(doc)]
+    if going:
+        later = going[0]
+        raise JobError(f"{later['run']} of package {doc['package']} ({later['id']}) is "
+                       f"{later['state']}; ask again once it has ended.")
+    findings = bool(doc["rounds"]) and kind_of(doc["rounds"][-1]) == FINDINGS
+    if doc["state"] == WAITING and findings:
+        def write(d):
+            if d["state"] != WAITING:
+                raise JobError(f"Job {job_id} is {d['state']}.")
+            d["state"], d["pid"] = FAILED, None
+        doc = _change(job_id, "asked again without answers", write)
+    elif doc["state"] not in (ERROR, FAILED):
+        raise JobError(f"Job {job_id} is {doc['state']}: only a run that ended in Error or "
+                       f"failed is run again.")
+    return doc
+
+
+def _run_no(doc: dict) -> int:
+    return int(str(doc["run"]).rsplit("-", 1)[-1])
 
 
 # -- what the sender calls ---------------------------------------------------------------
@@ -634,9 +674,11 @@ def rejections_on_work(work: str) -> list[dict]:
 
 def errored_work() -> set[str]:
     """The Work items with a package run in Error that no later run of its
-    package has followed (`new_run`)."""
+    package has followed (`new_run`, from it or from an earlier run that a
+    resumed run goes on from)."""
     return {d["work"] for d in _jobs([["state", "=", ERROR]])
-            if d.get("work") and not _jobs([["after", "=", d["id"]]])}
+            if d.get("work") and not any(_run_no(o) > _run_no(d)
+                                         for o in runs_of(d["package"]))}
 
 
 # -- the run's own process ---------------------------------------------------------------
