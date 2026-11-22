@@ -469,10 +469,60 @@ class Report:
                 "seconds": round(self.seconds, 1), "tokens": used}
 
 
+class Feed:
+    """The pages a run asks, which may go on arriving while it asks them
+    (a step's pipeline: a page classified as soon as it is marked). `put`
+    each page, `close` once no more will come; a run given a feed ends
+    once it is closed and every page put is answered. `free`: the workers
+    with nothing to do now, which a page arriving may be spread across."""
+
+    def __init__(self, workers: int = 1):
+        self.workers = max(1, workers)
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.outstanding = 0
+        self.busy = 0
+        self.put_pages = 0
+        self.closed = False
+        self._ended = False
+
+    def free(self) -> int:
+        return max(1, self.workers - self.busy - self.queue.qsize())
+
+    def put(self, page: Page) -> None:
+        if self._ended:
+            return
+        self.outstanding += 1
+        self.put_pages += 1
+        self.queue.put_nowait(page)
+
+    def again(self, page: Page) -> None:
+        """A page asked again (or a half of one): answered before the end."""
+        self.outstanding += 1
+        self.queue.put_nowait(page)
+
+    def close(self) -> None:
+        self.closed = True
+        if self.outstanding <= 0:
+            self.end()
+
+    def answered_one(self) -> None:
+        self.outstanding -= 1
+        if self.closed and self.outstanding <= 0:
+            self.end()
+
+    def end(self) -> None:
+        """Every worker told to stop once it has finished its page."""
+        if not self._ended:
+            self._ended = True
+            for _ in range(self.workers):
+                self.queue.put_nowait(None)
+
+
 async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any]],
               parallel: int, ask: Callable[[Any, Page], Awaitable[T]],
               failed: Callable[[str], Exception], report: Optional[Report] = None,
-              wait_most: Optional[float] = None) -> list[T]:
+              wait_most: Optional[float] = None, feed: Optional[Feed] = None,
+              on_answer: Optional[Callable[[Page, T], None]] = None) -> list[T]:
     """Every page's answer, asked by at most `parallel` workers at once,
     each keeping one session across its pages: `first` (already made) for
     the first worker, `make()` for each other. A session is opened before
@@ -485,38 +535,49 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
     a wait that doubles with each hit in a row (1, 2, 4 ... s), and asks
     the page again; a pause that would take more than `wait_most` seconds
     (the run's own wall clock) is raised. Any other failure stops every
-    worker and is raised."""
+    worker and is raised.
+
+    `feed`: pages that go on arriving while it runs (`Feed`), asked by
+    `parallel` workers as they come, beside `pages`; the run ends once the
+    feed is closed and every page is answered. `on_answer(page, answer)`
+    is called as each page is answered, so what follows can begin on it
+    at once."""
     report = report if report is not None else Report()
-    report.pages = len(pages)
-    if not pages:
-        return []
+    if feed is None:
+        if not pages:
+            report.pages = 0
+            return []
+        feed = Feed(min(parallel, len(pages)))
+        for p in pages:
+            feed.put(p)
+        feed.close()
+    else:
+        feed.workers = max(1, parallel)
+        for p in pages:
+            feed.put(p)
     started = time.monotonic()
-    queue: asyncio.Queue = asyncio.Queue()
-    for p in pages:
-        queue.put_nowait(p)
+    queue = feed.queue
     results: list[T] = []
     failures: list[BaseException] = []
-    outstanding = len(pages)
-    workers = max(1, min(parallel, len(pages)))
+    workers = feed.workers
     report.workers = workers
     paused_until = 0.0
     in_a_row = 0
 
     def finish_one() -> None:
-        nonlocal outstanding
-        outstanding -= 1
-        if outstanding <= 0 or failures:
-            for _ in range(workers):
-                queue.put_nowait(None)
+        if failures:
+            feed.end()
+        feed.answered_one()
 
     async def worker(n: int) -> None:
-        nonlocal outstanding, paused_until, in_a_row
+        nonlocal paused_until, in_a_row
         session, opened = (first if n == 0 else None), False
         try:
             while True:
                 page = await queue.get()
                 if page is None:
                     return
+                feed.busy += 1
                 try:
                     if failures:
                         continue
@@ -532,8 +593,11 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
                         await session.fresh()
                     report.calls += 1
                     try:
-                        results.append(await ask(session, page))
+                        answer = await ask(session, page)
+                        results.append(answer)
                         in_a_row = 0
+                        if on_answer is not None:
+                            on_answer(page, answer)
                     finally:
                         turn = getattr(session, "last_turn", None)
                         if isinstance(turn, dict):
@@ -552,16 +616,14 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
                             report.waited += until - max(paused_until, time.monotonic())
                             paused_until = until
                         log.info("pages: rate-limited (%s); every worker pauses %.0f s", e, wait)
-                        outstanding += 1
-                        queue.put_nowait(page)
+                        feed.again(page)
                 except NotChecked as e:
                     if page.tries == 0:
                         page.tries = 1
                         report.again += 1
                         log.info("pages: a page of %d item(s) did not check (%s); asked again",
                                  len(page.items), e)
-                        outstanding += 1
-                        queue.put_nowait(page)
+                        feed.again(page)
                     else:
                         halves = page.halves()
                         if halves is None:
@@ -570,12 +632,12 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
                             report.halved += 1
                             log.info("pages: a page of %d item(s) did not check again (%s); "
                                      "split in half", len(page.items), e)
-                            outstanding += 2
                             for half in halves:
-                                queue.put_nowait(half)
+                                feed.again(half)
                 except BaseException as e:  # noqa: BLE001 - stops every worker, raised below
                     failures.append(e)
                 finally:
+                    feed.busy -= 1
                     finish_one()
         finally:
             if session is not None and opened:
@@ -585,6 +647,7 @@ async def run(pages: list[Page], *, first: Any, make: Callable[[], Awaitable[Any
         await asyncio.gather(*(worker(n) for n in range(workers)))
     finally:
         report.seconds = time.monotonic() - started
+        report.pages = feed.put_pages
     if failures:
         raise failures[0]
     return results

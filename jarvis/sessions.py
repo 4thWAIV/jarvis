@@ -41,6 +41,7 @@ an answer raises `SessionFailed`, which is the step's Error.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import logging
@@ -50,7 +51,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable, Optional, Protocol, TypeVar
+from typing import AsyncIterator, Awaitable, Callable, Optional, Protocol, TypeVar
 from xml.sax.saxutils import quoteattr, unescape
 
 from jarvis import (brain_provider, evidence_types, model_tiers, pages, private_files,
@@ -1128,21 +1129,46 @@ class _PagedRole:
     async def ask(self, system: str, form: dict, fixed_material: str,
                   docs: list[pages.Doc], material: Callable[[pages.Page], str],
                   check: Callable[[object, pages.Page], T], timeout: Optional[float],
-                  failed: str) -> list[T]:
+                  failed: str, on_answer: Optional[Callable[[T], None]] = None) -> list[T]:
         """Every page's checked answer. `fixed_material`: the first message
         with no page in it, counted with the system prompt, the form and the
-        brain's starting context as what every call holds."""
+        brain's starting context as what every call holds. `on_answer`:
+        called with each page's answer as it comes."""
         if not any(d.atoms for d in docs):
             return []
+
+        async def once() -> AsyncIterator[list[pages.Doc]]:
+            yield docs
+        return await self.ask_fed(system, form, fixed_material, once(), material, check,
+                                  timeout, failed, on_answer)
+
+    async def ask_fed(self, system: str, form: dict, fixed_material: str,
+                      groups: AsyncIterator[list[pages.Doc]],
+                      material: Callable[[pages.Page], str],
+                      check: Callable[[object, pages.Page], T], timeout: Optional[float],
+                      failed: str, on_answer: Optional[Callable[[T], None]] = None
+                      ) -> list[T]:
+        """Every page's checked answer, the material arriving in groups while
+        the pages are asked (a step's pipeline): each group packed as it
+        comes, across the workers free then (pages.Feed.free), and its pages
+        asked at once beside the rest."""
         first = await self._session(system, form)
         pick = first.pick
         fixed = (pages.tokens(system) + pages.tokens(fixed_material)
                  + pages.tokens(json.dumps(form)) + pages.starting_context(pick.engine))
-        parallel = model_tiers.PARALLEL.get(pick.engine, 1)
-        try:
-            packed = pages.pack(docs, fixed, pages.budget(pick, self.role), spread=parallel)
-        except pages.TooLarge as e:
-            raise SessionFailed(f"{self.role}: {e}") from e
+        room = pages.budget(pick, self.role)
+        feed = pages.Feed(model_tiers.PARALLEL.get(pick.engine, 1))
+
+        async def produce() -> None:
+            try:
+                async for docs in groups:
+                    if any(d.atoms for d in docs):
+                        for page in pages.pack(docs, fixed, room, spread=feed.free()):
+                            feed.put(page)
+            except pages.TooLarge as e:
+                raise SessionFailed(f"{self.role}: {e}") from e
+            finally:
+                feed.close()
 
         async def ask_page(session, page: pages.Page) -> T:
             try:
@@ -1150,12 +1176,22 @@ class _PagedRole:
             except NotInForm as e:
                 raise pages.NotChecked(str(e)) from e
             return check(answer, page)
-        return await self.each(first, packed, lambda: self._session(system, form), ask_page,
-                               timeout, failed)
+        producer = asyncio.create_task(produce())
+        try:
+            answers = await self.each(first, [], lambda: self._session(system, form), ask_page,
+                                      timeout, failed, feed=feed, on_answer=on_answer)
+        except BaseException:
+            producer.cancel()
+            with contextlib.suppress(BaseException):
+                await producer
+            raise
+        await producer          # what stopped the material arriving, raised
+        return answers
 
     async def each(self, first, packed: list[pages.Page], make: Callable[[], Awaitable],
                    ask_page: Callable[[object, pages.Page], Awaitable[T]],
-                   timeout: Optional[float], failed: str) -> list[T]:
+                   timeout: Optional[float], failed: str, feed: Optional[pages.Feed] = None,
+                   on_answer: Optional[Callable[[T], None]] = None) -> list[T]:
         """The pages asked by the brain's own number of workers
         (model_tiers.PARALLEL), each keeping one session (pages.run); what
         it took kept in `reports` and the run's report."""
@@ -1167,7 +1203,8 @@ class _PagedRole:
                 packed, first=first, make=make,
                 parallel=model_tiers.PARALLEL.get(first.pick.engine, 1), ask=ask_page,
                 failed=lambda why: SessionFailed(f"{failed}: {why}"), report=report,
-                wait_most=wall)
+                wait_most=wall, feed=feed,
+                on_answer=None if on_answer is None else lambda _page, got: on_answer(got))
         finally:
             log.info("%s: %s", self.role, json.dumps(report.summary()))
             run_report.pages(self.role, report.summary())
@@ -1228,6 +1265,20 @@ class BrainClassificationSession:
 
     async def classify(self, items: list[Item], classes: list[ClassQuestion],
                        timeout: float) -> list[dict]:
+        """Each item's scores, in the items' order."""
+        async def once() -> AsyncIterator[list[Item]]:
+            yield items
+        scored = {id(item): scores for item, scores in
+                  await self.classify_fed(once(), classes, timeout)}
+        return [{"item": item.id, "scores": scored[id(item)]} for item in items]
+
+    async def classify_fed(self, groups: AsyncIterator[list[Item]],
+                           classes: list[ClassQuestion], timeout: Optional[float]
+                           ) -> list[tuple[Item, dict]]:
+        """Each item with its scores, the items arriving in groups while the
+        pages are asked (the mark step's pipeline: a page's marked parts
+        classified as soon as it is marked); each group packed as it comes
+        across the workers free then."""
         names = [c.id for c in classes] + [BACKGROUND]
         form = _sparse_form("items", "questions", names)
         questions = "\n".join(_tag("question", c.asks, id=c.id) for c in classes)
@@ -1236,17 +1287,26 @@ class BrainClassificationSession:
         def values(block: str) -> dict:
             return {key: block, "{the handoff's questions}": questions}
         system, fixed = role_prompt("classification", values(""))
-        docs: list[pages.Doc] = []
-        for n, item in enumerate(items):
-            page_id = str(n + 1)
-            atom = pages.Atom([(page_id, item)],
-                              pages.tokens(_tag("item", item.text, id=page_id,
-                                                source=item.source)) + 1,
-                              _answer_most("items", "questions", page_id, names))
-            if docs and docs[-1].key == item.group:
-                docs[-1].atoms.append(atom)
-            else:
-                docs.append(pages.Doc(item.group, [atom], 0))
+        numbered: dict[str, Item] = {}
+
+        def docs_of(items: list[Item]) -> list[pages.Doc]:
+            docs: list[pages.Doc] = []
+            for item in items:
+                page_id = str(len(numbered) + 1)
+                numbered[page_id] = item
+                atom = pages.Atom([(page_id, item)],
+                                  pages.tokens(_tag("item", item.text, id=page_id,
+                                                    source=item.source)) + 1,
+                                  _answer_most("items", "questions", page_id, names))
+                if docs and docs[-1].key == item.group:
+                    docs[-1].atoms.append(atom)
+                else:
+                    docs.append(pages.Doc(item.group, [atom], 0))
+            return docs
+
+        async def docs_fed() -> AsyncIterator[list[pages.Doc]]:
+            async for items in groups:
+                yield docs_of(items)
 
         def material(page: pages.Page) -> str:
             return role_prompt("classification", values("\n".join(
@@ -1257,10 +1317,11 @@ class BrainClassificationSession:
             return _check_sparse(answer, "items", "questions",
                                  [pid for pid, _ in page.items], names)
         scored: dict[str, dict] = {}
-        for found in await self.paged.ask(system, form, fixed, docs, material, check, timeout,
-                                          "classification could not answer one item"):
+        for found in await self.paged.ask_fed(system, form, fixed, docs_fed(), material, check,
+                                              timeout,
+                                              "classification could not answer one item"):
             scored.update(found)
-        return [{"item": item.id, "scores": scored[str(n + 1)]} for n, item in enumerate(items)]
+        return [(numbered[pid], scores) for pid, scores in scored.items()]
 
 # ── ExtractionSession ─────────────────────────────────────────────────────
 
@@ -1442,14 +1503,27 @@ class BrainMarkingSession:
         return (await self.mark_files([Text("text", text)], labels, knowledge, timeout))["text"]
 
     async def mark_files(self, texts: list[Text], labels: list[Label], knowledge: list[Known],
-                         timeout: float) -> dict[str, list[dict]]:
+                         timeout: float,
+                         on_page: Optional[Callable[[dict[str, list[dict]]], None]] = None
+                         ) -> dict[str, list[dict]]:
         """Each text's sentences, by its key, each with the labels it was
         given (one left out did not reach FLOOR). A text's words are given
         once on a page: an item of Tim's material that is a file on the
-        page is named there by its source and state alone."""
+        page is named there by its source and state alone. `on_page`:
+        called as each page is marked with its sentences, by their text's
+        key, so what follows can begin on them at once."""
         words = [_Words(n + 1, "file", t.key, t.text, _sentences(text_parts.split(t.text)))
                  for n, t in enumerate(texts)]
-        scored = await self._marked(words, "", labels, knowledge, timeout)
+        located = {(w.n, s.id): (w, s) for w in words for s in w.sentences}
+
+        def page_marked(found: dict[tuple[int, str], dict]) -> None:
+            by_key: dict[str, list[dict]] = {}
+            for at, scores in found.items():
+                w, sentence = located[at]
+                by_key.setdefault(w.key, []).append(_part(sentence, scores))
+            on_page(by_key)
+        scored = await self._marked(words, "", labels, knowledge, timeout,
+                                    page_marked if on_page is not None else None)
         return {t.key: [_part(s, scored[(w.n, s.id)]) for s in w.sentences]
                 for t, w in zip(texts, words)}
 
@@ -1475,7 +1549,8 @@ class BrainMarkingSession:
                  "field": unit.field} for unit, s in placed]
 
     async def _marked(self, words: list[_Words], context: str, labels: list[Label],
-                      knowledge: list[Known], timeout: Optional[float]
+                      knowledge: list[Known], timeout: Optional[float],
+                      on_answer: Optional[Callable[[dict], None]] = None
                       ) -> dict[tuple[int, str], dict]:
         """Every part's scores, by (its file's number, its own id)."""
         names = [label.name for label in labels]
@@ -1524,7 +1599,7 @@ class BrainMarkingSession:
             return {ids[pid]: scores for pid, scores in found.items()}
         scored: dict[tuple[int, str], dict] = {}
         for found in await self.paged.ask(system, form, fixed, docs, material, check, timeout,
-                                          "marking could not answer one sentence"):
+                                          "marking could not answer one sentence", on_answer):
             scored.update(found)
         return scored
 

@@ -254,3 +254,45 @@ def test_material_the_budget_cannot_fit_in_the_workers_pages_takes_the_fewest_it
     assert pages.pages_for(fewest=3, atoms=100, spread=10) == 10
     assert pages.pages_for(fewest=12, atoms=100, spread=10) == 12
     assert pages.pages_for(fewest=1, atoms=4, spread=10) == 4
+
+
+def test_pages_fed_while_the_workers_ask_are_asked_as_they_come():
+    # The mark step's pipeline: a page classified as soon as it is marked,
+    # its sentences arriving while the rest are still marked.
+    class S:
+        async def open(self):
+            pass
+
+        async def fresh(self):
+            pass
+
+        async def close(self):
+            pass
+
+    order = []
+
+    async def ask(session, page):
+        await asyncio.sleep(0.01)
+        order.append(page.items[0])
+        return page.items
+
+    def page_of(key):
+        return pages.Page([pages.Entry(_doc(key, [1]), _doc(key, [1]).atoms, True)])
+
+    async def go():
+        feed = pages.Feed()
+        answered = []
+        run = asyncio.ensure_future(pages.run(
+            [page_of("a")], first=S(), make=lambda: _made(S), parallel=3, ask=ask,
+            failed=RuntimeError, feed=feed, on_answer=lambda p, got: answered.append(got)))
+        await asyncio.sleep(0.05)
+        assert answered == [["a0"]] and not run.done(), "it waits for more until closed"
+        assert feed.free() == 3, "every worker free for the next page"
+        feed.put(page_of("b"))
+        feed.put(page_of("c"))
+        await asyncio.sleep(0.05)
+        feed.close()
+        return await run, answered
+    got, answered = asyncio.run(go())
+    assert sorted(i for r in got for i in r) == ["a0", "b0", "c0"]
+    assert len(answered) == 3 and order[0] == "a0"

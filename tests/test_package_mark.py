@@ -179,7 +179,9 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
     prose_files = sum(1 for m in by_file.values() if m["parts"])
     assert len(marked_files) < prose_files, "several files to a page"
     assert sum(g.count("<file name=") for g in marked_files) >= prose_files
-    assert len(roles.given["classification"]) == 1, "every file's items on one page"
+    # Classified as they come: the program's facts, each marked page's
+    # sentences, then extraction's facts, each its own call or more.
+    assert len(marked_files) + 2 >= len(roles.given["classification"]) >= 2
     assert {s for s, m in by_file.items() if m["parts"]} == \
         {s for s, m in by_file.items() if m["prose_file"]} >= {
             "files/situation.md", "jarvis/tim.md", "handoff.json", "retrieved/pr-171.md"}
@@ -220,6 +222,52 @@ def test_a_real_package_s_evidence_is_typed_read_extracted_marked_and_scored(
     hits = uds.search(TIM, Query(words="failed_test test_move", under=place.path))
     assert any(h.path.startswith(place.item("mark/")) for h in hits)
     assert records.get(place.record).data["marked_at"]
+
+
+def test_each_page_is_classified_as_soon_as_it_is_marked(tmp_path, gh, checkout,  # noqa: F811
+                                                         transcript, monkeypatch, roles):
+    # package-870e45145b2d: classification began only after all marking
+    # ended (marking 200 s, then classification 119 s). Now a page's
+    # sentences are classified while the other pages are still marked.
+    import asyncio
+    import time as _time
+    monkeypatch.setattr(model_tiers, "PARALLEL", {"claude": 3, "codex": 3})
+    calls: list[tuple[str, float, float, str]] = []
+    marked = []
+    given = roles.for_role
+
+    def timed(role, prompt, folder, **kwargs):
+        session = given(role, prompt, folder, **kwargs)
+        ask = session.ask
+
+        async def slow(text, timeout, answer_format=None, strict=True):
+            began = _time.monotonic()
+            if role == "marking":
+                marked.append(text)
+                await asyncio.sleep(0.02 if len(marked) == 1 else 0.6)
+            reply = await ask(text, timeout, answer_format, strict)
+            calls.append((role, began, _time.monotonic(), text))
+            return reply
+        session.ask = slow
+        return session
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", timed)
+    doc = _gathered(tmp_path, checkout, monkeypatch)
+    package_mark.mark(pj.get(doc["id"]))
+    marking = [c for c in calls if c[0] == "marking"]
+    assert len(marking) >= 2
+    first = min(marking, key=lambda c: c[2])
+    words = [w for w in re.findall(r'<part id="[^"]+">(.*?)</part>', first[3], re.S)
+             if len(w) > 20]
+    assert words
+    last_marked = max(m[2] for m in marking)
+    classified_parts = [c for c in calls if c[0] == "classification" and c[1] < last_marked
+                        and any(w in c[3] for w in words)]
+    assert classified_parts, "a page classified before the last page was marked"
+    shown = package_mark.marked(pe.place_of(doc))
+    for entry in shown["files"]:
+        marks = entry["marks"]
+        assert {q["item"] for q in marks["questions"]} == \
+            {f["id"] for f in marks["facts"]} | {p["id"] for p in marks["parts"]}
 
 
 def test_marked_once_and_every_run_reuses_it(tmp_path, gh, checkout, transcript,  # noqa: F811
@@ -331,7 +379,7 @@ def test_a_value_over_two_pieces_keeps_both_places_in_the_file():
     assert f.position(start, end) == {"start": spans[0][0], "end": spans[1][1],
                                       "spans": [{"start": a, "end": b} for a, b in spans]}
     f.fact("x", view.text[start:end], f.position(start, end), package_mark.BY_EXTRACTION)
-    item = package_mark._items(f)[0]
+    item = package_mark._fact_item(f, f.facts[0])
     assert item.source == f"handoff.json {spans[0][0]}-{spans[0][1]}, " \
                           f"{spans[1][0]}-{spans[1][1]}, x"
 

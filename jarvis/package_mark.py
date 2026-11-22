@@ -32,11 +32,16 @@ what is marked and only waits for it to be indexed. In order:
                       meaning), packed into pages that fit the model and
                       asked in parallel (pages.py, Mark rebuilt for speed,
                       Tim 2026-11-21)
-  relate_to_questions every fact and marked sentence, in the same order, to
-                      ClassificationSession (tier 3), packed and asked the
-                      same way, each given at most its top 3 of the
-                      handoff's questions, plus background, each 0.5 or
-                      more; given without knowledge states
+  relate_to_questions every fact and marked sentence to ClassificationSession
+                      (tier 3), packed and asked the same way, each given
+                      at most its top 3 of the handoff's questions, plus
+                      background, each 0.5 or more; given without knowledge
+                      states. A pipeline (`read_and_score`): the program's
+                      facts classified at once, extraction's when it
+                      answers, and each page's sentences as soon as that
+                      page is marked, while the other pages are still
+                      marked; every role's calls threads on its one app
+                      server for the step (package_jobs.in_step)
 
 What it read is kept beside the evidence, one file for each stored file,
 `mark/<stored file>.json` (its type, facts, marked parts and their scores
@@ -51,6 +56,7 @@ for known-to-him, reasks-settled and settled-and-open.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import time
@@ -180,14 +186,9 @@ def read_structured(files: list[FileMarks]) -> None:
                    BY_PROGRAM, group=fact.group)
 
 
-def extract_prose(doc: dict, files: list[FileMarks]) -> None:
-    """The prose parts of each log and transcript to ExtractionSession, all
-    on one session (a new conversation a file), for that type's facts; each
-    value it gives is kept only where it stands verbatim in the prose
-    (sessions.BrainExtractionSession), with where that is in the file. A
-    prose file is left unextracted, its marks saying why
-    (`NO_PROSE_FACTS`)."""
-    from jarvis import package_jobs
+def _extraction_asks(files: list[FileMarks]) -> list[tuple[FileMarks, list]]:
+    """The files whose prose is extracted, each with its type's facts; a
+    prose file left unextracted, its marks saying why (`NO_PROSE_FACTS`)."""
     asked: list[tuple[FileMarks, list]] = []
     for f in files:
         if not f.view.text:
@@ -198,11 +199,24 @@ def extract_prose(doc: dict, files: list[FileMarks]) -> None:
                 f.extraction = NO_PROSE_FACTS
             continue
         asked.append((f, fields))
+    return asked
+
+
+async def extract_prose(doc: dict, files: list[FileMarks]) -> list[dict]:
+    """The prose parts of each log and transcript to ExtractionSession, all
+    on one session (a new conversation a file), for that type's facts; each
+    value it gives is kept only where it stands verbatim in the prose
+    (sessions.BrainExtractionSession), with where that is in the file. A
+    prose file is left unextracted, its marks saying why
+    (`NO_PROSE_FACTS`). The facts it added, each with its file."""
+    from jarvis import package_jobs
+    asked = _extraction_asks(files)
     if not asked:
-        return
-    answers = package_jobs.asked(
+        return []
+    answers = await package_jobs.answered(
         STEP, "extraction", f"JARVIS asked extraction for the facts of {len(asked)} file(s).",
         EXTRACTION(doc).extract_many([(f.view.text, fields) for f, fields in asked], None))
+    added = []
     for (f, _), found in zip(asked, answers):
         for value in found:
             if not value["value"] or value["position"] is None:
@@ -212,6 +226,8 @@ def extract_prose(doc: dict, files: list[FileMarks]) -> None:
                 continue
             f.fact(value["field"], value["value"], at, BY_EXTRACTION,
                    confidence=value["confidence"], context=value["context"])
+            added.append((f, f.facts[-1]))
+    return added
 
 
 def tim_known(rows: list[Row], texts: dict[str, str], skip: str = ""):
@@ -241,24 +257,37 @@ def grouped(files: list[FileMarks]) -> list[FileMarks]:
                          text=lambda f: f.view.text or f.text, name=lambda f: f.stored)
 
 
-def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row]) -> None:
+def _placed(f: FileMarks, part: dict) -> dict:
+    """A marked part with its position read back into the file (a part is
+    text_parts' cut of the prose: never all separator)."""
+    return {**part, "position": f.position(part["position"]["start"], part["position"]["end"])}
+
+
+async def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row],
+                     on_page: Optional[Callable[[list[tuple[FileMarks, dict]]], None]] = None
+                     ) -> None:
     """Every prose file, in full, to MarkingSession at once, each sentence
     given at most its top 3 of the 28 labels at 0.5 or more; each
-    sentence's position read back into the file."""
+    sentence's position read back into the file. `on_page`: called with
+    each page's parts, each with its file, as the page is marked."""
     from jarvis import package_jobs, sessions
     prose = [f for f in files if f.view.text and f.prose_file]
     if not prose:
         return
+    by_key = {f.stored: f for f in prose}
+
+    def page_marked(parts: dict[str, list[dict]]) -> None:
+        on_page([(by_key[key], _placed(by_key[key], part))
+                 for key, found in parts.items() for part in found])
     session = MARKING(doc)
-    marked = package_jobs.asked(
+    marked = await package_jobs.answered(
         STEP, "marking", f"JARVIS asked marking to mark {len(prose)} prose file(s).",
         session.mark_files([sessions.Text(f.stored, f.view.text, f.row.file_type or "")
                             for f in prose], briefing_labels.for_marking(),
-                           tim_known(rows, {f.stored: f.text for f in files}), None))
+                           tim_known(rows, {f.stored: f.text for f in files}), None,
+                           on_page=page_marked if on_page is not None else None))
     for f in prose:
-        for part in marked[f.stored]:   # a part is text_parts' cut of the prose: never all separator
-            f.parts.append({**part, "position": f.position(part["position"]["start"],
-                                                           part["position"]["end"])})
+        f.parts += [_placed(f, part) for part in marked[f.stored]]
 
 
 def _source(f: FileMarks, position: dict) -> str:
@@ -266,13 +295,15 @@ def _source(f: FileMarks, position: dict) -> str:
                                        for s in position.get("spans") or [position])
 
 
-def _items(f: FileMarks):
+def _fact_item(f: FileMarks, x: dict):
     from jarvis import sessions
-    out = [sessions.Item(x["id"], x["value"], f"{_source(f, x['position'])}, {x['field']}",
-                         f.stored) for x in f.facts]
-    out += [sessions.Item(p["id"], p["segment"], _source(f, p["position"]), f.stored)
-            for p in f.parts]
-    return out
+    return sessions.Item(x["id"], x["value"], f"{_source(f, x['position'])}, {x['field']}",
+                         f.stored)
+
+
+def _part_item(f: FileMarks, p: dict):
+    from jarvis import sessions
+    return sessions.Item(p["id"], p["segment"], _source(f, p["position"]), f.stored)
 
 
 def questions_of(doc: dict):
@@ -281,24 +312,60 @@ def questions_of(doc: dict):
             for q in (doc.get("request") or {}).get("questions") or []]
 
 
-def relate_to_questions(doc: dict, files: list[FileMarks]) -> None:
-    """Every fact and marked sentence of every file to ClassificationSession
-    at once, in the files' order, each given at most its top 3 of the
+async def _cancelling(*works) -> list:
+    """Every work's result; the first that fails cancels the others and is
+    raised."""
+    tasks = [asyncio.ensure_future(w) for w in works]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def read_and_score(doc: dict, files: list[FileMarks], rows: list[Row]) -> None:
+    """extract_prose, mark_prose and relate_to_questions as one pipeline:
+    every fact and marked sentence to ClassificationSession as soon as it
+    is had (the program's facts at once, extraction's when it answers, a
+    page's sentences as soon as that page is marked; measured on
+    package-870e45145b2d, classification started only after all marking
+    ended, 119 s after its 200 s), each given at most its top 3 of the
     handoff's questions, plus background, at 0.5 or more."""
     from jarvis import package_jobs
-    by_file = [(f, _items(f)) for f in files]
-    items = [i for _, found in by_file for i in found]
-    if not items:
-        return
-    scored = package_jobs.asked(
-        STEP, "classification",
-        f"JARVIS asked classification to score the facts and parts of {len(files)} file(s) "
-        f"against the handoff's questions.",
-        CLASSIFICATION(doc).classify(items, questions_of(doc), None))
-    at = 0
-    for f, found in by_file:
-        f.questions = scored[at:at + len(found)]
-        at += len(found)
+    groups: asyncio.Queue = asyncio.Queue()
+    groups.put_nowait([_fact_item(f, x) for f in files for x in f.facts])
+
+    async def fed():
+        while (items := await groups.get()) is not None:
+            yield items
+
+    async def extraction() -> None:
+        added = await extract_prose(doc, files)
+        groups.put_nowait([_fact_item(f, x) for f, x in added])
+
+    async def marking() -> None:
+        await mark_prose(doc, files, rows, on_page=lambda parts: groups.put_nowait(
+            [_part_item(f, p) for f, p in parts]))
+
+    async def read() -> None:
+        try:
+            await _cancelling(extraction(), marking())
+        finally:
+            groups.put_nowait(None)
+
+    async def classify():
+        return await package_jobs.answered(
+            STEP, "classification",
+            f"JARVIS asked classification to score the facts and parts of {len(files)} "
+            f"file(s) against the handoff's questions.",
+            CLASSIFICATION(doc).classify_fed(fed(), questions_of(doc), None))
+    _, scored = await _cancelling(read(), classify())
+    by_item = {(item.group, item.id): scores for item, scores in scored}
+    for f in files:
+        f.questions = [{"item": x["id"], "scores": by_item[(f.stored, x["id"])]}
+                       for x in f.facts + f.parts]
 
 
 # ── the step ──────────────────────────────────────────────────────────────
@@ -333,6 +400,7 @@ def marked(place: pe.Place) -> Optional[dict]:
 
 def mark(doc: dict) -> None:
     """The mark step of one run (package_jobs.PRODUCERS["mark"])."""
+    from jarvis import package_jobs
     from jarvis.package_jobs import Blocked
     place = pe.place_of(doc)
     record = pe.gathered(place)
@@ -349,9 +417,7 @@ def mark(doc: dict) -> None:
     rows = pe.read_manifest(place)
     files = grouped(type_files(place, rows))
     read_structured(files)
-    extract_prose(doc, files)
-    mark_prose(doc, files, rows)
-    relate_to_questions(doc, files)
+    package_jobs.in_step(read_and_score(doc, files, rows))
     _write(place, doc, files)
     pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))
     records.update(place.record, lambda d: {**(d or {}), "marked_at": time.time(),
