@@ -1769,10 +1769,15 @@ run's research copied into `earlier/` by `_carry_earlier`) and that
 needs more it names the searches in its answer (`more_searches`, each its
 words and a path or none: run as the key searches there, else everywhere
 the first ones looked); the program runs them at once and gives it one more
-turn (`more_note`). A turn that leaves either file is the step's Error.
-Each part is timed in `swarm.json`'s `times` (`research-searches`,
-`research`, `research-more-searches`, `research-more`). The program's
-searches go in the run's search log as `jarvis`, and every call a role
+turn (`more_note`). A turn that leaves either file unwritten is the
+step's Error. Each part is timed in `swarm.json`'s `times`
+(`research-searches`, `research`, `research-more-searches`,
+`research-more`), each search by `at_once` (its `seconds`), and the step as
+a whole in the run's `timing.json` with its searches (`run_report.step`),
+where over five minutes it is `too_slow`, a failure of the step with its
+numbers (construction-drafts.md "Every step five minutes at most"). The
+program's searches go in the run's search log as `jarvis` with their
+seconds, and every call a role
 makes on its own tool server is logged there (`role_mcp.py --log`,
 `research_log.record`: one line a search in
 `research-log.jsonl`, the role, the tool, its arguments, its `seconds`, the hits by

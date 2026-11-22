@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import pytest
 
@@ -169,6 +170,16 @@ def test_searches_run_at_once_and_keep_their_order():
     looked = work_research.at_once([call(1), call(2), call(3)])
     assert [q["query"] for q in looked] == ["1", "2", "3"]
     assert work_research.at_once([]) == []
+
+
+def test_each_search_is_timed():
+    """Each query carries how long its call took (item 38: each search timed)."""
+    def slow():
+        time.sleep(0.05)
+        return [{"tool": "t", "query": "a", "hits": []}, {"tool": "t", "query": "b", "hits": []}]
+    looked = work_research.at_once([slow])
+    assert [q["query"] for q in looked] == ["a", "b"]
+    assert all(q["seconds"] >= 0.05 for q in looked)
 
 
 def test_the_key_searches_for_some_words(tmp_path):

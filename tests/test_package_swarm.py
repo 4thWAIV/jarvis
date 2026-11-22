@@ -265,6 +265,7 @@ def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, p
     # The program's searches are in the run's search log as its own.
     logged = research_log.read(folder / research_log.NAME)
     assert logged and {e["role"] for e in logged} == {ps.PROGRAM}
+    assert all(isinstance(e.get("seconds"), float) for e in logged), "each search timed"
     assert f"{place.path}/found.md" in {h for e in logged for h in e["hits"]}
     kept = json.loads((folder / ps.STATE).read_text())
     assert kept["researched"] and kept["participants"]["author"]["session"] == "session-author"

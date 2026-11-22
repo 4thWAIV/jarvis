@@ -211,13 +211,22 @@ def item_searches(item) -> list[Callable[[], list[dict]]]:
     return [lambda: _prs_and_runs(item.id), lambda: _conversation(item)]
 
 
+def _timed(call: Callable[[], list[dict]]) -> list[dict]:
+    """A call's queries, each with how long the call took (`seconds`, from
+    its start to its answer; work-list.md item 38: each search timed)."""
+    began = time.monotonic()
+    found = call()
+    seconds = round(time.monotonic() - began, 3)
+    return [{**q, "seconds": seconds} for q in found]
+
+
 def at_once(calls: list[Callable[[], list[dict]]]) -> list[dict]:
-    """Every call run at the same time, each on a thread of its own; their
-    queries in the order the calls were given."""
+    """Every call run at the same time, each on a thread of its own and
+    timed (`_timed`); their queries in the order the calls were given."""
     if not calls:
         return []
     with ThreadPoolExecutor(max_workers=len(calls), thread_name_prefix="research") as pool:
-        return [q for found in pool.map(lambda call: call(), calls) for q in found]
+        return [q for found in pool.map(_timed, calls) for q in found]
 
 
 def queries(item, search: Search, folder_for: Optional[FolderFor] = None) -> list[dict]:

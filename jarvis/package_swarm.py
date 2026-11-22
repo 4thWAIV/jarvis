@@ -514,13 +514,15 @@ def _unders(run: Run) -> list[Optional[str]]:
 
 def _looked_up(run: Run, calls: list) -> list[dict]:
     """The searches run at once, each logged as the program's own in the
-    run's research log (research_log.py, so the hits the script uses are
-    marked used)."""
+    run's research log with its seconds (research_log.py, so the hits the
+    script uses are marked used, and the step's timing, run_report, has
+    each search)."""
     looked = work_research.at_once(calls)
     for q in looked:
         arguments = {"query": q["query"], "under": q.get("under"), "kinds": q.get("kinds")}
         research_log.record(run.log, SEARCHER, q["tool"], arguments, not q.get("error"),
-                            json.dumps(q["hits"], ensure_ascii=False, default=str))
+                            json.dumps(q["hits"], ensure_ascii=False, default=str),
+                            q.get("seconds"))
     return looked
 
 
