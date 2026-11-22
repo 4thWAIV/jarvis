@@ -21,7 +21,10 @@ all 28 labels; about 190 calls of two minutes a package.
   window. Several files to a page; a file too long
   for one is split across pages at its section breaks, each piece keeping
   its file and positions. Tokens are counted cheaply, erring high
-  (`tokens`).
+  (`tokens`). Asked by several workers at once, the material goes into
+  exactly one page a worker while the budget lets it (fewer only with
+  fewer atoms than workers), the answers shared evenly (`pages_for`,
+  `_even`); never a page more than the workers, waiting for a second wave.
 - `run`: the pages asked at once, at most the brain's own number
   (model_tiers.PARALLEL), each worker keeping one session across its
   pages (a new conversation for each page, on the same brain process where
@@ -275,30 +278,101 @@ def pack(docs: Sequence[Doc], fixed: int, room: Budget, spread: int = 1) -> list
     one falls late enough, given with its context.
 
     `spread`, the workers that ask the pages at once: the pages are asked
-    in parallel, so the answers are shared evenly across the workers that
-    ask them (`share`), no page's answer more than its share, or one
-    atom's where that is larger; the budget still bounds every page, so
-    material more than the workers' pages hold fills them toward half the
-    window. Measured 2026-11-21 on Codex, package-121122ef070f's evidence:
+    in parallel, so the material goes into exactly as many pages as there
+    are workers (`pages_for`: never more while the budget lets the material
+    fit in that many, fewer only when there are fewer atoms than workers),
+    their answers shared as evenly as the material allows (`_even`: the
+    smallest share of the answer that packs into that many pages); the
+    budget still bounds every page, so material more than the workers'
+    pages hold takes the fewest pages the budget allows, evened the same
+    way. Measured 2026-11-21 on Codex, package-121122ef070f's evidence:
     two pages filled to half the window were each answered with a few
     hundred tokens that did not check, and their halves took six minutes
-    each; shared across ten workers the same marking took 137 s."""
+    each; shared across ten workers the same marking took 137 s. Measured
+    on package-870e45145b2d: packed greedily to a share, 11 pages on 10
+    workers, so one page waited for a second wave (the slowest call 127 s).
+    """
     if not room.fits(fixed, 0):
         raise TooLarge(f"the instructions alone ({fixed} tokens) do not fit half of the "
                        f"model's {room.window}-token window")
+    atoms = [a for d in docs for a in d.atoms]
+    if not atoms:
+        return []
+    fewest = _greedy(docs, fixed, room, None)
+    target = pages_for(len(fewest), len(atoms), spread)
+    packed = _even(docs, fixed, room, target, atoms)
+    return _split_to(packed, target, fixed, room)
+
+
+def pages_for(fewest: int, atoms: int, spread: int) -> int:
+    """How many pages the material goes into: one a worker (`spread`),
+    never more pages than atoms, and never fewer than the `fewest` the
+    budget allows."""
+    return max(fewest, min(max(spread, 1), atoms))
+
+
+def _even(docs: Sequence[Doc], fixed: int, room: Budget, target: int,
+          atoms: list[Atom]) -> list[Page]:
+    """The docs packed into at most `target` pages with the smallest share
+    of the answer a page may take that does it (a binary search over the
+    share; with no share at all the budget alone packs them into the fewest
+    pages, which is at most `target`)."""
+    low = max(a.answer for a in atoms)
+    high = sum(a.answer for a in atoms)
+    best = _greedy(docs, fixed, room, high)
+    while low < high:
+        middle = (low + high) // 2
+        packed = _greedy(docs, fixed, room, middle)
+        if len(packed) <= target:
+            best, high = packed, middle
+        else:
+            low = middle + 1
+    return best
+
+
+def _split_to(packed: list[Page], target: int, fixed: int, room: Budget) -> list[Page]:
+    """Pages cut in half (`Page.halves`), the largest answer first, until
+    there are `target`: a doc that goes whole leaves a page fewer than the
+    workers. A page whose halves would not fit the budget (a cut doc's
+    context given again) is left whole."""
+    out = list(packed)
+    while len(out) < target:
+        for page in sorted(out, key=lambda p: p.answer, reverse=True):
+            halves = page.halves()
+            if halves is not None and all(room.fits(fixed + h.given, h.answer)
+                                          for h in halves):
+                at = out.index(page)
+                out[at:at + 1] = list(halves)
+                break
+        else:
+            break
+    return out
+
+
+def _greedy(docs: Sequence[Doc], fixed: int, room: Budget, limit: Optional[int]
+            ) -> list[Page]:
+    """The docs packed in order, each page filled while it fits the budget
+    and, with a `limit`, while its answer is at most that."""
     pages: list[Page] = []
     page = Page()
-    limit = share([a for d in docs for a in d.atoms], spread)
+    held = [0, 0]                   # the page under way's given and answer, kept as it fills
 
     def fits(on: Page, given: int, answer: int) -> bool:
-        return (on.answer + answer <= limit
-                and room.fits(fixed + on.given + given, on.answer + answer))
+        on_given, on_answer = held if on is page else (0, 0)
+        return ((limit is None or on_answer + answer <= limit)
+                and room.fits(fixed + on_given + given, on_answer + answer))
+
+    def add(entry: Entry) -> None:
+        page.entries.append(entry)
+        held[0] += entry.given
+        held[1] += entry.answer
 
     def close() -> None:
         nonlocal page
         if page.entries:
             pages.append(page)
         page = Page()
+        held[:] = [0, 0]
 
     for doc in docs:
         if not doc.atoms:
@@ -306,11 +380,11 @@ def pack(docs: Sequence[Doc], fixed: int, room: Budget, spread: int = 1) -> list
         whole_given = sum(a.given for a in doc.atoms) + doc.context
         whole_answer = sum(a.answer for a in doc.atoms)
         if fits(page, whole_given, whole_answer):
-            page.entries.append(Entry(doc, list(doc.atoms), True))
+            add(Entry(doc, list(doc.atoms), True))
             continue
         if page.entries and fits(Page(), whole_given, whole_answer):
             close()
-            page.entries.append(Entry(doc, list(doc.atoms), True))
+            add(Entry(doc, list(doc.atoms), True))
             continue
         # Too long for a page: pieces, each with its context where every
         # one of its atoms fits beside it, else without.
@@ -332,7 +406,7 @@ def pack(docs: Sequence[Doc], fixed: int, room: Budget, spread: int = 1) -> list
                 answer += doc.atoms[stop].answer
                 stop += 1
             stop = _cut(doc.atoms, at, stop)
-            page.entries.append(Entry(doc, doc.atoms[at:stop], False, context))
+            add(Entry(doc, doc.atoms[at:stop], False, context))
             at = stop
             if at < len(doc.atoms):
                 close()

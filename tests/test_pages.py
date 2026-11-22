@@ -155,10 +155,12 @@ def test_pages_fill_toward_half_the_window_with_a_small_answer():
     room = pages.Budget(window=10_000, answer_most=10_000, expected=0.5)
     # Each atom given 10 tokens, its answer at most 40 (more than it gives).
     docs = [pages.Doc(f"d{n}", [pages.Atom([f"d{n}"], 10, 40)]) for n in range(1_000)]
+    filled = pages._greedy(docs, 100, room, None)
+    assert 100 + filled[0].given > 0.45 * room.window, "a page fills toward half the window"
     packed = pages.pack(docs, fixed=100, room=room)
-    first = packed[0]
-    assert 100 + first.given > 0.45 * room.window, "the page fills toward half the window"
-    assert room.fits(100 + first.given, first.answer)
+    assert len(packed) == len(filled), "the fewest pages the budget allows, evened"
+    assert all(room.fits(100 + p.given, p.answer) for p in packed)
+    assert max(p.given for p in packed) - min(p.given for p in packed) <= 40
 
 
 def test_a_rate_limited_call_pauses_every_worker_and_is_asked_again():
@@ -220,3 +222,35 @@ def test_the_budget_still_bounds_a_page_when_the_share_is_larger():
     packed = pages.pack(docs, fixed=100, room=room, spread=2)
     assert len(packed) > 2 and all(100 + p.given <= 2_000 for p in packed), \
         "every page at most half the window, whatever the share"
+
+
+def test_never_more_pages_than_workers_while_the_budget_lets_it():
+    # package-870e45145b2d: packed greedily to a share, 11 pages on 10
+    # workers, so one page waited for a second wave. Uneven files, each to
+    # go whole where it can.
+    room = pages.Budget(window=1_000_000, answer_most=1_000_000, expected=0.5)
+    sizes = [900, 40, 1_300, 75, 600, 20, 2_100, 310, 55, 870, 1_500, 30, 260, 700, 95]
+    docs = [_doc(f"d{n}", [s // 5] * 5) for n, s in enumerate(sizes)]
+    packed = pages.pack(docs, fixed=100, room=room, spread=10)
+    assert len(packed) == 10, "exactly one page a worker"
+    loads = [p.answer for p in packed]
+    assert max(loads) <= 1.5 * sum(loads) / 10, "the answers shared evenly"
+    assert [i for p in packed for i in p.items] == [i for d in docs for a in d.atoms
+                                                    for i in a.items], "in order, none lost"
+    few = [_doc("a", [5, 5]), _doc("b", [5])]
+    assert len(pages.pack(few, fixed=100, room=room, spread=10)) == 3, "no more pages than atoms"
+    one = [_doc("big", [10] * 20)]
+    assert len(pages.pack(one, fixed=100, room=room, spread=4)) == 4, \
+        "a doc that would go whole is cut so every worker has a page"
+
+
+def test_material_the_budget_cannot_fit_in_the_workers_pages_takes_the_fewest_it_allows():
+    room = pages.Budget(window=4_000, answer_most=4_000, expected=0.5)
+    docs = [pages.Doc(f"d{n}", [pages.Atom([f"d{n}"], 100, 10)]) for n in range(100)]
+    fewest = len(pages.pack(docs, fixed=100, room=room, spread=1))
+    packed = pages.pack(docs, fixed=100, room=room, spread=2)
+    assert len(packed) == fewest > 2
+    assert all(room.fits(100 + p.given, p.answer) for p in packed)
+    assert pages.pages_for(fewest=3, atoms=100, spread=10) == 10
+    assert pages.pages_for(fewest=12, atoms=100, spread=10) == 12
+    assert pages.pages_for(fewest=1, atoms=4, spread=10) == 4
