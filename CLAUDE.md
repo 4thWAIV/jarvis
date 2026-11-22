@@ -1723,8 +1723,8 @@ indexed with the raw files and waited for as gather's are;
 A Work item's own research (`work_research.py`; design: research
 work_item_research) is made again on every change of the item
 (`work_store.on_changed`, `REFRESHER`, started with the session watcher):
-the key searches a package's research runs, its title the key terms:
-`knowledge_search` under its own folder, under its source's registered
+the key searches a package's research runs, its title the key terms, all
+at once (`work_research.at_once`): `knowledge_search` under its own folder, under its source's registered
 folder, across the whole record and in the conversation's turns; the PRs
 and CI runs recorded against it looked up as they are now; his messages on
 it (`conversation_history`) and the agents' (`messages_to_him`); his memory
@@ -1743,18 +1743,38 @@ defaulting as the other roles do) writes them; one that cannot be made
 leaves what was looked up written, logged, and the next change tries
 again.
 The research step (`package_swarm.research`, `PRODUCERS["research"]`;
-design: workflow.yaml research) is the author's first turn in its own
-long-lived ChatSession (tier 1, high effort, the research tools), in the
-run's folder: its approved prompt (`package_swarm.system_of`) and its
-material (`_Firsts`: the sender's two answers, the handoff's questions with
-the sender's options labelled, and every stored file whole with what the
-mark step read in it, `author_material`, each with Tim's knowledge state),
-and the program's words saying where it starts from (`research_note`: the
-Work item's research folder, the marked evidence, the evidence path to
-search under, an earlier run's research copied into `earlier/` by
-`_carry_earlier`) and where `research.md` goes; a turn that leaves none is
-the step's Error. Every call a role makes on its own tool server is logged
-there (`role_mcp.py --log`, `research_log.record`: one line a search in
+design: workflow.yaml research, reorganized by construction-drafts.md
+"Research and prep reorganized", Tim 2026-11-21) runs every research search
+at once first, by program (`first_searches`, `work_research.at_once`, one
+thread a search): for each of the handoff's questions the key searches
+(`work_research.key_searches`: words and meaning under the package's
+evidence path, each Work item's folder and the whole record, the
+conversation's turns, `recall` and the brain's own past conversations),
+and each Work item's own lookups (`item_searches`: its PRs and CI runs as
+they are now, his words and the agents' messages on it), straight on the
+engine with the run's own patience (`work_research.engine_search`,
+Settings' `run_timeout_sec`, never the brain's short search deadline;
+`SEARCH`). Then the author's first turn in its own long-lived ChatSession
+(tier 1, at medium effort for that turn alone, `RESEARCH_EFFORT`, through
+`build`'s `effort`), in the run's folder: its approved prompt
+(`package_swarm.system_of`) and its material (`_Firsts`: the sender's two
+answers, the handoff's questions with the sender's options labelled, and
+every stored file whole with what the mark step read in it,
+`author_material`, each with Tim's knowledge state), what the searches
+found (`research-searches.md`, `work_research.markdown`), and the
+program's words saying where it starts from (`research_note`: the Work
+item's research folder, the marked evidence, the evidence path, an earlier
+run's research copied into `earlier/` by `_carry_earlier`) and that
+`research.md` and `prep.md` are written together in that turn. When it
+needs more it names the searches in its answer (`more_searches`, each its
+words and a path or none: run as the key searches there, else everywhere
+the first ones looked); the program runs them at once and gives it one more
+turn (`more_note`). A turn that leaves either file is the step's Error.
+Each part is timed in `swarm.json`'s `times` (`research-searches`,
+`research`, `research-more-searches`, `research-more`). The program's
+searches go in the run's search log as `jarvis`, and every call a role
+makes on its own tool server is logged there (`role_mcp.py --log`,
+`research_log.record`: one line a search in
 `research-log.jsonl`, the role, the tool, its arguments, its `seconds`, the hits by
 program, `research_log.hit_paths`: a history search's sources without
 their line numbers, so a fact citing the source is matched, and the
@@ -1788,7 +1808,7 @@ own turn), asks the sender only what only the sender knows
 reason, or `not_yet` with what is left, the fix it suggests and any
 evidence missing; one that says neither is not yet, the program saying
 why). The flow (`flow` in `swarm.json`, each stage timed in `times` by
-`Clock`): the outline (the author writes `prep.md` and gives the outline
+`Clock`): the outline (from its research and prep the author gives the outline
 in its answer, `outline.yaml`, outline/1, `package_script.OutlineFile`:
 each slide's id, title, one point, the question it answers or is
 background for, and its evidence by source path; the three owners work on

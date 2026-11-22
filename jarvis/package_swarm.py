@@ -6,19 +6,26 @@ cooperative swarm, construction-drafts.md "Cooperative swarm", approved
 Run after mark in JARVIS's own process (package_jobs.PRODUCERS), in the
 run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
 
-  research   the author's ChatSession (tier 1, its research tools: the
-             research right's, the brain's own past conversations among
-             them) is given its approved prompt and its material: the
-             sender's two answers, the handoff's questions, and everything
-             gathered and marked, each item with Tim's knowledge state. It
-             starts from what is there (the Work item's research,
-             data/work/<id>/research/; the marked evidence; an earlier
-             run's research, copied into `earlier/`), searches only for what
-             each question still lacks, and writes `research.md`. Every
-             search a role makes is logged by its own tool server
-             (research_log.py, `research-log.jsonl`). Research is done once
-             a run, never again each pass: the author researches again only
-             for what a sign-off names as missing evidence.
+  research   the program runs every research search at once (research
+             key_searches; construction-drafts.md "Research and prep
+             reorganized", Tim 2026-11-21): for each of the handoff's
+             questions, words and meaning under the package's evidence, each
+             Work item's folder and the whole record, his conversation's
+             turns, his memory and the brain's own past conversations; and
+             each Work item's PRs and CI runs and its thread
+             (work_research's searches, straight on the engine with the
+             run's own patience). The author's ChatSession (tier 1) is given
+             its approved prompt, its material (the sender's two answers,
+             the handoff's questions, everything gathered and marked, each
+             item with Tim's knowledge state) and what the searches found,
+             in ONE turn at medium effort, and writes `research.md` and
+             `prep.md` together. When it needs more it names the searches
+             in its answer; the program runs them at once and gives it one
+             more turn. What was looked up is `research-searches.md`, and
+             every search is in the run's search log (research_log.py,
+             `research-log.jsonl`), the program's as `jarvis`. Research is
+             done once a run, never again each pass: the author researches
+             again only for what a sign-off names as missing evidence.
   swarm      the team in one conversation (sessions.BrainSwarmSession),
              logged word for word: the author; Tim's reader (does Tim care
              about each part, and what would he ask); the context owner (is
@@ -32,7 +39,7 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
              with a quoted reason, or not yet, with what is left and the fix
              it suggests. Nobody votes.
 
-             1 outline: the author writes the prep (`prep.md`) and the
+             1 outline: from its research and prep, the author writes the
                outline (outline.yaml, outline/1: each slide's title, its one
                point, the question it answers, its evidence by source path);
                the three owners work on it in parallel; the author settles
@@ -72,6 +79,8 @@ it reached (`flow`).
 """
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import hashlib
 import json
 import re
@@ -374,12 +383,14 @@ class _Firsts:
         return said
 
 
-def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = ()
-          ) -> sessions.BrainSwarmSession:
+def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
+          effort: Optional[dict[str, str]] = None) -> sessions.BrainSwarmSession:
     """The swarm: each participant on its role, its model picked (the
     author first, the owners then on the other brain from it when Settings
     says so), or resumed on the session it had; `more`, the concerns the
-    deck review adds (package_deck). Raises NoModel."""
+    deck review adds (package_deck); `effort`, a participant's effort for
+    this launch in place of its role's (the author's research turn).
+    Raises NoModel."""
     material = evidence(run)
     participants: dict[str, sessions.ChatSession] = {}
     author_engine = None
@@ -387,6 +398,8 @@ def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = ()
         role = roles.role(name)
         had = (kept.get("participants") or {}).get(name) or {}
         common = dict(reads=run.reads(name), search_log=run.log, on_log=_log)
+        if name in (effort or {}):
+            common["role_spec"] = dataclasses.replace(role, effort=effort[name])
         if had.get("session"):
             pick = model_tiers.Pick(had["engine"], had["model"], role.tier, "resumed",
                                     [had["model"]])
@@ -462,11 +475,101 @@ def _carry_earlier(run: Run) -> Optional[Path]:
     return target
 
 
-def research_note(run: Run, earlier: Optional[Path]) -> str:
-    """The program's words to the author for its research: where what it
-    starts from is, and where research.md goes (workflow.yaml research
-    start_from_work_item and output)."""
-    lines = []
+# What the program looked up, given to the author and kept beside the run.
+SEARCHES_MD = "research-searches.md"
+# The author's research turn (construction-drafts.md "Research and prep
+# reorganized", Tim 2026-11-21): medium effort, for that turn alone.
+RESEARCH_EFFORT = "medium"
+# The program's searches, in the research log, as the program's own.
+SEARCHER = PROGRAM
+
+MORE_SEARCHES = sessions._array(sessions._object({
+    "words": {"type": "string", "description": "What to search for."},
+    "under": {"type": "string",
+              "description": "The path in JARVIS's knowledge to search under, or empty to "
+                             "search everywhere JARVIS searched."},
+    "why": {"type": "string", "description": "What a question still lacks that it finds."}}))
+RESEARCH_FORM = sessions._object({**TALK["properties"], "more_searches": MORE_SEARCHES})
+
+
+def _patience() -> float:
+    """How long a research search is waited for: the run's own wall clock
+    (Settings' run_timeout_sec, run_executor.bounds), as its role calls are."""
+    from jarvis import run_executor
+    return run_executor.bounds()[0]
+
+
+# How the research step searches the engine (tests give their own).
+SEARCH: Callable[[], work_research.Search] = lambda: work_research.engine_search(_patience())
+
+
+def _unders(run: Run) -> list[Optional[str]]:
+    """Where each question is searched (research key_searches): the
+    package's evidence, each Work item's folder (its research and earlier
+    packages), and across the whole record (None)."""
+    from jarvis import package_gather, work_store
+    return ([run.place.path] + [work_store.folder_of(w) for w in package_gather._work_ids(run.doc)]
+            + [None])
+
+
+def _looked_up(run: Run, calls: list) -> list[dict]:
+    """The searches run at once, each logged as the program's own in the
+    run's research log (research_log.py, so the hits the script uses are
+    marked used)."""
+    looked = work_research.at_once(calls)
+    for q in looked:
+        arguments = {"query": q["query"], "under": q.get("under"), "kinds": q.get("kinds")}
+        research_log.record(run.log, SEARCHER, q["tool"], arguments, not q.get("error"),
+                            json.dumps(q["hits"], ensure_ascii=False, default=str))
+    return looked
+
+
+def first_searches(run: Run, search: work_research.Search) -> list[dict]:
+    """Every research search, at once (research key_searches, run by the
+    program): for each of the handoff's questions, words and meaning under
+    the package's evidence, each Work item's folder and the whole record, his
+    conversation's turns, his memory and the brain's own past
+    conversations; and each Work item's PRs and CI runs and its thread."""
+    from jarvis import package_gather, work_store
+    unders = _unders(run)
+    calls = []
+    for q in (run.doc.get("request") or {}).get("questions") or []:
+        calls += work_research.key_searches(q["text"], search, unders)
+    for work in package_gather._work_ids(run.doc):
+        calls += work_research.item_searches(work_store.get(work))
+    return _looked_up(run, calls)
+
+
+def more_searches(run: Run, search: work_research.Search, named: list[dict]) -> list[dict]:
+    """The searches the author named, at once: each its words, run as the
+    key searches under the path it gave, else everywhere the first ones
+    looked."""
+    calls = []
+    for want in named:
+        words = (want.get("words") or "").strip()
+        if words:
+            under = (want.get("under") or "").strip() or None
+            calls += work_research.key_searches(words, search,
+                                                [under] if under else _unders(run))
+    return _looked_up(run, calls)
+
+
+def _searched_text(run: Run, looked: list[dict], heading: str, first: bool) -> str:
+    """What was looked up, written beside the run (SEARCHES_MD: the first
+    searches, then the author's added to it) and as the author is given it."""
+    text = work_research.markdown(heading, looked)
+    with open(run.folder / SEARCHES_MD, "w" if first else "a", encoding="utf-8") as out:
+        out.write(text + "\n")
+    return sessions._tag("searched", text, file=SEARCHES_MD)
+
+
+def research_note(run: Run, earlier: Optional[Path], searched: str) -> str:
+    """The program's words to the author for its research: what JARVIS
+    looked up for it, where what it starts from is, and where research.md
+    and prep.md go (construction-drafts.md "Research and prep reorganized";
+    workflow.yaml research start_from_work_item and output)."""
+    lines = [f"JARVIS ran every research search at once for each of your questions; "
+             f"what each found is below ({run.folder / SEARCHES_MD})."]
     if run.work_research is not None and run.work_research.is_dir():
         lines.append(f"The Work item's research is in {run.work_research}: what was looked up "
                      f"for it, each query with its hits ({work_research.QUERIES_MD}), and the "
@@ -480,34 +583,62 @@ def research_note(run: Run, earlier: Optional[Path]) -> str:
         lines.append(f"An earlier run's research is in {earlier}: its {RESEARCH_MD} and its "
                      f"search log ({research_log.NAME}).")
     lines.append(f"Write your research in {run.research}: each finding with its source path, "
-                 f"for each question.")
-    return "\n".join(lines)
+                 f"for each question. Write the prep in {run.prep}. Write both in this turn.")
+    lines.append("If a question still lacks something, name the searches that would find it "
+                 "in `more_searches`: JARVIS runs them all at once and gives you what they "
+                 "found, once, to finish both files. Otherwise leave it empty.")
+    return "\n".join(lines) + "\n\n" + searched
+
+
+def more_note(run: Run, searched: str) -> str:
+    return (f"JARVIS ran the searches you named, at once; what each found is below. Finish "
+            f"your research in {run.research} and the prep in {run.prep} now.\n\n" + searched)
 
 
 def research(doc: dict) -> None:
-    """The research step of one run (package_jobs.PRODUCERS["research"])."""
+    """The research step of one run (package_jobs.PRODUCERS["research"]):
+    the program's searches, all at once; the author's one turn writing the
+    research and the prep at medium effort; and when it names more, those
+    searches at once and one more turn."""
     run = _run(doc, RESEARCH)
     kept = _kept(run)
-    if kept.get("researched") and run.research.is_file():
+    if kept.get("researched") and run.research.is_file() and run.prep.is_file():
         return
     earlier = _carry_earlier(run)
+    clock = Clock(kept)
+    search = SEARCH()
+    with clock("research-searches"):
+        searched = _searched_text(run, first_searches(run, search),
+                                  "What JARVIS looked up for the handoff's questions", True)
 
     async def go():
-        swarm = build(run, kept)
+        swarm = build(run, kept, effort={AUTHOR: RESEARCH_EFFORT})
         author = swarm.participants[AUTHOR]
         try:
             await author.open()
-            with Clock(kept)(RESEARCH):
-                await swarm.answer(AUTHOR, TIMEOUT, research_note(run, earlier), TALK)
+            with clock(RESEARCH):
+                answer = await swarm.answer(AUTHOR, TIMEOUT,
+                                            research_note(run, earlier, searched), RESEARCH_FORM)
+            named = [w for w in answer.get("more_searches") or [] if (w.get("words") or "").strip()]
+            if named:
+                with clock("research-more-searches"):
+                    more = await asyncio.to_thread(more_searches, run, search, named)
+                    more_text = _searched_text(run, more, "What JARVIS looked up for the "
+                                                          "searches the author named", False)
+                with clock("research-more"):
+                    await swarm.answer(AUTHOR, TIMEOUT, more_note(run, more_text), TALK)
         finally:
             _keep(run, swarm, kept)
             await author.close()
     package_jobs.asked(RESEARCH, "the author",
-                       "JARVIS asked the author to research the handoff's questions.", go())
-    if not run.research.is_file():
-        raise package_jobs.Blocked(RESEARCH, f"The author wrote no {RESEARCH_MD}.",
-                                   "JARVIS asked the author for its research, each finding with "
-                                   "its source path, for each question.",
+                       "JARVIS asked the author to write the research and the prep from what "
+                       "its searches found.", go())
+    missing = [p.name for p in (run.research, run.prep) if not p.is_file()]
+    if missing:
+        raise package_jobs.Blocked(RESEARCH, f"The author wrote no {' and no '.join(missing)}.",
+                                   "JARVIS gave the author what its searches found and asked for "
+                                   "its research, each finding with its source path, for each "
+                                   "question, and the prep.",
                                    "Read the run's conversation and log for why; a new run.")
     kept["researched"] = True
     _save(run, kept)
@@ -730,7 +861,7 @@ async def author_writes(swarm: sessions.BrainSwarmSession, work, stage: str, add
 # ── the program's words to each ───────────────────────────────────────────
 
 def outline_note(run: Run) -> str:
-    return (f"Write the prep in {run.prep}. Then give the outline in your answer, as "
+    return (f"From your research and the prep, give the outline in your answer, as "
             f"`outline` in the schema given with this call ({package_script.OUTLINE_VERSION}): "
             f"JARVIS checks it and writes it to {run.outline}.")
 

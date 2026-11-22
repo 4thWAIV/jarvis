@@ -32,6 +32,7 @@ import json
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -72,6 +73,39 @@ def _search(search: Search, tool: str, text: str, under: Optional[str] = None,
     except Exception as e:  # noqa: BLE001 - what was looked up says it could not be
         return {**query, "hits": [], "error": f"{type(e).__name__}: {e}"}
     return {**query, "hits": _hits(answer), "partial": answer.get("partial", False)}
+
+
+def engine_search(patience: float, uds=None) -> Search:
+    """knowledge_search's search straight on the knowledge engine (records'
+    own, else `uds`), words and meaning, read as Tim, each call waited for
+    `patience` seconds: a package step's own patience, never the brain's
+    short search deadline. Each hit as knowledge_search gives it: its path,
+    source, score, which index found it, and the words where it matched
+    (the section, else the record's field holding most of the words)."""
+    from jarvis import knowledge_api
+    from jarvis.knowledge.uds import Caller, Query, Stream
+
+    def search(text: str, under: Optional[str], kinds: Optional[list]) -> dict:
+        engine = (uds or records.uds()).with_deadline(patience)
+        caller = Caller(knowledge_api.TIM, agent="jarvis")
+        found = engine.search(caller, Query(meaning=text, words=text, under=under or "/",
+                                            types=tuple(kinds) if kinds else None,
+                                            limit=HITS))
+        hits = []
+        for h in found:
+            item = engine.get(caller, h.path, {Stream.DATA, Stream.SECTIONS})
+            if item is None:
+                continue
+            data = dict(item.data or {})
+            sections = list(item.sections or ())
+            at = next((s for s in sections if s.index in h.sections),
+                      sections[0]) if sections else None
+            words = (at.text[:knowledge_api.ITEM_TEXT_MAX] if at is not None
+                     else knowledge_api._passage(data, text))
+            hits.append({"key": h.path, "source": data.get("file") or h.path,
+                         "score": h.score, "why": sorted(h.matched_by), "text": words})
+        return {"hits": hits}
+    return search
 
 
 # The registered folder holding a path on this Mac (the folder catalog's
@@ -155,22 +189,46 @@ def _recall(text: str) -> dict:
         return {"tool": "recall", "query": text, "hits": [], "error": str(e)}
 
 
+def key_searches(terms: str, search: Search, unders: list[Optional[str]]
+                 ) -> list[Callable[[], list[dict]]]:
+    """The key searches for some key terms (research key_searches), each a
+    call giving its queries with their hits: knowledge_search (words and
+    meaning) under each of `unders` (None: across the whole record), the
+    conversation's turns, his memory (recall) and the brain's own past
+    conversations (search_history, then read_history)."""
+    calls: list[Callable[[], list[dict]]] = [
+        (lambda under=under: [_search(search, "knowledge_search", terms, under)])
+        for under in unders]
+    calls.append(lambda: [_search(search, "knowledge_search", terms, None, ["turn"])])
+    calls.append(lambda: [_recall(terms)])
+    calls.append(lambda: _history(terms))
+    return calls
+
+
+def item_searches(item) -> list[Callable[[], list[dict]]]:
+    """A Work item's own lookups: its PRs and CI runs as they are now, and
+    its thread (his words on it, the agents' messages on it)."""
+    return [lambda: _prs_and_runs(item.id), lambda: _conversation(item)]
+
+
+def at_once(calls: list[Callable[[], list[dict]]]) -> list[dict]:
+    """Every call run at the same time, each on a thread of its own; their
+    queries in the order the calls were given."""
+    if not calls:
+        return []
+    with ThreadPoolExecutor(max_workers=len(calls), thread_name_prefix="research") as pool:
+        return [q for found in pool.map(lambda call: call(), calls) for q in found]
+
+
 def queries(item, search: Search, folder_for: Optional[FolderFor] = None) -> list[dict]:
-    """Every query run for the Work item, with its hits: the key searches
-    (research key_searches), its title the key terms."""
+    """Every query run for the Work item, with its hits, all at once: the
+    key searches (research key_searches), its title the key terms, under
+    its own folder, its source's registered folder and the whole record;
+    and its own lookups."""
     from jarvis import work_store
-    terms = item.title
-    looked = [_search(search, "knowledge_search", terms, work_store.folder_of(item.id))]
     source = _source_folder(item, folder_for)
-    if source:
-        looked.append(_search(search, "knowledge_search", terms, source))
-    looked.append(_search(search, "knowledge_search", terms))
-    looked += _prs_and_runs(item.id)
-    looked += _conversation(item)
-    looked.append(_search(search, "knowledge_search", terms, None, ["turn"]))
-    looked.append(_recall(terms))
-    looked += _history(terms)
-    return looked
+    unders = [work_store.folder_of(item.id)] + ([source] if source else []) + [None]
+    return at_once(key_searches(item.title, search, unders) + item_searches(item))
 
 
 def _query_id(q: dict) -> str:
@@ -207,8 +265,9 @@ def _summaries_md(item, summaries: list[sessions.Summary]) -> str:
     return "\n".join(out)
 
 
-def _markdown(item, looked: list[dict]) -> str:
-    out = [f"# What was looked up for Work item {item.id}: {item.title}", "",
+def markdown(heading: str, looked: list[dict]) -> str:
+    """What was looked up, each query with its hits, as Markdown."""
+    out = [f"# {heading}", "",
            f"Looked up: {time.strftime('%Y-%m-%d %H:%M', time.localtime())}", ""]
     for q in looked:
         out += [f"## {q['tool']}: {json.dumps(q['query'], ensure_ascii=False)}"
@@ -237,7 +296,8 @@ def refresh(item_id: str, search: Search, folder_for: Optional[FolderFor] = None
     folder.mkdir(parents=True, exist_ok=True)
     package_evidence.write_file(folder / QUERIES, json.dumps(
         looked, indent=2, ensure_ascii=False, default=str).encode("utf-8"))
-    package_evidence.write_file(folder / QUERIES_MD, _markdown(item, looked).encode("utf-8"))
+    package_evidence.write_file(folder / QUERIES_MD, markdown(
+        f"What was looked up for Work item {item.id}: {item.title}", looked).encode("utf-8"))
     if summarizer is not None:
         try:
             summaries = summarizer(folder).summarize(

@@ -460,11 +460,11 @@ EXEMPT = {
         "it writes Tim's record into the package's evidence file jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
     "session_transcript.find": (
         "it returns the path of a session's own transcript, found by its id; nothing it reads is printed, said or put in a header"),
-    "work_research._markdown": (
-        "it writes what was looked up for a Work item into its research file, data/work/<id>/research/queries.md, indexed as material; never a brain header, never said"),
+    "work_research.markdown": (
+        "it writes what was looked up into a research file (a Work item's data/work/<id>/research/queries.md, a package run's research-searches.md), indexed as material, and the same text is given to the package's author as material; never a brain header, never said"),
     "work_research._summaries_md": (
         "it writes the summaries of what was looked up for a Work item into its research file, "
-        "data/work/<id>/research/summaries.md, indexed as material, as _markdown writes queries.md; "
+        "data/work/<id>/research/summaries.md, indexed as material, as markdown writes queries.md; "
         "never a brain header, never said"),
     "claude_provider.role_command": (
         "it builds a package role's `claude -p` argument list; the only field it reads is the "

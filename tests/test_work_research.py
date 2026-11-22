@@ -154,3 +154,40 @@ def test_a_summarization_that_cannot_be_made_leaves_what_was_looked_up(tmp_path)
                                    summarizer=cannot)
     assert (folder / work_research.QUERIES).exists()
     assert not (folder / work_research.SUMMARIES).exists()
+
+
+def test_searches_run_at_once_and_keep_their_order():
+    """Every call starts before any finishes (a barrier all must reach), and
+    the queries come back in the order the calls were given."""
+    gate = threading.Barrier(3, timeout=10)
+
+    def call(n):
+        def run():
+            gate.wait()
+            return [{"tool": "t", "query": str(n), "hits": []}]
+        return run
+    looked = work_research.at_once([call(1), call(2), call(3)])
+    assert [q["query"] for q in looked] == ["1", "2", "3"]
+    assert work_research.at_once([]) == []
+
+
+def test_the_key_searches_for_some_words(tmp_path):
+    asked = []
+
+    def search(text, under, kinds):
+        asked.append((text, under, kinds))
+        return {"hits": []}
+    looked = work_research.at_once(work_research.key_searches("the move", search,
+                                                               ["/work/w1", None]))
+    assert sorted(asked, key=str) == sorted([("the move", "/work/w1", None),
+                                             ("the move", None, None),
+                                             ("the move", None, ["turn"])], key=str)
+    assert {q["tool"] for q in looked} == {"knowledge_search", "recall", "search_history"}
+
+
+def test_the_engine_search_finds_a_record_by_its_words(tmp_path):
+    item_id = _item(tmp_path)
+    found = work_research.engine_search(60.0)("folders", None, None)
+    hit = next(h for h in found["hits"] if h["key"] == f"{work_store.folder_of(item_id)}/"
+               f"{item_id}.work")
+    assert hit["why"] and "folders" in (hit["text"] or "")

@@ -14,7 +14,10 @@ its own order: `system`, the role, given as the session's system prompt, and
 message. Marking's and classification's scoring lines are the first-round
 wording of the smart passes (Tim 2026-11-21: each sentence, or item, at
 most its top three at 0.5 or more; first-round prompt changes
-pre-approved), recorded in role-prompts.md. A role with no closing
+pre-approved), recorded in role-prompts.md; so are the author's lines on
+researching, the first-round wording of research and prep reorganized (Tim
+2026-11-21: JARVIS runs every search at once, the author names any more
+it needs, and writes the research and the prep together). A role with no closing
 material (the editor) is given its material turn by turn.
 """
 from __future__ import annotations
@@ -69,11 +72,12 @@ PROMPTS: dict[str, Prompt] = {
             'Order: the most relevant information first, not buried. Context and anything he already approved, then what happened and why, then the exact change and what it does, then the decision. Follow-up questions last.\n'
             '\n'
             'Before you write:\n'
-            "1. Read what the Work item's research already holds, the marked evidence and the scores against the questions.\n"
-            '2. Search only for what each question still lacks: a few targeted searches per question, not a sweep. Stop when each question has what it needs.\n'
+            "1. Read what JARVIS's searches found for each question, what the Work item's research already holds, the marked evidence and the scores against the questions.\n"
+            '2. Where a question still lacks something, name in your answer the searches that would find it: JARVIS runs them all at once and gives you what they found. Name only what each question still lacks, not a sweep.\n'
             '3. Never state anything about material you have not opened.\n'
             '\n'
-            'Then write the prep, then the script.\n'
+            'Then write the research and the prep together, then the script.\n'
+            '- The research is each finding with its source path, for each question.\n'
             '- The prep has five parts: does Tim care, and why; what he already knows, each item citing where in his record; the background he lacks; his first ten questions, each with a sourced answer or "unanswered"; how much each fact changes his answer.\n'
             "- The script is each slide's words and what JARVIS says over it.\n"
             '- Every fact in either names its source path. Where none is found, write "unanswered".\n'

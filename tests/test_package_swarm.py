@@ -96,6 +96,8 @@ class Plan:
         self.sent: dict[str, list[str]] = {}
         self.forms: dict[str, list[dict]] = {}
         self.opened: list[tuple[str, str | None]] = []
+        self.efforts: list[tuple[str, str]] = []
+        self.more: list[dict] = []              # the searches the author names
         self.script = script_of("PR 171 moves every Work item.", "files/situation.md")
         self.outline = outline_of()
         self.prep = "Does Tim care: yes."
@@ -120,7 +122,6 @@ class Plan:
         props = form["properties"]
         if "outline" in props:
             assert name == "author"
-            (self.folder / ps.PREP_MD).write_text(self.prep)
             return {"message": "author outlines", "outline": self.outline,
                     "ask_sender": self._asks(name)}
         if "script" in props:
@@ -138,17 +139,22 @@ class Plan:
                     "signoff": [{"concern": c, "state": state,
                                  "reason": f"{name}: {c} is fine" if state == "resolved"
                                  else "", "left": left} for c in concerns]}
-        assert set(props) == {"message"}
-        if name == "author" and "Write your research in" in text:
+        if "more_searches" in props:
+            assert name == "author" and "Write your research in" in text
             (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")
+            if self.prep is not None:
+                (self.folder / ps.PREP_MD).write_text(self.prep)
+            return {"message": f"{name} speaks", "more_searches": self.more}
+        assert set(props) == {"message"}
         return {"message": f"{name} speaks"}
 
 
 def _chat_factory(plan: Plan):
     class Chat:
         def __init__(self, role, prompt, folder, *, pick, reads=(), resume=None,
-                     search_log=None, on_log=None):
-            self.name, self.role, self.prompt = role, roles.role(role), prompt
+                     search_log=None, on_log=None, role_spec=None):
+            self.name, self.role, self.prompt = role, role_spec or roles.role(role), prompt
+            plan.efforts.append((role, self.role.effort))
             self.pick, self.model, self.session = pick, pick.model, resume
             self.reads, self.search_log = reads, search_log
 
@@ -208,6 +214,13 @@ def plan(marked, monkeypatch):
     monkeypatch.setattr(ps, "PICK", lambda kind, tier, **kw: model_tiers.Pick(
         "claude", {1: "fable", 2: "opus"}.get(tier, "sonnet"), tier, "test", ["x"]))
     monkeypatch.setattr(package_mark, "MARKING", lambda doc: Marking())
+    plan.searched = []
+
+    def search(text, under, kinds):
+        plan.searched.append((text, under, kinds))
+        return {"hits": [{"key": f"{under or ''}/found.md", "source": "found.md",
+                          "score": 0.5, "why": ["words"], "text": f"Found for {text}."}]}
+    monkeypatch.setattr(ps, "SEARCH", lambda: search)
     embedder = FakeEmbedder(64)
     monkeypatch.setattr(ps, "EMBED", lambda texts: [list(v) for v in
                                                     embedder.embed(texts, "query")])
@@ -222,26 +235,72 @@ def _research_and_swarm(doc):
 
 # ── research ──────────────────────────────────────────────────────────────
 
-def test_research_is_the_author_s_turn_from_what_is_there(marked, plan):
+def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, plan):
     ps.research(pj.get(marked["id"]))
     folder = Path(marked["folder"])
+    place = pe.place_of(marked)
     assert (folder / ps.RESEARCH_MD).read_text().startswith("Finding:")
+    assert (folder / ps.PREP_MD).read_text() == plan.prep, "research and prep together"
+    # Every search run by the program, before the author's turn: each
+    # question by words and meaning under the evidence, across the whole
+    # record and in the conversation's turns.
+    question = "Merge PR 171?"
+    assert (question, place.path, None) in plan.searched
+    assert (question, None, None) in plan.searched
+    assert (question, None, ["turn"]) in plan.searched
     first = plan.sent["author"][0]
     # Its approved material: the sender's two answers, the questions, and
     # everything gathered and marked, each item with Tim's knowledge state.
-    assert "PR 171 moves the Work items." in first and "Merge PR 171?" in first
+    assert "PR 171 moves the Work items." in first and question in first
     assert 'state="probably_does_not_know"' in first and 'state="knows"' in first
     assert "mark/files/situation.md.json" in first, "the marks with the files"
+    # What the searches found, in the same turn, and kept beside the run.
+    assert f"Found for {question}." in first and '<searched file="research-searches.md">' in first
+    assert f"Found for {question}." in (folder / ps.SEARCHES_MD).read_text()
     # Where it starts from, and the one evidence path every search names.
-    place = pe.place_of(marked)
-    assert f"knowledge_search under that path" in first and place.path in first
+    assert "knowledge_search under that path" in first and place.path in first
     assert str(place.folder / "mark") in first
     assert f"Write your research in {folder / ps.RESEARCH_MD}" in first
+    assert f"Write the prep in {folder / ps.PREP_MD}" in first
+    # The program's searches are in the run's search log as its own.
+    logged = research_log.read(folder / research_log.NAME)
+    assert logged and {e["role"] for e in logged} == {ps.PROGRAM}
+    assert f"{place.path}/found.md" in {h for e in logged for h in e["hits"]}
     kept = json.loads((folder / ps.STATE).read_text())
     assert kept["researched"] and kept["participants"]["author"]["session"] == "session-author"
     assert kept["swarm"]["conversation"] == [{"from": "author", "text": "author speaks"}]
-    assert kept["times"][0]["stage"] == "research" and kept["times"][0]["seconds"] >= 0
+    assert [t["stage"] for t in kept["times"]] == ["research-searches", "research"]
     assert plan.opened == [("author", None)], "only the author researches"
+    assert plan.forms["author"] == [ps.RESEARCH_FORM], "one turn when it names no more"
+    # Medium effort for the research turn alone.
+    assert ("author", ps.RESEARCH_EFFORT) in plan.efforts
+    assert dict(plan.efforts)["tims_reader"] == roles.role("tims_reader").effort
+
+
+def test_the_searches_the_author_names_run_at_once_then_one_more_turn(marked, plan):
+    plan.more = [{"words": "the old folders", "under": "/work/x", "why": "how it was"},
+                 {"words": "the release", "under": "", "why": "when"},
+                 {"words": "  ", "under": "", "why": "nothing"}]
+    ps.research(pj.get(marked["id"]))
+    folder = Path(marked["folder"])
+    assert ("the old folders", "/work/x", None) in plan.searched
+    assert ("the old folders", None, None) not in plan.searched, "only under its path"
+    assert ("the release", pe.place_of(marked).path, None) in plan.searched
+    assert ("the release", None, None) in plan.searched
+    assert len(plan.forms["author"]) == 2 and plan.forms["author"][1] == ps.TALK
+    assert "Found for the old folders." in plan.sent["author"][1]
+    assert "JARVIS ran the searches you named" in plan.sent["author"][1]
+    searched = (folder / ps.SEARCHES_MD).read_text()
+    assert "Found for Merge PR 171?." in searched and "Found for the release." in searched
+    kept = json.loads((folder / ps.STATE).read_text())
+    assert [t["stage"] for t in kept["times"]] == [
+        "research-searches", "research", "research-more-searches", "research-more"]
+
+
+def test_research_without_its_prep_is_an_error(marked, plan):
+    plan.prep = None
+    with pytest.raises(pj.Blocked, match="no prep.md"):
+        ps.research(pj.get(marked["id"]))
 
 
 def test_a_new_run_starts_from_the_earlier_run_s_research(marked, plan):
@@ -284,7 +343,7 @@ def test_the_outline_then_the_script_then_a_pass_signed_off_by_every_owner(marke
     assert package_script.read(folder / ps.OUTLINE) == plan.outline
     # The author's outline turn and its form: the outline, the prep, and what
     # only the sender can answer; no vote in any turn.
-    assert f"Write the prep in {folder / ps.PREP_MD}" in plan.sent["author"][1]
+    assert f"From your research and the prep, give the outline" in plan.sent["author"][1]
     assert set(plan.forms["author"][1]["properties"]) == {"message", "outline", "ask_sender"}
     assert "Settle any conflict between them" in plan.sent["author"][2]
     assert "Write the script from the agreed outline" in plan.sent["author"][3]
@@ -312,7 +371,8 @@ def test_the_outline_then_the_script_then_a_pass_signed_off_by_every_owner(marke
         "cares": "resolved", "background": "resolved", "order": "resolved",
         "decision_ready": "resolved", "language": "resolved"}
     assert {s["stage"] for s in result["signoffs"]} == {"outline", "outline-signoff", "pass-1"}
-    assert [t["stage"] for t in result["times"]][:2] == ["research", "outline"]
+    assert [t["stage"] for t in result["times"]][:3] == ["research-searches", "research",
+                                                          "outline"]
     assert len(Marking.calls) == 2, "marked after the fill and after the revision"
     assert (folder / ps.CONVERSATION).read_text().count("## ") == len(result["conversation"])
     used = json.loads((folder / research_log.USED).read_text())
