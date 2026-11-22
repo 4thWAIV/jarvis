@@ -10,10 +10,12 @@ program read (the files, the content, each reference, the Work item, the
 PRs and CI runs recorded against it, the sending session's transcript and
 Tim's record) is live, so it is always read, and the gather unit's key
 (step_cache.py) is the hash of what was read. The one model call, the
-labels to RetrievalSession, is its own unit (`gather-labels`), keyed by
-the labels, the retrieval role and its code, and everything the program
-read before it: reused only while all of that is unchanged, and the typed
-entries it gave are always fetched again. The steps after it key on each
+labels to RetrievalSession, is two units: `gather-lookups`, keyed by the
+labels, the retrieval role and its code, and everything the program read
+before it, keeps the lookups retrieval made; `gather-labels`, its answer,
+is keyed by that and what those lookups find when made again now. It is
+reused only while all of that is unchanged, and the typed entries it gave
+are always fetched again. The steps after it key on each
 stored file's hash, so an unchanged file is never marked again and a
 changed one always is. In order:
 
@@ -57,9 +59,12 @@ STEP = "gather"
 
 
 def _retrieval(doc: dict):
-    """The RetrievalSession for this run: on the brain providers."""
+    """The RetrievalSession for this run: on the brain providers, every
+    lookup it makes logged (`LOOKUPS_LOG`), so what it found is its
+    answer's input (`found_digest`)."""
     from jarvis import sessions
-    return sessions.BrainRetrievalSession(Path(doc["folder"]), requester=doc.get("engine"))
+    return sessions.BrainRetrievalSession(Path(doc["folder"]), requester=doc.get("engine"),
+                                          search_log=lookups_log(doc))
 
 
 RETRIEVAL: Callable[[dict], object] = _retrieval
@@ -556,7 +561,10 @@ def _handoff(g: Gathering) -> None:
 # The gather step's own code, in its keys (step_cache.code).
 GATHER_CODE = ("jarvis.package_gather", "jarvis.evidence_readers", "jarvis.package_evidence",
                "jarvis.session_transcript", "jarvis.evidence_types")
-LABELS = "gather-labels"
+LOOKUPS, LABELS = "gather-lookups", "gather-labels"
+# Retrieval's lookups, logged as its tool server answers them
+# (research_log.py), in the run's folder.
+LOOKUPS_LOG = "gather-lookups.jsonl"
 
 
 def _read_now(rows: list[Row]) -> str:
@@ -566,16 +574,87 @@ def _read_now(rows: list[Row]) -> str:
     return step_cache.digest([[r.type, r.stored, r.sha256, r.resolved, r.origin] for r in rows])
 
 
-def labels_unit(doc: dict, labels: list[tuple[int, dict]], read: str) -> step_cache.Unit:
-    """The labels' retrieval (one model call): the labels, the retrieval
+def lookups_log(doc: dict) -> Path:
+    return Path(doc["folder"]) / LOOKUPS_LOG
+
+
+def lookups_unit(doc: dict, labels: list[tuple[int, dict]], read: str) -> step_cache.Unit:
+    """What the labels' retrieval was asked with: the labels, the retrieval
     role (its prompt, tier and engine choice) and its code, and everything
     the program read before it (`read`), so a changed Work item, PR, CI
-    run, transcript or record of his asks retrieval again."""
-    return step_cache.Unit(LABELS, "", {
+    run, transcript or record of his asks retrieval again. Kept under it:
+    the lookups retrieval made (each tool and its arguments), which are
+    made again before its answer is reused (`labels_unit`), as a build
+    tool's discovered inputs are checked."""
+    return step_cache.Unit(LOOKUPS, "", {
         "labels": [[n, e.get("text") or ""] for n, e in labels], "read": read,
         "tool": {"role": step_cache.role_tool("retrieval", requester=doc.get("engine")),
                  "code": step_cache.code(*step_cache.MODEL_CODE, *GATHER_CODE,
-                                         "jarvis.role_lookups")}})
+                                         "jarvis.role_lookups", "jarvis.role_mcp")}})
+
+
+def labels_unit(asked: step_cache.Unit, found: str) -> step_cache.Unit:
+    """The labels' retrieval answer: what it was asked with (`asked`'s key)
+    and what its lookups find (`found`, `found_digest`), so a PR, CI run,
+    issue or record its lookups find changed asks retrieval again."""
+    return step_cache.Unit(LABELS, "", {"asked": asked.key, "found": found})
+
+
+def found_digest(calls: list[dict]) -> str:
+    """What lookups found, as a key names it: each call (its tool and
+    arguments) with whether it answered and its answer's SHA-256; a call
+    made twice by its last answer."""
+    by_call = {step_cache.canonical([c["tool"], c.get("arguments") or {}]):
+               [bool(c.get("ok")), step_cache.digest(c.get("answer") or "")] for c in calls}
+    return step_cache.digest(by_call)
+
+
+def logged_lookups(doc: dict) -> list[dict]:
+    """Retrieval's lookups as its tool server logged them."""
+    from jarvis import research_log
+    return [{"tool": e.get("tool"), "arguments": e.get("arguments") or {},
+             "ok": e.get("ok"), "answer": e.get("answer") or ""}
+            for e in research_log.read(lookups_log(doc)) if e.get("tool")]
+
+
+def lookups_now(calls: list[dict]) -> list[dict]:
+    """Each kept lookup made again now, as retrieval's tool server makes it
+    (role_mcp.replay)."""
+    from jarvis import role_mcp
+    out = []
+    for c in calls:
+        ok, text = role_mcp.replay("retrieval", c["tool"], c.get("arguments") or {})
+        out.append({"tool": c["tool"], "arguments": c.get("arguments") or {}, "ok": ok,
+                    "answer": text})
+    return out
+
+
+def _retrieved(g: "Gathering", doc: dict, labels: list[tuple[int, dict]]) -> None:
+    """The labels resolved: retrieval's kept answer reused when what it was
+    asked with is kept and its lookups, made again now, find what they
+    found; else retrieval asked, its lookups logged and kept with what
+    they found."""
+    asked = lookups_unit(doc, labels, _read_now(g.rows))
+    had = step_cache.reuse(asked, doc)
+    if had is not None:
+        unit = labels_unit(asked, found_digest(lookups_now(had.value or [])))
+        kept = step_cache.reuse(unit, doc)
+        if kept is not None:
+            retrieve_labels(g, labels, kept.value)
+            return
+    log = lookups_log(doc)
+    log.unlink(missing_ok=True)
+    asked_at = time.time()
+    answered = retrieve_labels(g, labels)
+    seconds = time.time() - asked_at
+    calls = logged_lookups(doc)
+    # Each replaces what was kept under its key: the lookups made now are
+    # what the answer was made from.
+    step_cache.computed(labels_unit(asked, found_digest(calls)), doc, asked_at, seconds,
+                        value=answered, replace=True)
+    step_cache.computed(asked, doc, asked_at, seconds,
+                        value=[{"tool": c["tool"], "arguments": c["arguments"]} for c in calls],
+                        replace=True)
 
 
 def unit_of(doc: dict, rows: list[Row]) -> step_cache.Unit:
@@ -621,12 +700,7 @@ def gather(doc: dict) -> None:
             g.typed(entry, "handoff", n)
     gather_jarvis_material(g)
     if labels:
-        unit = labels_unit(doc, labels, _read_now(g.rows))
-        kept = step_cache.reuse(unit, doc)
-        asked_at = time.time()
-        answered = retrieve_labels(g, labels, kept.value if kept is not None else None)
-        if kept is None:
-            step_cache.computed(unit, doc, asked_at, value=answered)
+        _retrieved(g, doc, labels)
     for row in g.rows:
         row.knowledge_state = pe.knowledge_state(row)
     pe.write_manifest(place, g.rows)

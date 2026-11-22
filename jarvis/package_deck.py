@@ -468,12 +468,15 @@ def _files_of(run: ps.Run, value) -> list[str]:
 
 def build_unit(run: ps.Run) -> step_cache.Unit:
     """The deck's build: its source as written, the files it names, the
-    passed script it is checked against and JARVIS's pipeline."""
+    passed script it is checked against, JARVIS's pipeline and the
+    language it is built in (make_package.built_language: a deck or story
+    that names none is built, and its vote worded, in it)."""
     source = _read_source(run)
     return step_cache.Unit(BUILD, "", {
         "source": step_cache.file_sha(source_of(run)),
         "files": step_cache.files_sha(run.folder / FOLDER, _files_of(run, source)),
-        "script": step_cache.file_sha(run.script), "pipeline": pipeline_digest()})
+        "script": step_cache.file_sha(run.script), "pipeline": pipeline_digest(),
+        "language": make_package.built_language()})
 
 
 def _compile(run: ps.Run, out: Path) -> list[str]:

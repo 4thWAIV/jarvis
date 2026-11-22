@@ -1579,7 +1579,9 @@ output, and a unit that reads another names that unit's output digest
 (`Entry.digest`); only finished work is kept (a stage that failed or waits
 on the sender keeps nothing until it finishes). Every key covers the tool
 as well as the material: the source of the code that shapes the output
-(`step_cache.code`, each module's SHA-256; never a hand-raised version),
+(`step_cache.code`: each named module and every jarvis module it imports
+at any depth, read from its source with `ast`, never imported
+(`step_cache.closure`), by its SHA-256; never a hand-raised version),
 and for a model step each role's approved prompt, tier, effort, release
 and the engine and model its engines.json kind chooses
 (`step_cache.role_tool`, `roles_tool`), the labels whole
@@ -1588,9 +1590,13 @@ read again for a new package, since its inputs are live (the files, each
 reference, the Work item, the PRs and CI runs recorded against it, the
 sending session's transcript, Tim's record); its key is the hash of what
 was read (`package_gather.unit_of`), noted computed and never kept; its
-one model call is `gather-labels` (`labels_unit`: the labels, the
-retrieval role and code, and everything the program read before it), whose
-typed entries are always fetched again; `mark-file`, one a gathered file
+one model call is `gather-lookups` (`package_gather.lookups_unit`: the
+labels, the retrieval role and code, and everything the program read
+before it; kept under it the lookups retrieval made, logged by its tool
+server to `gather-lookups.jsonl`) and `gather-labels` (`labels_unit`: that
+key and what those lookups find, made again now through
+`role_mcp.replay`, `found_digest`), whose typed entries are always
+fetched again; `mark-file`, one a gathered file
 (`package_mark.unit_of`: its bytes, row type, knowledge state, the
 questions, `tool_of` (the reading roles, the labels, the code) and, for
 prose, Tim's material; only files whose key is not kept are marked,
@@ -1615,8 +1621,9 @@ that never built, findings filed under `package_deck.WRITE_LABEL` and said
 to the author before it writes, `package_deck.Plan`), `deck-build` (the
 source, its files, the script, `pipeline_digest`: the Python that lays
 out, sizes, builds and proves a deck, `PIPELINE_CODE`, the shared
-deck's files and the presentation assets), `deck-review` (one a slide: its
-part, its layout data, script slide,
+deck's files and the presentation assets, and the build language,
+`make_package.built_language`), `deck-review` (one a slide: its part, its
+layout data, script slide,
 `review_tool` and the findings answered on it), `deck` (the review and
 conversation) and `deliver` (the deck, the briefing, the message, who
 asked, its code; the check is asked every run). A kept deck source that no

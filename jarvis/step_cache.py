@@ -29,8 +29,10 @@ again and replaces it (`computed(..., replace=True)`, outcome `replaced`),
 so the next run reuses the working one, never the rejected one again.
 
 Every key covers the tool as well as the material, as make and Bazel do:
-the source of the code that shapes the output (`code`, each module's
-SHA-256, never a hand-raised number), and for a model step each role's
+the source of the code that shapes the output (`code`: each named
+module's SHA-256 and every jarvis module it imports, at any depth, read
+from the source by `ast` with no import run, so no list can miss one;
+never a hand-raised number), and for a model step each role's
 approved prompt, its tier, effort and release, and the engine and model
 its engines.json kind chooses (`role_tool`). A changed prompt, role,
 engine choice or line of code changes every key that depends on it.
@@ -38,14 +40,18 @@ engine choice or line of code changes every key that depends on it.
 Each entry's `used` file is touched whenever it is reused; entries unused
 for `PRUNE_AFTER_SEC` (30 days) are removed at server start (`prune`).
 
-The units (package_jobs.STEPS): `gather`; `mark-file` (one a file of the
-evidence); `research`; the swarm's stages `swarm-outline`, `swarm-fill`,
-`swarm-passes` and `swarm-revision` (one a revision), and `script-slide`
-(one a slide); `deck-header`, `deck-source` and `deck-review`
-(one a slide each), `deck-build` and `deck`; and `deliver`.
+The units (package_jobs.STEPS): `gather` (noted, never kept: it is read
+again for every new package), with `gather-lookups` (what retrieval looked
+up, kept as the lookups to run again) and `gather-labels` (retrieval's
+answer, keyed on what those lookups find now); `mark-file` (one a file of
+the evidence); `research`; the swarm's stages `swarm-outline`, `swarm-fill`, `swarm-passes` and
+`swarm-revision` (one a revision); `deck-header`, `deck-source`
+and `deck-review` (one a slide each), `deck-build` and `deck`;
+and `deliver`.
 """
 from __future__ import annotations
 
+import ast
 import dataclasses
 import hashlib
 import importlib.util
@@ -122,11 +128,95 @@ def module_path(module: str) -> Path:
     return Path(spec.origin)
 
 
+_IMPORTS: dict[tuple, frozenset] = {}
+
+
+def _source_of(module: str) -> Optional[Path]:
+    """A module's source file found on disk from its top-level package's
+    folder, never by importing it (a submodule's find_spec would run its
+    parent's code); None for a name that is no module (a function or class
+    imported from one) or that is not Python source."""
+    top, _, rest = module.partition(".")
+    try:
+        spec = importlib.util.find_spec(top)
+    except (ImportError, ValueError):
+        return None
+    if spec is None:
+        return None
+    if not rest:
+        return Path(spec.origin) if spec.origin and spec.origin.endswith(".py") else None
+    for base in spec.submodule_search_locations or []:
+        stem = Path(base).joinpath(*rest.split("."))
+        for path in (stem.with_suffix(".py"), stem / "__init__.py"):
+            if path.is_file():
+                return path
+    return None
+
+
+def _imports(module: str, path: Path) -> frozenset:
+    """Every module of the same top-level package the source imports,
+    anywhere in it (at the top, in a function, under a condition), read
+    with `ast` once for the file's size and modification time: `import
+    a.b`, `from a import b` (a.b, which may be a module) and relative
+    imports resolved against the module's own package."""
+    try:
+        st = path.stat()
+    except OSError:
+        return frozenset()
+    mark = (str(path), st.st_mtime_ns, st.st_size, module)
+    if mark in _IMPORTS:
+        return _IMPORTS[mark]
+    top = module.partition(".")[0]
+    package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+    found: set[str] = set()
+    try:
+        tree = ast.parse(path.read_bytes(), filename=str(path))
+    except (OSError, SyntaxError, ValueError):
+        tree = None
+    for node in ast.walk(tree) if tree is not None else ():
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                found.update(".".join(parts[:n]) for n in range(1, len(parts) + 1))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                parts = package.split(".") if package else []
+                parts = parts[:len(parts) - (node.level - 1)] if node.level > 1 else parts
+                base = ".".join(parts + ([node.module] if node.module else []))
+            else:
+                base = node.module or ""
+            if base:
+                found.add(base)
+                found.update(f"{base}.{alias.name}" for alias in node.names
+                             if alias.name != "*")
+    out = frozenset(m for m in found if m == top or m.startswith(top + "."))
+    _IMPORTS[mark] = out
+    return out
+
+
+def closure(*modules: str) -> dict[str, Path]:
+    """The named modules and every module of their own top-level package
+    they import, at any depth (`_imports`), each with its source file."""
+    out: dict[str, Path] = {}
+    todo = list(modules)
+    while todo:
+        name = todo.pop()
+        if name in out:
+            continue
+        path = module_path(name) if name in modules else _source_of(name)
+        if path is None:
+            continue
+        out[name] = path
+        todo.extend(_imports(name, path))
+    return out
+
+
 def code(*modules: str) -> dict[str, Optional[str]]:
     """The code that shapes a unit's output, as its key names it: each
-    module's source file's SHA-256 (the module itself, never a version
-    number raised by hand)."""
-    return {m: _path_sha(module_path(m)) for m in sorted(set(modules))}
+    named module and every module it imports at any depth (`closure`), by
+    its source file's SHA-256 (the code itself, never a version number
+    raised by hand)."""
+    return {m: _path_sha(path) for m, path in sorted(closure(*set(modules)).items())}
 
 
 def tree_sha(folder: Path, skip: tuple[str, ...] = ("__pycache__",)) -> dict[str, Optional[str]]:

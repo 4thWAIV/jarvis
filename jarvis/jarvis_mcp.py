@@ -3105,22 +3105,25 @@ def _image_block(raw) -> dict | None:
     return {"type": "image", "data": data, "mimeType": mime}
 
 
-def _forward(tool: str, arguments: dict, role: str = "") -> tuple[bool, str, dict | None]:
+def _forward(tool: str, arguments: dict, role: str = "", endpoint: str | None = None,
+             token: str | None = None) -> tuple[bool, str, dict | None]:
     """Call the server. Every failure becomes a spoken-able sentence, never a
     traceback: the brain has to say something useful either way.
 
     Third element is an MCP image content block when the server sent one.
-    `role` names the role a role's tool server calls for (role_mcp.py).
+    `role` names the role a role's tool server calls for (role_mcp.py);
+    `endpoint` and `token`, the channel when it is not this process's own
+    (a role's call run again in-process, role_mcp.replay).
     """
     request = {"tool": tool, "arguments": arguments}
     if role:
         request["role"] = role
     body = json.dumps(request).encode()
-    endpoint = _endpoint()
+    endpoint = endpoint or _endpoint()
     req = urllib.request.Request(
         endpoint, data=body, method="POST",
         headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {_token()}"})
+                 "Authorization": f"Bearer {token if token is not None else _token()}"})
     try:
         with urllib.request.urlopen(
                 req, timeout=TIMEOUT_FOR.get(tool, TIMEOUT_SEC),

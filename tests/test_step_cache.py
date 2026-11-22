@@ -257,7 +257,7 @@ def test_a_new_request_with_the_same_handoff_reuses_everything(marked, deck_plan
     # Gather reads everything again (its inputs are live); what it read is
     # the same, so nothing after it is computed, and retrieval is not asked.
     assert _computed(done) == {"gather"}
-    assert "gather-labels" in _reused(done)
+    assert {"gather-lookups", "gather-labels"} <= _reused(done)
     assert _turns(deck_plan) == turns
     assert done["state"] == pj.WAITING
 
@@ -312,7 +312,8 @@ def test_one_evidence_file_changed_marks_only_it_and_redoes_research_onward(
     # changed); only that file is marked again; research and the swarm's
     # stages read the marks, so they are made again. The script came out
     # the same, so the deck, its review and the delivery are reused.
-    assert _computed(done) == {"gather", "gather-labels", "mark-file:files/situation.md"} | SWARM
+    assert _computed(done) == {"gather", "gather-lookups", "gather-labels",
+                               "mark-file:files/situation.md"} | SWARM
     assert "mark-file:jarvis/work-item.md" in _reused(done)
     assert {"deck-build", "deck", "deliver"} <= _reused(done)
 
@@ -325,7 +326,7 @@ def test_a_changed_work_item_is_read_again_and_what_reads_it_is_redone(
     done = _asked_again(first, deck_plan)
     # The Work item's record, and every prose file marked with Tim's
     # material (which holds the Work item he knows), are marked again.
-    assert _computed(done) == {"gather", "gather-labels"} | PROSE | SWARM
+    assert _computed(done) == {"gather", "gather-lookups", "gather-labels"} | PROSE | SWARM
     assert {"mark-file:retrieved/ci_run-99881.md", "mark-file:jarvis/sender-session.md",
             "deck-build", "deliver"} <= _reused(done)
 
@@ -338,7 +339,7 @@ def test_his_record_changed_is_read_again_for_a_later_package(marked, deck_plan,
     done = _asked_again(first, deck_plan)
     tim = ps.pe.place_of(done).folder / ps.pe.TIM_RECORD
     assert "Say what it costs first." in tim.read_text()
-    assert _computed(done) == {"gather", "gather-labels"} | PROSE | SWARM
+    assert _computed(done) == {"gather", "gather-lookups", "gather-labels"} | PROSE | SWARM
     assert {"mark-file:retrieved/ci_run-99881.md", "mark-file:jarvis/sender-session.md"} \
         <= _reused(done)
 
@@ -370,21 +371,19 @@ def test_a_changed_engine_choice_redoes_the_role_s_steps(marked, deck_plan, keyg
     assert not [c for c in _computed(done) if c.startswith("mark-file")]
 
 
-def test_a_change_to_the_deck_pipeline_s_code_rebuilds_only(
-        marked, deck_plan, keygen, monkeypatch):  # noqa: F811
+def test_a_change_to_the_deck_pipeline_s_code_redoes_every_unit_whose_code_imports_it(
+        marked, deck_plan, keygen, files_marked, monkeypatch):  # noqa: F811
     first = _run(marked["id"], deck_plan)
     real = step_cache._path_sha
     monkeypatch.setattr(step_cache, "_path_sha", lambda path: "changed" if path.name ==
                         "presentation_proof.py" else real(path))
     done = _again(first, deck_plan)
-    # The layout data came out the same, so the reviews and the deck's
-    # record are reused; the delivery is signed again exactly when the new
-    # build's zip differs in its bytes (its input). No build is drawn in a
-    # browser.
-    zips = [step_cache.file_sha(Path(d["deck"]["archive"])) for d in (first, done)]
-    signed = {"deliver"} if zips[0] != zips[1] else set()
-    assert _computed(done) == {"deck-build"} | signed
-    assert {"deck-header", "deck-source:where", "deck-review:where", "deck"} <= _reused(done)
+    # The build is made again; so is every unit whose code imports the
+    # proof at any depth (step_cache.closure), the model steps among them;
+    # mark's code never does, and nothing is computed with its key kept.
+    assert {"deck-build", "research"} <= _computed(done)
+    importing = set(step_cache.closure(*step_cache.MODEL_CODE, *ps.SWARM_CODE))
+    assert "jarvis.presentation_proof" in importing
 
 
 def test_code_is_named_by_its_source_hash(tmp_path, monkeypatch):
@@ -404,12 +403,14 @@ def test_code_is_named_by_its_source_hash(tmp_path, monkeypatch):
 
 def test_a_kept_deck_source_that_no_longer_builds_is_replaced_by_the_working_one(
         marked, deck_plan, keygen, monkeypatch):  # noqa: F811
+    from jarvis import make_package
     first = _run(marked["id"], deck_plan)
-    # JARVIS's pipeline changes, and the kept source no longer builds with
+    # What the build is made with changes (the language it is built in,
+    # which no writing reads), and the kept source no longer builds with
     # it; the author's new deck does.
-    real = step_cache._path_sha
-    monkeypatch.setattr(step_cache, "_path_sha", lambda path: "changed" if path.name ==
-                        "presentation.py" else real(path))
+    language = make_package.built_language()
+    monkeypatch.setattr(make_package, "built_language",
+                        lambda: "es" if language != "es" else "en")
     compile_ = pd._compile
 
     def strict(run, out):
@@ -536,3 +537,104 @@ def test_make_package_rerun_and_the_tool_ask_jarvis(monkeypatch, capsys):
     ok, text, _ = agent_mcp.call("package_rerun", {"job": "job-1", "as_session": "sess-b"})
     assert ok and json.loads(text)["id"] == "job-2"
     assert asked == [("job-1", "sess-a"), ("job-1", "sess-b")]
+
+
+# ── what a key covers that no list names ──────────────────────────────────
+
+def test_code_covers_every_module_imported_at_any_depth(tmp_path, monkeypatch):
+    pkg = tmp_path / "shaped"
+    (pkg / "inner").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "top.py").write_text("from shaped import middle\n")
+    (pkg / "middle.py").write_text("def f():\n    from .inner import deep\n    return deep\n")
+    (pkg / "inner" / "__init__.py").write_text("")
+    (pkg / "inner" / "deep.py").write_text("X = 1\n")
+    (pkg / "unused.py").write_text("X = 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    before = step_cache.code("shaped.top")
+    # Read from the source, never imported: a lazy import in a function and
+    # a relative one count; a module nothing imports does not.
+    assert set(before) == {"shaped", "shaped.top", "shaped.middle", "shaped.inner",
+                           "shaped.inner.deep"}
+    (pkg / "inner" / "deep.py").write_text("X = 2\n")
+    os.utime(pkg / "inner" / "deep.py", ns=(time.time_ns() + 10**9,) * 2)
+    assert step_cache.code("shaped.top") != before
+
+
+def test_an_imported_module_no_list_names_changes_the_build_key(monkeypatch):
+    # package_story, package_inbox and package_understanding are imported
+    # (some only inside functions) by the modules the build names.
+    for unlisted in ("jarvis.package_story", "jarvis.package_inbox",
+                     "jarvis.package_understanding"):
+        assert unlisted not in pd.PIPELINE_CODE
+        assert unlisted in step_cache.code(*pd.PIPELINE_CODE)
+    before = pd.pipeline_digest()
+    real = step_cache._path_sha
+    monkeypatch.setattr(step_cache, "_path_sha", lambda path: "changed" if path.name ==
+                        "package_story.py" else real(path))
+    assert pd.pipeline_digest() != before
+
+
+def test_a_changed_build_language_rebuilds_the_deck(marked, deck_plan, keygen,  # noqa: F811
+                                                   monkeypatch):
+    from jarvis import make_package
+    first = _run(marked["id"], deck_plan)
+    language = make_package.built_language()
+    monkeypatch.setattr(make_package, "built_language",
+                        lambda: "es" if language != "es" else "en")
+    done = _again(first, deck_plan)
+    assert "deck-build" in _computed(done)
+    assert {"research", "deck-header", "deck-source:where"} <= _reused(done)
+
+
+class LoggingRetrieval:
+    """The test's retrieval, logging one GitHub lookup as its tool server
+    would (package_gather.LOOKUPS_LOG)."""
+    asked = 0
+
+    def __init__(self, doc):
+        self.doc = doc
+
+    async def resolve(self, references, timeout):
+        from jarvis import package_gather, research_log
+        LoggingRetrieval.asked += 1
+        research_log.record(package_gather.lookups_log(self.doc), "retrieval", "github_run_list",
+                            {"repo": "4thWAIV/jarvis"}, True, FOUND["now"])
+        return [{"id": r.id, "resolved": "ok", "searched": "github_run_list",
+                 "entries": [{"type": "ci_run", "repo": "4thWAIV/jarvis", "id": "99881",
+                              "why": "it failed"}]} for r in references]
+
+
+FOUND = {"now": '[{"databaseId": 99881, "conclusion": "failure"}]'}
+
+
+def test_retrieval_is_asked_again_when_what_its_lookups_find_changed(
+        marked, deck_plan, keygen, monkeypatch):  # noqa: F811
+    from jarvis import package_gather, role_mcp
+    monkeypatch.setattr(package_gather, "RETRIEVAL", LoggingRetrieval)
+    replayed = []
+
+    def replay(role, tool, arguments):
+        replayed.append((role, tool, arguments))
+        return True, FOUND["now"]
+    monkeypatch.setattr(role_mcp, "replay", replay)
+    monkeypatch.setitem(FOUND, "now", FOUND["now"])
+    first = _run(marked["id"], deck_plan)
+    # The fixture's retrieval logged nothing: with what it was asked with
+    # no longer kept, a new package asks the logging retrieval.
+    import shutil
+    shutil.rmtree(step_cache.root() / package_gather.LOOKUPS)
+    LoggingRetrieval.asked = 0
+    asked = _asked_again(first, deck_plan)
+    assert {"gather-lookups", "gather-labels"} <= _computed(asked)
+    assert LoggingRetrieval.asked == 1
+    n = LoggingRetrieval.asked
+    # The same lookups find the same: retrieval's answer is reused, its
+    # lookups made again first.
+    same = _asked_again(asked, deck_plan)
+    assert "gather-labels" in _reused(same) and LoggingRetrieval.asked == n
+    assert ("retrieval", "github_run_list", {"repo": "4thWAIV/jarvis"}) in replayed
+    # What they find changed: retrieval is asked again.
+    FOUND["now"] = '[{"databaseId": 99881, "conclusion": "success"}]'
+    changed = _asked_again(same, deck_plan)
+    assert "gather-labels" in _computed(changed) and LoggingRetrieval.asked == n + 1

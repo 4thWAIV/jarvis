@@ -72,6 +72,34 @@ def handle(msg: dict) -> dict | None:
                              server_name=roles.SERVER_NAME)
 
 
+def server_url() -> str:
+    """JARVIS's address a role's calls go to: the one it recorded, else this
+    process's own (the server itself)."""
+    from jarvis import server_address
+    running = server_address.running()
+    return running.url if running else server_address.own().url
+
+
+def replay(role: str, tool: str, arguments: dict) -> tuple[bool, str]:
+    """One call a role made, made again now in this process as its server
+    made it (a GitHub lookup here, any other tool over JARVIS's tool
+    channel naming the role): (ok, its answer). For a call kept as a
+    unit's input, whose answer now says whether the unit's output stands
+    (package_gather's retrieval lookups)."""
+    from jarvis import data_paths
+    if not roles.allows(role, tool):
+        return False, f"The {role} role has no tool called {tool!r}."
+    if tool in role_lookups.LOOKUPS:
+        return role_lookups.call(tool, arguments)
+    try:
+        token = data_paths.tool_token_path().read_text().strip()
+    except OSError:
+        token = ""
+    ok, text, _ = jarvis_mcp._forward(tool, arguments, role=role,
+                                      endpoint=f"{server_url()}/internal/tool", token=token)
+    return ok, text
+
+
 def entry(role: str, log: Path | None = None, folders: tuple[Path, ...] = (),
           shown: tuple[str, ...] | None = None) -> dict:
     """This server for one role, as an MCP configuration names it: the
@@ -80,9 +108,8 @@ def entry(role: str, log: Path | None = None, folders: tuple[Path, ...] = (),
     read (`folders`, the run folder first) and the names it sees in the run
     folder (`shown`; None, everything there). The server's address is the
     one it recorded, else this process's own (the server itself)."""
-    from jarvis import data_paths, server_address
-    running = server_address.running()
-    url = running.url if running else server_address.own().url
+    from jarvis import data_paths
+    url = server_url()
     return {"command": sys.executable,
             "args": ["-P", "-m", "jarvis.role_mcp", "--role", role,
                      *(["--log", str(log)] if log is not None else []),
