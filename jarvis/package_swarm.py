@@ -242,22 +242,45 @@ def evidence(run: Run) -> list[sessions.Known]:
             for r in run.rows if r.stored in run.texts]
 
 
+def annotated(text: str, marks: dict) -> str:
+    """A file's text once, each sentence the mark step labelled preceded by
+    one short tag naming its labels and the questions it bears on, with
+    their scores: `[s12 background .8 known-to-him .7 | q remaining-fixes .9]`.
+    The sentence's words are never repeated and an unlabelled sentence has
+    no tag, so the author reads the file at about its own size."""
+    bears = {e.get("item"): e.get("scores") or {} for e in marks.get("questions") or []}
+    tags = []
+    for part in marks.get("parts") or []:
+        pos = part.get("position") or {}
+        scores, questions = part.get("scores") or {}, bears.get(part.get("id")) or {}
+        if pos.get("start") is None or not (scores or questions):
+            continue
+        said = " ".join(f"{k} {v:.1f}".replace("0.", ".") for k, v in scores.items())
+        asked = " ".join(f"{k} {v:.1f}".replace("0.", ".") for k, v in questions.items())
+        tags.append((pos["start"], f"[{part['id']} {said}" + (f" | q {asked}" if asked else "") + "] "))
+    out, at = [], 0
+    for start, tag in sorted(tags):
+        out.append(text[at:start]); out.append(tag); at = start
+    out.append(text[at:])
+    facts = marks.get("facts") or []
+    if facts:
+        out.append("\n\nFacts read by the program: " + json.dumps(facts, ensure_ascii=False))
+    return "".join(out)
+
+
 def author_material(run: Run) -> list[sessions.Known]:
-    """The gathered and marked material: each stored file whole, then what
-    the mark step read in it (its facts and marked parts, each scored
-    against the questions), with the file's knowledge state."""
+    """The gathered and marked material: each stored file once, with what
+    the mark step read in it shown in place (`annotated`), with the file's
+    knowledge state."""
     marks = {e["file"]: e for e in run.marked.get("files") or []}
     out = []
     for r in run.rows:
         if r.stored not in run.texts:
             continue
-        out.append(sessions.Known(run.texts[r.stored], r.knowledge_state,
-                                  run.place.item(r.stored)))
         entry = marks.get(r.stored)
-        if entry is not None:
-            out.append(sessions.Known(json.dumps(entry["marks"], ensure_ascii=False),
-                                      r.knowledge_state,
-                                      run.place.item(f"{package_mark.MARK}/{r.stored}.json")))
+        text = run.texts[r.stored]
+        out.append(sessions.Known(annotated(text, entry["marks"]) if entry is not None else text,
+                                  r.knowledge_state, run.place.item(r.stored)))
     return out
 
 

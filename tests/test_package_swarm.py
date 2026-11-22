@@ -253,7 +253,7 @@ def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, p
     # everything gathered and marked, each item with Tim's knowledge state.
     assert "PR 171 moves the Work items." in first and question in first
     assert 'state="probably_does_not_know"' in first and 'state="knows"' in first
-    assert "mark/files/situation.md.json" in first, "the marks with the files"
+    assert "mark/files/situation.md.json" not in first, "the marks in place in the file, never a second copy"
     # What the searches found, in the same turn, and kept beside the run.
     assert f"Found for {question}." in first and '<searched file="research-searches.md">' in first
     assert f"Found for {question}." in (folder / ps.SEARCHES_MD).read_text()
@@ -520,3 +520,17 @@ def test_only_rounds_of_questions_count_toward_five(marked):
         assert pj.ask(marked["id"], [{"id": f"q{n}", "question": "?"}])
     assert not pj.ask(marked["id"], [{"id": "q", "question": "?"}])
     assert pj.question_rounds(pj.get(marked["id"])) == pj.MAX_ROUNDS
+
+
+def test_the_author_reads_each_file_once_with_its_marks_in_place():
+    """The marks are tags before the sentences they label, never a second
+    copy of the text: the author's material stays near the files' size."""
+    from jarvis.package_swarm import annotated
+    text = "First sentence. Second one. Third."
+    marks = {"parts": [
+        {"id": "s1", "position": {"start": 0, "end": 15}, "scores": {"background": 0.8}},
+        {"id": "s2", "position": {"start": 16, "end": 27}, "scores": {}},
+        {"id": "s3", "position": {"start": 28, "end": 34}, "scores": {"evidence": 0.9}}],
+        "questions": [{"item": "s3", "scores": {"q1": 0.7}}], "facts": []}
+    out = annotated(text, marks)
+    assert out == "[s1 background .8] First sentence. Second one. [s3 evidence .9 | q q1 .7] Third."
