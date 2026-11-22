@@ -5,6 +5,7 @@ filled in from their files, and `write_yaml` writes it with its pictures."""
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -132,3 +133,15 @@ def write_yaml(folder: Path, deck: dict, svg: str | None = None) -> Path:
     source = folder / "presentation.yaml"
     source.write_text(yaml.safe_dump(presentation_of(deck, folder), sort_keys=False, allow_unicode=True))
     return source
+
+
+def fitting_every_frame(folder: Path) -> dict:
+    """A built deck's fit as deck_fit.measure gives it, every slide fitting
+    every frame: the deck step's measure outside the page tests, which draw
+    decks in Chromium themselves."""
+    from jarvis import deck_fit, presentation_proof
+    proof = json.loads((Path(folder) / presentation_proof.PROOF_FILE).read_text())
+    slides = [{"slide": s["slide"], "id": s["id"], "fits": True, "cut": []}
+              for s in proof.get("slides") or []]
+    return {"version": deck_fit.VERSION, "frames": [list(f) for f in deck_fit.frames()],
+            "fits": True, "slides": slides}

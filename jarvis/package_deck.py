@@ -51,6 +51,16 @@ in the run's folder. A round:
                    each owner re-checks its own items (package_swarm.
                    fix_passes).
 
+Every build is measured too (deck_fit, Tim 2026-11-22): JARVIS draws the
+built deck as its package frame does, at every frame from 662 x 489 to
+1600 x 900, and reads for each slide whether anything on it is clipped or
+needs scrolling. The shared deck fits its slides itself (deck.js
+fitSlide); the fit goes to the reviewers beside each slide's layout data as
+a fact, never a question for them or the sender. A slide that still does
+not fit does not build: the author is told, an owner's edit that makes one
+unfit is not applied, and a deck JARVIS cannot make fit stops the step in
+Error (NOT_FIT_FIX), never findings for the sender.
+
 The deck passes when every deck concern is signed off; after two fix passes
 without that, or a deck the author could not make build, nothing is
 delivered: the sender is sent what is left (package_jobs.failed_swarm) and
@@ -67,7 +77,7 @@ from typing import Callable, Optional
 
 import yaml
 
-from jarvis import (data_paths, decision_package as dp, make_package, package_jobs,
+from jarvis import (data_paths, deck_fit, decision_package as dp, make_package, package_jobs,
                     package_evidence as pe, package_inbox, package_script, package_swarm as ps,
                     presentation_proof, sessions, spoken_words)
 from jarvis.presentation_schema import HIS_WORDS
@@ -172,8 +182,34 @@ def build_problems_note(problems: list[str]) -> str:
 # ── build and prove ───────────────────────────────────────────────────────
 
 class Built:
-    def __init__(self, archive: Path, folder: Path, proof: dict, deck: dict):
+    def __init__(self, archive: Path, folder: Path, proof: dict, deck: dict,
+                 fit: Optional[dict] = None):
         self.archive, self.folder, self.proof, self.deck = archive, folder, proof, deck
+        self.fit = fit or {}
+
+
+class Problems(list):
+    """Why a round's deck did not build; `unfit` when what is left is only
+    that a slide does not fit its frame even after JARVIS's own fitting
+    (deck_fit): the program's to fix, never the sender's or a reviewer's."""
+    unfit = False
+
+
+def _unfit(problems: list[str]) -> Problems:
+    out = Problems(problems)
+    out.unfit = True
+    return out
+
+
+# How a build's fit is measured (deck_fit.measure; the suite gives its own
+# outside the page tests, conftest._deck_fit_without_a_browser).
+MEASURE: Callable[[Path], dict] = deck_fit.measure
+
+# Where the deck step stops when JARVIS cannot make a slide fit (Tim
+# 2026-11-22: a layout failure is the program's, never the sender's).
+NOT_FIT_FIX = ("JARVIS's shared deck (examples/packages/decision-deck, its fit in deck.css and "
+               "deck.js) must lay the slide out to fit; once it does, a new run of the package "
+               "(make_package --rerun) goes on from the deck.")
 
 
 def _words(text: str) -> list[str]:
@@ -260,7 +296,22 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
                               yaml.safe_load(source.read_text(encoding="utf-8")) or {})
     if against:
         return None, against
-    return Built(made.archive, folder, proof, made.deck), []
+    # Every slide's fit at every frame, measured where its words are drawn
+    # (deck_fit, Tim 2026-11-22): a fact for the reviewers, and a slide
+    # that does not fit even after JARVIS's own fitting does not build.
+    try:
+        fit = MEASURE(folder)
+    except deck_fit.Unavailable as e:
+        raise package_jobs.Blocked(
+            DECK, f"JARVIS could not measure whether the deck's slides fit their frame: {e}",
+            "JARVIS built and proved the deck and drew it in headless Chromium at every frame "
+            "from 662 x 489 to 1600 x 900 to measure each slide.",
+            "Install Playwright's Chromium (.venv/bin/python -m playwright install chromium); "
+            "then a new run of the package (make_package --rerun) goes on from the deck.") from e
+    deck_fit.write(folder, fit)
+    if not fit["fits"]:
+        return None, _unfit(deck_fit.problems(fit))
+    return Built(made.archive, folder, proof, made.deck, fit), []
 
 
 # ── the review ────────────────────────────────────────────────────────────
@@ -273,7 +324,8 @@ def review_turn(run: ps.Run, built: Built) -> str:
     layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     slides = "\n".join(sessions._tag("slide", "\n".join([
         sessions._tag("script", package_script.dump(s), file=ps.SCRIPT),
-        sessions._tag("layout", json.dumps(layout.get(s["id"]), indent=1, ensure_ascii=False),
+        sessions._tag("layout", json.dumps(_with_fit(layout.get(s["id"]), built.fit, s["id"]),
+                                           indent=1, ensure_ascii=False),
                       file=presentation_proof.PROOF_FILE)]), id=s["id"])
         for s in script.get("slides") or [])
     return "\n\n".join([
@@ -282,10 +334,22 @@ def review_turn(run: ps.Run, built: Built) -> str:
         "passed script beside the layout data JARVIS computed for its deck slide as it compiled "
         "and proved it (its text and pictures with their positions and sizes at the smallest "
         "and the largest frame, in deck units on the 880 x 640 canvas and in pixels) and its "
-        "narration. No browser and no screenshots. Compare each slide with the script.",
+        "narration, and its fit: JARVIS drew every slide at every frame from 662 x 489 to "
+        "1600 x 900 and measured that nothing on it, words, pictures or a decision's controls, "
+        "is clipped or needs scrolling. Fit is the program's to measure and to fix, a fact "
+        "here: it is not for the review or the sender. No screenshots. Compare each slide "
+        "with the script.",
         slides,
         "The deck's questions, by id:\n" + "\n".join(
             sessions._tag("question", asks, id=qid) for qid, asks in DECK_QUESTIONS)])
+
+
+def _with_fit(layout: Optional[dict], fit: dict, slide_id: str) -> Optional[dict]:
+    """A slide's layout data with its measured fit (deck_fit) beside it."""
+    measured = deck_fit.of_slide(fit, slide_id)
+    if layout is None or measured is None:
+        return layout
+    return {**layout, "fit": {"fits": measured["fits"], "said": deck_fit.said(measured)}}
 
 
 class DeckSource:
@@ -350,7 +414,8 @@ def deck(doc: dict) -> Optional[str]:
     def build_now() -> Optional[Built]:
         state["builds"] += 1
         built, problems = build_and_prove(run, state["builds"])
-        state["problems"] = problems
+        state["problems"] = list(problems)
+        state["unfit"] = bool(getattr(problems, "unfit", False))
         last["built"] = built
         return built
 
@@ -390,7 +455,12 @@ def deck(doc: dict) -> Optional[str]:
                 flow["stage"] = "deck-pass"
                 ps._keep(run, swarm_, kept)
             elif last.get("built") is None and build_now() is None:
+                flow.pop("review_again", None)
                 swarm_.say(PROGRAM, build_problems_note(state["problems"]))
+            elif flow.pop("review_again", False):
+                # A run that goes on from the run before it (package_resume):
+                # the deck built again, with JARVIS's layout as it is now.
+                swarm_.say(PROGRAM, review_turn(run, last["built"]))
             end = await ps.fix_passes(
                 run, swarm_, kept, flow, DECK_IDS, source, mark=nothing,
                 revise=lambda items: written(revise_note(run)), given=given, clock=clock,
@@ -413,6 +483,14 @@ def deck(doc: dict) -> Optional[str]:
     if outcome.get("waiting"):
         return package_jobs.WAITING
     built = last.get("built")
+    if built is None and state.get("unfit"):
+        ps._save(run, kept)
+        raise package_jobs.Blocked(
+            DECK, "JARVIS could not make the deck fit its frame: "
+                  + " ".join(state.get("problems") or []),
+            "JARVIS laid each slide out with its own fit (smaller gaps, headings at the body "
+            "size, shorter bars) and measured it at every frame from 662 x 489 to 1600 x 900; "
+            "the author was told and revised it.", NOT_FIT_FIX)
     passed = outcome["result"] == "passed" and built is not None
     result = {**outcome["swarm"], "result": "passed" if passed else "not passed",
               "findings": [] if passed else (outcome["findings"] or _findings_of_build(
@@ -423,7 +501,7 @@ def deck(doc: dict) -> Optional[str]:
         package_jobs.noted(doc["id"], DECK, {
             "result": "passed", "passes": flow["pass"], "archive": str(built.archive),
             "folder": str(built.folder), "source": str(source_of(run)),
-            "review": str(run.folder / REVIEW)})
+            "review": str(run.folder / REVIEW), "fit": str(built.folder / deck_fit.FILE)})
         return None
     package_jobs.noted(doc["id"], DECK, {"result": "not passed", "passes": flow["pass"],
                                          "review": str(run.folder / REVIEW)})

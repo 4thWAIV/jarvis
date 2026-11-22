@@ -422,7 +422,7 @@
       var said = words.value.trim();
       change(function () { if (record[d.id]) record[d.id].note = said; });
     });
-    var recorded = section.appendChild(el("p", "recorded"));
+    var recorded = vote.appendChild(el("p", "recorded"));
     recorded.setAttribute("role", "status");
     views[d.id] = { section: section, options: options, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
     if (window.JarvisPresentation) window.JarvisPresentation.decorateDecision(section, d);
@@ -443,6 +443,7 @@
     v.recorded.classList.add("problem");
     v.recorded.classList.remove("done");
     say(words);
+    refitSoon();
   }
 
   function choose(d, answer) {
@@ -600,6 +601,15 @@
     var tally = answered + " of " + DECISIONS.length + " answered";
     document.getElementById("tally").textContent = tally;
     [].forEach.call(document.querySelectorAll(".tally-here"), function (t) { t.textContent = " · " + tally; });
+    refitSoon();
+  }
+
+  // What is recorded can take another line: the slides are fitted again.
+  var refitting = 0;
+  function refitSoon() {
+    if (typeof shrinkPictures !== "function") return;
+    cancelAnimationFrame(refitting);
+    refitting = requestAnimationFrame(shrinkPictures);
   }
 
   // ── moving between slides ─────────────────────────────────────────────
@@ -657,9 +667,21 @@
 
   function cut(section) {
     if (section.scrollHeight > section.clientHeight + 1) return true;
-    return [].slice.call(section.querySelectorAll(".option")).some(function (c) {
+    return [].slice.call(section.querySelectorAll(".option, .answer-list")).some(function (c) {
       return c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1;
     });
+  }
+
+  // The program's own fit (deck.css, "the program's own fit"): a decision
+  // slide or the answers slide that does not fit its frame is drawn
+  // tighter, one step at a time, until nothing is clipped and nothing needs
+  // scrolling; what still does not fit says so (data-fit="cut").
+  var FIT_STEPS = ["fit-1", "fit-2", "fit-3"];
+  function fitSlide(section) {
+    FIT_STEPS.forEach(function (c) { section.classList.remove(c); });
+    var step = 0;
+    while (step < FIT_STEPS.length && cut(section)) section.classList.add(FIT_STEPS[step++]);
+    section.setAttribute("data-fit", cut(section) ? "cut" : step ? FIT_STEPS[step - 1] : "fits");
   }
 
   // Try each way in turn and keep the one that shows the smallest picture
@@ -688,14 +710,18 @@
       if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
       var compare = section.querySelector(".compare");
       if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
-      if (section.classList.contains("fill")) return;   // pictures already fit the space
-      var pics = [].slice.call(section.querySelectorAll(".picture img"));
-      var limit = 220;
-      while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {
-        limit -= 12;
-        pics.forEach(function (img) { img.style.maxHeight = limit + "px"; });
+      if (!section.classList.contains("fill")) {   // a filled slide's pictures already fit the space
+        var pics = [].slice.call(section.querySelectorAll(".picture img"));
+        var limit = 220;
+        while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {
+          limit -= 12;
+          pics.forEach(function (img) { img.style.maxHeight = limit + "px"; });
+        }
       }
+      fitSlide(section);
     });
+    var answers = document.getElementById("answers");
+    if (answers) fitSlide(answers);
   }
 
   document.title = DECK.title || "Decisions";

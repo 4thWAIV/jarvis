@@ -167,7 +167,8 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     # The built deck is proven, carries his vote and the layout data.
     folder = Path(job["deck"]["folder"])
     proof = json.loads((folder / presentation_proof.PROOF_FILE).read_text())
-    assert proof["proven"] and proof["slides"] == layout
+    assert proof["proven"] and proof["slides"] == [
+        {k: v for k, v in one.items() if k != "fit"} for one in layout]
     assert json.loads((folder / "package.json").read_text())["vote"] == "approve-package"
 
 
@@ -249,6 +250,69 @@ def test_an_owner_s_edit_to_the_deck_stands_only_when_it_still_builds(marked, de
     said = [m["text"] for m in review["conversation"] if m["from"] == pd.PROGRAM]
     assert any("editor's edits to presentation.yaml: 0 applied, 1 refused" in t for t in said)
     assert "layout: opening" in source.read_text(), "the deck as the author wrote it"
+
+
+def _cut_at_the_smallest_frame(folder):
+    """A build whose decision slide is cut at 662 x 489 (deck_fit's form)."""
+    from tests.deck_fixtures import fitting_every_frame
+    fit = fitting_every_frame(folder)
+    fit["fits"] = False
+    fit["slides"][-1].update(fits=False, cut=[{"frame": [662, 489], "fit": "cut", "parts": [
+        {"part": "Decide later", "how": "clipped", "by_px": 11}]}])
+    return fit
+
+
+def test_each_slide_s_fit_is_a_fact_for_the_reviewers(marked, deck_plan):
+    doc = _passed(marked)
+    assert pd.deck(doc) is None
+    review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
+    [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM
+              and "built and proven" in m["text"]]
+    assert "Fit is the program's to measure and to fix" in turn["text"]
+    layout = [json.loads(s.split('<layout file=".jarvis/layout-proof.json">')[1]
+                         .split("</layout>")[0]) for s in turn["text"].split('<slide id="')[1:]]
+    assert all(one["fit"] == {"fits": True, "said": "Fits at every frame from 662 x 489 to "
+                              "1600 x 900: nothing clipped, nothing to scroll (measured)."}
+               for one in layout)
+    assert Path(pj.get(doc["id"])["deck"]["fit"]).is_file()
+
+
+def test_a_slide_that_does_not_fit_goes_back_to_the_author_never_the_sender(
+        marked, deck_plan, monkeypatch):
+    from tests.deck_fixtures import fitting_every_frame
+    measured = iter([_cut_at_the_smallest_frame])
+    monkeypatch.setattr(pd, "MEASURE", lambda folder: next(measured, fitting_every_frame)(folder))
+    doc = _passed(marked)
+    assert pd.deck(doc) is None
+    review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
+    said = _said_on_the_deck(review)
+    assert "does not fit even after JARVIS's own fitting" in said[0]
+    assert "'Decide later' clipped by 11 px" in said[0]
+    assert pj.get(doc["id"])["rounds"] == []
+
+
+def test_a_deck_jarvis_cannot_make_fit_is_its_own_error(marked, deck_plan, monkeypatch):
+    monkeypatch.setattr(pd, "MEASURE", _cut_at_the_smallest_frame)
+    doc = _passed(marked)
+    with pytest.raises(pj.Blocked) as stopped:
+        pd.deck(doc)
+    assert stopped.value.step == "deck"
+    assert stopped.value.reason.startswith("JARVIS could not make the deck fit its frame")
+    assert stopped.value.fix == pd.NOT_FIT_FIX
+    assert pj.get(doc["id"])["rounds"] == [], "nothing goes to the sender"
+
+
+def test_a_deck_jarvis_cannot_measure_is_its_own_error(marked, deck_plan, monkeypatch):
+    from jarvis import deck_fit
+
+    def unavailable(folder):
+        raise deck_fit.Unavailable("Chromium is not installed")
+    monkeypatch.setattr(pd, "MEASURE", unavailable)
+    doc = _passed(marked)
+    with pytest.raises(pj.Blocked) as stopped:
+        pd.deck(doc)
+    assert "could not measure whether the deck's slides fit" in stopped.value.reason
+    assert "playwright install chromium" in stopped.value.fix
 
 
 # ── deliver ───────────────────────────────────────────────────────────────

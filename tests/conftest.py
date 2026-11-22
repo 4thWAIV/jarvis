@@ -106,6 +106,17 @@ def _never_start_the_engine_s_process(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _deck_fit_without_a_browser(monkeypatch, request):
+    """The deck step measures each build in headless Chromium (deck_fit);
+    outside the page tests it is told every slide fits."""
+    if request.node.get_closest_marker("page"):
+        return
+    from jarvis import package_deck
+    from tests.deck_fixtures import fitting_every_frame
+    monkeypatch.setattr(package_deck, "MEASURE", fitting_every_frame)
+
+
+@pytest.fixture(autouse=True)
 def _never_watch_this_mac_s_real_sessions(monkeypatch, tmp_path):
     """The session watcher started by the app's lifespan reads every Claude
     config root's rosters and transcripts (session_watch.DEFAULT_ROOTS, which
