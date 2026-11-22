@@ -1397,6 +1397,36 @@ no decisions) is one `presentation.yaml` (presentation/1,
 words, structure, pictures by path, narration and decisions and names one
 of JARVIS's layouts for each slide and a slot for each object, never a
 theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
+Besides text, pictures, vectors, bars and tables, the author fills JARVIS's
+own parts with words, which JARVIS draws (salvaged from PR 172, Tim
+2026-11-22, construction-drafts.md "Visuals, the salvage, and sizing";
+`presentation_schema.COMPONENTS`): `callout` (a label above what it says),
+`figures` (one to four key numbers) and `steps` (one to eight numbered
+steps), each item a target; and draws tables and charts from data: a
+deck's `datasets` are records frozen in its source, a table's or a
+`chart`'s `data` a view of one (where, sort, limit), worked out in one
+place (`presentation_data.py`: a data table into rows of words in the
+deck's language; a bar, line or scatter chart into its ticks, labels and
+points as shares of the plot that presentation.js only places; every bar,
+point and named cell a target). The author turns dry text into these
+(the system never waits for the evidence to supply a picture): a sequence
+as steps, numbers as a chart or key figures from the evidence's figures, a
+comparison as a comparison or table, a warning or finding as a callout,
+never long paragraphs (`make_package --example visuals`,
+`make_package.VISUALS_EXAMPLE`). Sizing is the language's, never a browser
+measurement of a package: each layout slot's capacity is worked out by
+program from layout-spec.json at the smallest frame (662 x 489) with every
+word at its floor, for every object type (`deck_capacity.py`: a character
+taken as `capacity.char_em`, 0.6 of its size; text by its paragraphs, a
+table by its rows, the components by their parts, a chart by its legend,
+labels and least plot), and `presentation_source` refuses as the source
+is read (never a built deck arriving) a slot over its capacity, naming the
+slot, the lines needed and held and how much over, a title over its place,
+and a slide of only prose over one paragraph
+(`capacity.prose_paragraph_lines` lines of its widest text slot); each
+object's capacity is in the layout data. The release check
+(`tests/test_presentation_corpus.py`) builds and proves every shipped and
+fixture deck and proves it again from its built bytes.
 `presentation.compile_deck` lays it out onto the shared deck
 (`new_deck.py`, `decision_package.py` checking it as before) in JARVIS's
 named layouts from one spec (`presentation_assets/layout-spec.json`,
@@ -1418,10 +1448,10 @@ and label floor; `--fill-assets` writes each asset's size and hash), that
 the story points only at what is drawn and that the renderer files are
 JARVIS's own; the proof goes in the package (`.jarvis/layout-proof.json`,
 `presentation-proof/2`, with the language it was built in). What the
-slides say, how long and in what order, is the author's: no rule counts
-words or characters or shapes the first slide, and JARVIS draws no slide
-of its own before the author's or before a decision; what stays checked is
-at least two options a decision, every picture readable where drawn (an
+slides say and in what order is the author's: no rule shapes the first
+slide, and JARVIS draws no slide of its own before the author's or before
+a decision; what stays checked is every slot within its capacity and no
+slide of only prose over one paragraph, at least two options a decision, every picture readable where drawn (an
 SVG's size read from its width and height, else its viewBox) and a story of
 about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
@@ -1446,19 +1476,21 @@ by an onboarded agent's key, and makes a carried proof again from the
 zip's own bytes (`presentation_proof.reprove`), opening none that does not
 prove; a deck from before, with no proof, is admitted on its signer's old
 statement that it passed the end-to-end check
-(`package_signature.DECISION_CHECKED`). Beyond each slide's fit, which the
-package workflow's deck step measures in headless Chromium (`deck_fit`, see
-"A package's evidence"), what only a browser shows is held
-in CI on fixture decks, never in a package's path: the page tests' isolated
+(`package_signature.DECISION_CHECKED`). What only a browser shows is held
+in CI on fixture decks, never in a package's path (no package is drawn in
+a browser, Tim's decision of 18 November; `tests/deck_measure.py` is CI's
+measure of fixture decks): the page tests' isolated
 JARVIS (`tests/isolated_jarvis.py`, `tests/isolated_jarvis_server.py`,
 seeded with the agent's key, `JARVIS_DECISION_CHECK_SERVER`) proves voting
 by click and by decide.py, the story waiting at every question, Stop within
 1 s from the page and the tool, resume, and the border's Chapters, Next,
 Previous and count over every slide (`test_voice_page_decision_package.py`),
 and `test_voice_page_layout_model.py` draws a hard fixture deck (long
-words, a table, two pictures, four columns, pictured options, Spanish)
+words, a table, two pictures, four columns, the components, two charts and
+a table from data, pictured options, Spanish; `tests/deck_fixtures.hard_deck`)
 across the frame range and holds every picture's drawn size to the proof's
-model within 0.5 px. A page JARVIS did not lay out (a hand-made page, an
+model within 0.5 px and every object the capacity model lets through to
+its slot, nothing cut off, every chart keeping its least plot. A page JARVIS did not lay out (a hand-made page, an
 architecture package's) says "Layout not checked" in its border
 (`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
 says the same).
@@ -1582,10 +1614,9 @@ author's role, the format, the code) and the sender's answers to a deck
 that never built, findings filed under `package_deck.WRITE_LABEL` and said
 to the author before it writes, `package_deck.Plan`), `deck-build` (the
 source, its files, the script, `pipeline_digest`: the Python that lays
-out, builds, proves and measures a deck, `PIPELINE_CODE`, the shared
-deck's files and the presentation assets), `deck-fit` (one a slide, its
-layout data and the pipeline; `deck_fit.measure`'s `only` measures just
-those not kept), `deck-review` (one a slide: its part, fit, script slide,
+out, sizes, builds and proves a deck, `PIPELINE_CODE`, the shared
+deck's files and the presentation assets), `deck-review` (one a slide: its
+part, its layout data, script slide,
 `review_tool` and the findings answered on it), `deck` (the review and
 conversation) and `deliver` (the deck, the briefing, the message, who
 asked, its code; the check is asked every run). A kept deck source that no
@@ -2044,8 +2075,10 @@ deck slide, in order and with the same id (a script slide that asks a
 decision is the deck's decision slide asking it, its words the decision's
 context and what JARVIS says over it its `say`), in JARVIS's named layouts,
 told so by the program (`write_note`, carrying the script,
-docs/making-a-package.md's "A deck" section word for word and
-`make_package.EXAMPLE`; later rounds `revise_note`); where the script gives
+docs/making-a-package.md's "A deck" section word for word,
+`make_package.EXAMPLE` and `make_package.VISUALS_EXAMPLE`, and
+`SHOW_NOTE`: turn dry text into visuals, show what can be shown, never
+long paragraphs; later rounds `revise_note`); where the script gives
 Tim's own words (a `his_words` piece) they are runs of emphasis
 `his-words` (`presentation_schema.HIS_WORDS`), drawn highlighted bright and
 vibrant (presentation.css `mark.his-words`), and narrated. The program
@@ -2067,14 +2100,16 @@ with its style and the range its slide's fit may draw it at
 the narration; a decision slide's question, context, options, reason and
 `say`, each word's range as the shared deck may draw it,
 `presentation_proof.deck_words_px` read from its deck.css, and what JARVIS
-says on it from the story; beside it the measured fit and the sizes drawn,
-`fit` and `drawn_px`), and the questions (`review_turn`: does each slide
-say what the script says for it, is it visual where the script calls for
-it, does the narration say the substance; is every word readable at its
-size, `deck-readable`, is the program's, `PROGRAM_QUESTIONS`, answered by
-the measure, `package_deck.readable`, the review's `program`, never a
-reviewer's concern, finding or a question for the sender, Tim
-2026-11-22). The deck review is run by
+says on it from the story; each object's `capacity`, the lines its slot
+holds at the floor and the lines it needs), and the questions
+(`review_turn`: does each slide say what the script says for it, is it
+visual where the script calls for it, does the narration say the
+substance, is what can be shown shown, `deck-shown`, first-round wording
+pre-approved, owner-prompts.md; is every word readable at its size,
+`deck-readable`, is the program's, `PROGRAM_QUESTIONS`, answered by the
+build, every slot within its capacity, `package_deck.readable`, the
+review's `program`, never a reviewer's concern, finding or a question for
+the sender, Tim 2026-11-22). The deck review is run by
 the same owners, the same way (`package_swarm.fix_passes` with the `deck-`
 stages): Tim's reader, the context owner, the structure and decision owner
 and the editor, in parallel, each edit the deck source (`DeckSource`: each
@@ -2087,28 +2122,17 @@ own items; never the author on its own deck. Passed
 two fix passes, or a deck the author could not make build,
 its findings go to the sender as a failed swarm's do. The proof also holds
 every text style at least the text floor at both sizes (`prove_text`).
-Every build's fit is measured (Tim 2026-11-22, `deck_fit.py`): the program
-draws the built deck as the package frame does (`html.hosted`, inside a
-frame) in headless Chromium at every frame the proof covers
-(`deck_fit.frames()`, layout_spec.frames(), 662 x 489 to 1600 x 900) and
-reads for each slide whether anything on it (words, pictures, a decision's
-options and Choose bars, Decide later, None of these, his words field and
-the recorded line) is clipped or needs scrolling, and the size its words
-are drawn at (`drawn`: least, most and typical px, the scale chosen, how
-far down it reaches; `deck_fit.drawn_at_ends`) (`.jarvis/fit.json`;
-`package_deck.MEASURE`, faked outside the page tests). The shared deck fits
-every slide (deck.js `fitSlide`, deck.css "the program's own fit": its
-words as large as it allows, down to the 13 px floor, then `tight`;
-`data-fit`); `tests/test_voice_page_deck_fit.py` holds a decision as long
-as the first real one at every frame and `test_voice_page_text_fit.py` a
-sparse slide's words well past the floor and a dense one's never under
-it. The fit and the sizes drawn are facts beside each slide's layout data
-for the reviewers (`fit`, `drawn_px`), never a question for them or the
-sender. A slide that does not fit with its words at the floor does not
-build (`Problems.unfit`): told to the author to split it, an owner's edit making one
-unfit not applied, and a deck JARVIS cannot make fit (or cannot measure,
-`deck_fit.Unavailable`) is the run's Error (`NOT_FIT_FIX`), never findings
-for the sender.
+No build is drawn in a browser (Tim 2026-11-22: `deck_fit.py`'s headless
+Chromium and its callers are removed): a slot over its capacity
+(`deck_capacity`) does not build and is told to the author with the slot
+and how much over, to split it or show it as a visual, and an owner's edit
+that puts one over is not applied. The shared deck fits every slide as it
+draws it (deck.js `fitSlide`, deck.css "the program's own fit": its words
+as large as it allows, down to the 13 px floor, then `tight`;
+`data-fit`); in CI, on fixture decks (`tests/deck_measure.py`),
+`tests/test_voice_page_deck_fit.py` holds a decision as long as the first
+real one at every frame and `test_voice_page_text_fit.py` a sparse slide's
+words well past the floor and a dense one's never under it.
 The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
 design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
 (`briefing_files`: research.md, prep.md, outline.yaml, script.yaml,
@@ -4057,9 +4081,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   their tool (code by source hash, roles, prompts, engine choice): each
   unit's key, its kept output and timing, reuse, replacing a rejected
   output, pruning, and the run's timing.json units (see "Package requests")
-- `deck_fit.py` — Each slide of a built deck measured at every frame in
-  headless Chromium: what is clipped or needs scrolling (see "A package's
-  evidence")
+- `deck_capacity.py` — How much each layout slot holds at 662 x 489 with
+  every word at its floor, for every object type, and what a deck over it
+  is refused for (see "Work packages"); `presentation_data.py` — datasets,
+  their views, and tables and charts drawn from them
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

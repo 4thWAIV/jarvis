@@ -41,7 +41,7 @@ for `PRUNE_AFTER_SEC` (30 days) are removed at server start (`prune`).
 The units (package_jobs.STEPS): `gather`; `mark-file` (one a file of the
 evidence); `research`; the swarm's stages `swarm-outline`, `swarm-fill`,
 `swarm-passes` and `swarm-revision` (one a revision), and `script-slide`
-(one a slide); `deck-header`, `deck-source`, `deck-fit` and `deck-review`
+(one a slide); `deck-header`, `deck-source` and `deck-review`
 (one a slide each), `deck-build` and `deck`; and `deliver`.
 """
 from __future__ import annotations

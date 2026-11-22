@@ -127,6 +127,10 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     assert "emphasis his-words" in told and "very bright, vibrant way" in told
     assert pd.deck_format() in told and "## A deck: one presentation.yaml" in told
     assert "<example file=\"presentation.yaml\">" in told
+    # It is told to turn dry text into visuals, with an example that does.
+    assert pd.SHOW_NOTE in told and "Never put long paragraphs on a slide" in told
+    assert '<visuals file="presentation.yaml">' in told and "type: steps" in told \
+        and "type: chart" in told and "type: figures" in told and "type: callout" in told
     # JARVIS's own turn: slide by slide, each script slide beside its deck
     # slide's layout data, and the questions; no browser. His words are the
     # program's check: no vote is asked of them.
@@ -134,17 +138,21 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM
               and "built and proven" in m["text"]]
     assert [qid for qid, _ in pd.DECK_QUESTIONS] == ["deck-says", "deck-visual",
-                                                     "deck-narration", "deck-readable"]
-    # Type size and fit are the program's: deck-readable is answered by its
-    # measure, never asked of a reviewer, and the sizes drawn are facts.
+                                                     "deck-narration", "deck-readable",
+                                                     "deck-shown"]
+    # Each owner and the editor signs off that what can be shown is shown.
+    assert {c.id for c in pd.DECK_CONCERNS if c.id.startswith("deck-shown:")} == \
+        {f"deck-shown:{owner}" for owner in ps.FIXERS}
+    # Type size is the program's: deck-readable is answered by the build
+    # (every slot within its capacity), never asked of a reviewer.
     assert pd.PROGRAM_QUESTIONS == ("deck-readable",)
     assert all(f'<question id="{qid}">' in turn["text"] for qid, _ in pd.DECK_QUESTIONS
                if qid != "deck-readable")
     assert '<question id="deck-readable">' not in turn["text"]
-    assert "Type size and fit are the program's" in turn["text"]
+    assert "Type size is the program's" in turn["text"]
     [answered] = review["program"]
     assert answered["question"] == "deck-readable" and answered["state"] == "resolved"
-    assert "the smallest word 18 px" in answered["reason"]
+    assert "within its capacity at 662 x 489" in answered["reason"]
     slides = turn["text"].split('<slide id="')[1:]
     assert [s.split('"')[0] for s in slides] == ["opening", "what-changed", "where"]
     assert '<script file="script.yaml">id: opening' in slides[0]
@@ -153,9 +161,9 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     opening = layout[0]
     assert opening["layout"] == "opening" and opening["title_px_range"]["smallest"][0] >= 13
     assert opening["title_px_range"]["largest"][1] == 64
-    assert opening["drawn_px"]["smallest"] == {"least": 18.0, "most": 26.0, "typical": 18.0}
-    assert "most of its words at 18 px" in opening["fit"]["said"]
     words = opening["objects"][0]
+    assert words["capacity"] == {"holds_lines": 22, "needs_lines": words["capacity"]["needs_lines"],
+                                 "fits": True} and 0 < words["capacity"]["needs_lines"] < 22
     assert words["size_px"]["smallest"][0] > 0 and words["size_px"]["largest"][0] > \
         words["size_px"]["smallest"][0]
     runs = [r for p in words["paragraphs"] for r in p["runs"]]
@@ -181,8 +189,7 @@ def test_the_deck_is_written_built_proven_and_compared_with_the_script(marked, d
     # The built deck is proven, carries his vote and the layout data.
     folder = Path(job["deck"]["folder"])
     proof = json.loads((folder / presentation_proof.PROOF_FILE).read_text())
-    assert proof["proven"] and proof["slides"] == [
-        {k: v for k, v in one.items() if k not in ("fit", "drawn_px")} for one in layout]
+    assert proof["proven"] and proof["slides"] == layout
     assert json.loads((folder / "package.json").read_text())["vote"] == "approve-package"
 
 
@@ -266,84 +273,52 @@ def test_an_owner_s_edit_to_the_deck_stands_only_when_it_still_builds(marked, de
     assert "layout: opening" in source.read_text(), "the deck as the author wrote it"
 
 
-def _cut_at_the_smallest_frame(folder):
-    """A build whose decision slide is cut at 662 x 489 (deck_fit's form)."""
-    from tests.deck_fixtures import fitting_every_frame
-    fit = fitting_every_frame(folder)
-    fit["fits"] = False
-    fit["slides"][-1].update(fits=False, cut=[{"frame": [662, 489], "fit": "cut", "parts": [
-        {"part": "Decide later", "how": "clipped", "by_px": 11}]}])
-    return fit
-
-
-def test_each_slide_s_fit_is_a_fact_for_the_reviewers(marked, deck_plan):
+def test_each_object_s_capacity_is_a_fact_for_the_reviewers_and_no_browser_draws_it(
+        marked, deck_plan):
     doc = _passed(marked)
     assert pd.deck(doc) is None
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     [turn] = [m for m in review["conversation"] if m["from"] == pd.PROGRAM
               and "built and proven" in m["text"]]
-    assert "Type size and fit are the program's to measure and to fix" in turn["text"]
+    assert "each object's capacity" in turn["text"] and "drawn_px" not in turn["text"]
     layout = [json.loads(s.split('<layout file=".jarvis/layout-proof.json">')[1]
                          .split("</layout>")[0]) for s in turn["text"].split('<slide id="')[1:]]
-    assert all(one["fit"] == {"fits": True, "said": "Fits at every frame from 662 x 489 to "
-                              "1600 x 900: nothing clipped, nothing to scroll (measured). Its "
-                              "words are drawn as large as the slide allows: at 662 x 489 most "
-                              "of its words at 18 px (the least 18 px, the most 26 px); at "
-                              "1600 x 900 most of its words at 18 px (the least 18 px, the most "
-                              "26 px) (measured)."}
-               for one in layout)
-    assert all(set(one["drawn_px"]) == {"smallest", "largest"} for one in layout)
-    assert Path(pj.get(doc["id"])["deck"]["fit"]).is_file()
+    rooms = [o["capacity"] for one in layout for o in one.get("objects") or []]
+    assert rooms and all(r["fits"] for r in rooms)
+    # No package is drawn in a browser on its way (Tim, 18 November): no
+    # measure, no fit record.
+    assert not hasattr(pd, "MEASURE") and "fit" not in pj.get(doc["id"])["deck"]
+    built = Path(pj.get(doc["id"])["deck"]["folder"])
+    assert not (built / ".jarvis" / "fit.json").exists()
+    assert not (Path(pd.__file__).parent / "deck_fit.py").exists()
 
 
-def test_a_slide_that_does_not_fit_goes_back_to_the_author_never_the_sender(
-        marked, deck_plan, monkeypatch):
-    from tests.deck_fixtures import fitting_every_frame
-    measured = iter([_cut_at_the_smallest_frame])
-    asked = []
-
-    def measure(folder, only=None):
-        asked.append(only)
-        return next(measured, lambda f: fitting_every_frame(f, only))(folder)
-    monkeypatch.setattr(pd, "MEASURE", measure)
-    # The author answers by changing the slide that did not fit; the same
-    # layout measures the same (its fit is kept, step_cache.py).
-    shorter = deck_with_his_words()
-    shorter["decisions"][0]["reason"] = "No table to book."
-    deck_plan.decks = [deck_with_his_words(), shorter]
+def test_a_slot_over_its_capacity_goes_back_to_the_author_never_the_sender(marked, deck_plan):
+    # The author first writes a slide of only prose, far over one paragraph
+    # and over its slot; told how much over, it shows it as steps instead.
+    sentence = "Food is brought in at noon and nobody has to book a table anywhere. "
+    long = deck_with_his_words()
+    long["slides"][1]["objects"][0]["paragraphs"] = [
+        {"id": f"changes-{n}", "role": "paragraph",
+         "runs": [{"id": f"changes-{n}-words", "text": sentence * 6, "emphasis": "normal"}]}
+        for n in range(1, 6)]
+    shown = deck_with_his_words()
+    shown["slides"][1]["objects"] = [{
+        "id": "changes", "type": "steps", "slot": "body", "source": {"reference": "lunch-plan"},
+        "items": [{"id": "changes-food", "title": "Food is brought in."},
+                  {"id": "changes-table", "title": "Nobody has to book a table."}]}]
+    deck_plan.decks = [long, shown]
     doc = _passed(marked)
     assert pd.deck(doc) is None
-    assert asked == [None, ["where"]], "only the slide whose layout changed is measured again"
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     said = _said_on_the_deck(review)
-    assert "does not fit even after JARVIS's own fitting" in said[0]
-    assert "'Decide later' clipped by 11 px" in said[0]
-    assert "Split it into two slides" in said[0], "the author splits what cannot fit"
-    assert pj.get(doc["id"])["rounds"] == []
-
-
-def test_a_deck_jarvis_cannot_make_fit_is_its_own_error(marked, deck_plan, monkeypatch):
-    monkeypatch.setattr(pd, "MEASURE", _cut_at_the_smallest_frame)
-    doc = _passed(marked)
-    with pytest.raises(pj.Blocked) as stopped:
-        pd.deck(doc)
-    assert stopped.value.step == "deck"
-    assert stopped.value.reason.startswith("JARVIS could not make the deck fit its frame")
-    assert stopped.value.fix == pd.NOT_FIT_FIX
+    assert said[0].startswith("The deck did not build.")
+    assert "The body slot of slide what-changed (title-and-body) is over its capacity" in said[0]
+    assert "lines of body text where it holds 22: " in said[0] and "%) over" in said[0]
+    assert "Slide what-changed is only prose" in said[0]
+    assert "a sequence as numbered steps" in said[0]
+    assert pj.get(doc["id"])["deck"]["result"] == "passed"
     assert pj.get(doc["id"])["rounds"] == [], "nothing goes to the sender"
-
-
-def test_a_deck_jarvis_cannot_measure_is_its_own_error(marked, deck_plan, monkeypatch):
-    from jarvis import deck_fit
-
-    def unavailable(folder):
-        raise deck_fit.Unavailable("Chromium is not installed")
-    monkeypatch.setattr(pd, "MEASURE", unavailable)
-    doc = _passed(marked)
-    with pytest.raises(pj.Blocked) as stopped:
-        pd.deck(doc)
-    assert "could not measure whether the deck's slides fit" in stopped.value.reason
-    assert "playwright install chromium" in stopped.value.fix
 
 
 # ── deliver ───────────────────────────────────────────────────────────────

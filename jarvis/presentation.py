@@ -8,9 +8,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import decision_package as dp, package_story, package_understanding, presentation_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, SourceRef, TableObject,
-                                        TextObject, VectorObject)
+from jarvis import (decision_package as dp, package_story, package_understanding, presentation_data,
+                    presentation_proof)
+from jarvis.presentation_schema import (COMPONENTS, BarObject, ChartObject, ContentSlide,
+                                        FiguresObject, ImageObject, SourceRef, StepsObject,
+                                        TableObject, TextObject, VectorObject, words)
 from jarvis.presentation_source import DeckCompileError, DeckDiagnostic, Source, read_source
 
 ASSETS = Path(__file__).with_name("presentation_assets")
@@ -53,6 +55,12 @@ def _targets(source: Source) -> list[dict]:
                     add(paragraph.id,"paragraph","".join(r.text for r in paragraph.runs),obj.source)
                     for run in paragraph.runs:
                         add(run.id,"run",run.text,obj.source)
+            elif isinstance(obj, COMPONENTS):
+                add(obj.id,obj.type," ".join(words(obj)),obj.source)
+                if isinstance(obj, (FiguresObject, StepsObject)):
+                    kind = "figure" if isinstance(obj, FiguresObject) else "step"
+                    for item, said in zip(obj.items, words(obj)):
+                        add(item.id,kind,said,obj.source)
             else:
                 add(obj.id,obj.type,obj.alt,obj.source)
                 if isinstance(obj, VectorObject):
@@ -64,6 +72,14 @@ def _targets(source: Source) -> list[dict]:
                 elif isinstance(obj, TableObject):
                     for row in obj.rows:
                         add(row.id,"row"," | ".join(row.cells),obj.source)
+                    for row, ids in zip(obj.rows, presentation_data.cell_ids(obj)):
+                        for n, cell in enumerate(ids):
+                            head = f"{obj.head[n]}: " if obj.head else ""
+                            add(cell,"cell",head + row.cells[n],obj.source)
+                elif isinstance(obj, ChartObject):
+                    for series in obj._drawn["series"]:
+                        for point in series["points"]:
+                            add(point["id"],"point",f"{series['label']}, {point['name']}",obj.source)
     return entries
 
 
@@ -83,8 +99,8 @@ def _deck(source: Source, targets: list[dict]) -> dict:
                 blocks.extend({"p":"".join(run.text for run in p.runs)} for p in obj.paragraphs)
             elif isinstance(obj,ImageObject):
                 blocks.append({"picture":assets[obj.asset].path,"alt":obj.alt})
-            elif isinstance(obj,BarObject):
-                blocks.append({"p":" ".join(f"{b.label} {b.value:g} {obj.units}" for b in obj.bars)})
+            elif isinstance(obj,(BarObject,ChartObject,*COMPONENTS)):
+                blocks.extend({"p":said} for said in words(obj))
             elif isinstance(obj,TableObject):
                 blocks.append({"table":{**({"head":obj.head} if obj.head else {}),"rows":[r.cells for r in obj.rows],
                                         "rowHeads":obj.rowHeads}})
@@ -166,7 +182,9 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
                     snapshot.parent.mkdir(exist_ok=True)
                     snapshot.write_bytes(evidence)
                     frozen[reference.id] = {"path": relative, "sha256": hashlib.sha256(evidence).hexdigest()}
-            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
+            charts={obj.id:obj._drawn for slide in parsed.document.slides for obj in getattr(slide,"objects",[])
+                    if isinstance(obj,ChartObject)}
+            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
             (folder/"presentation-data.js").write_text("window.PRESENTATION = "+json.dumps(model,ensure_ascii=False)+";\n",encoding="utf-8")
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

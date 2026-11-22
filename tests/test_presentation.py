@@ -374,18 +374,26 @@ def test_a_story_too_long_to_hear_is_refused(source, tmp_path):
         compile_deck(source, tmp_path / "compiled")
 
 
-def test_words_are_not_measured_and_any_character_is_drawn(source, tmp_path):
+def test_any_character_is_drawn_and_room_is_the_slot_s_capacity(source, tmp_path):
     """No font ships with JARVIS: a slide's words are drawn in the system
-    font stack, so neither their room nor their characters are proven."""
+    font stack, so their characters are not proven; their room is held by
+    the slot's capacity (deck_capacity), worked out from the layout spec."""
     from jarvis.presentation import compile_deck
-    def crowd(data):
-        data["slides"][1]["title"] = "Rain ☃ routes"
-        paragraphs = data["slides"][1]["objects"][0]["paragraphs"]
-        paragraphs[1:] = [{"id": f"more-{n}", "role": "paragraph", "runs": [
-            {"id": f"more-{n}-words", "text": "Rain stays on the planted block longer.", "emphasis": "normal"}]}
-            for n in range(4)]
-    change(source, crowd)
+
+    def crowd(count):
+        def change_(data):
+            data["slides"][1]["title"] = "Rain ☃ routes"
+            paragraphs = data["slides"][1]["objects"][0]["paragraphs"]
+            paragraphs[1:] = [{"id": f"more-{n}", "role": "paragraph", "runs": [
+                {"id": f"more-{n}-words", "text": "Rain stays on the planted block longer.",
+                 "emphasis": "normal"}]} for n in range(count)]
+        return change_
+    change(source, crowd(1))
     compile_deck(source, tmp_path / "compiled")
+    change(source, crowd(4))
+    with pytest.raises(DeckCompileError, match="The words slot of slide compare-runoff "
+                                               r"\(comparison\) is over its capacity"):
+        compile_deck(source, tmp_path / "again")
 
 
 def test_the_proof_is_recorded_and_templates_must_be_jarvis_own(source, tmp_path):
@@ -462,4 +470,4 @@ def test_the_shared_deck_fits_words_within_the_layout_spec_s_bounds():
     assert layout_spec.stale() == []
     for style in spec["styles"]:
         low, high = layout_spec.style_range(style, layout_spec.unit((662, 489)))
-        assert low == spec["text"]["min_px"] and high > low
+        assert low == spec["styles"][style]["min_px"] >= spec["text"]["min_px"] and high > low

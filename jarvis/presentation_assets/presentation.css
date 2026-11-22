@@ -6,6 +6,8 @@
   --deck-heading-line: 1.2;
   --deck-cell: clamp(13px, calc(18 * var(--u) * var(--fit, 1)), 48px);
   --deck-cell-line: 1.35;
+  --deck-figure: clamp(16px, calc(30 * var(--u) * var(--fit, 1)), 64px);
+  --deck-figure-line: 1.15;
 }
 .presentation-canvas { position: absolute; inset: 0; }
 .presentation-slot { padding: calc(4 * var(--u)); }
@@ -30,6 +32,23 @@
 .presentation-slot[data-layout="comparison"][data-columns="4"][data-slot="fourth"] { left: 74.7727%; top: 14.6875%; width: 22.0455%; height: 62.5000%; }
 .presentation-slot[data-layout="table"][data-slot="table"] { left: 3.1818%; top: 14.6875%; width: 93.6364%; height: 65.6250%; }
 .presentation-slot[data-layout="table"][data-slot="words"] { left: 3.1818%; top: 82.8125%; width: 93.6364%; height: 15.3125%; }
+.presentation-callout { border-left: 4px solid var(--accent); padding: calc(10 * var(--u)) calc(14 * var(--u)); }
+.presentation-figures { display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); gap: calc(14 * var(--u)); }
+.presentation-figure { padding: calc(10 * var(--u)) calc(12 * var(--u)); }
+.presentation-figure-value { font-size: var(--deck-figure); line-height: var(--deck-figure-line); }
+.presentation-steps { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+.presentation-step { display: grid; grid-template-columns: 1.9em minmax(0, 1fr); column-gap: 0.6em; align-items: start; }
+.presentation-step-marker { width: 1.9em; height: 1.9em; }
+.presentation-chart { --deck-chart: clamp(13px, calc(18 * var(--u)), 48px); display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; font-size: var(--deck-chart); line-height: 1.35; }
+.presentation-chart-legend { grid-column: 1 / 3; display: flex; flex-wrap: wrap; column-gap: 1em; }
+.presentation-chart-swatch { display: inline-block; width: 0.8em; height: 0.8em; margin-right: 0.4em; }
+.presentation-chart-y { grid-row: 2; grid-column: 1; position: relative; padding-right: 0.5em; }
+.presentation-chart-y > .presentation-chart-ticks { position: absolute; inset: calc(var(--deck-chart) * 1.35 / 2) 0.5em calc(var(--deck-chart) * 1.35 / 2) 0; }
+.presentation-chart-plot { grid-row: 2; grid-column: 2; position: relative; margin: calc(var(--deck-chart) * 1.35 / 2) 0; }
+.presentation-chart-x { grid-row: 3; grid-column: 2; position: relative; }
+.presentation-chart-x.categories { display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); text-align: center; }
+.presentation-chart-x.ticks { height: calc(var(--deck-chart) * 1.35); }
+.presentation-chart-dot { width: 0.6em; height: 0.6em; }
 /* layout-spec: end */
 :root { --top:0px; --bottom:0px; --mic-clear:0px; }
 #stage { width:100%; height:100%; }
@@ -50,7 +69,7 @@ h2, h3, b, strong, th { font-weight:700; }
 .presentation-title { position:absolute; box-sizing:border-box; margin:0; font-size:var(--deck-heading);
   line-height:var(--deck-heading-line); font-weight:700; }
 .presentation-slot { position:absolute; box-sizing:border-box; overflow:hidden; font-size:var(--deck-body);
-  line-height:var(--deck-body-line); }
+  line-height:var(--deck-body-line); overflow-wrap:break-word; }
 .presentation-slot p,.presentation-slot h2 { margin:0 0 .35em; }
 .presentation-slot h2 { font-size:var(--deck-heading); font-weight:700; line-height:var(--deck-heading-line); }
 .presentation-slot ul,.presentation-slot ol { padding-left:1.3em; margin:0; }
@@ -64,6 +83,28 @@ h2, h3, b, strong, th { font-weight:700; }
 .presentation-bar-fill { display:block; height:100%; background:var(--accent); min-width:0; }
 .presentation-bar-value { display:block; font-variant-numeric:tabular-nums; }
 .presentation-axis { display:flex; justify-content:space-between; font-size:inherit; }
+/* JARVIS's components (sizes generated from the layout spec above). */
+.presentation-callout, .presentation-figure { background:var(--surface); }
+.presentation-figure { border-radius:calc(8 * var(--u)); }
+:is(.presentation-callout, .presentation-figure, .presentation-step-text) > * { display:block; }
+.presentation-slot .presentation-steps { list-style:none; padding:0; margin:0; }
+.presentation-step-marker { display:flex; align-items:center; justify-content:center; border-radius:50%;
+  background:var(--accent); color:var(--accent-ink); font-weight:700; }
+/* Charts from data (lengths generated from the layout spec's chart above). */
+html { --series-1:var(--accent); --series-2:#f97316; --series-3:#22c55e; --series-4:#a855f7; }
+.presentation-chart-legend > span { white-space:nowrap; }
+.presentation-chart-swatch { vertical-align:baseline; }
+.presentation-chart-sizer > span { display:block; height:0; overflow:hidden; visibility:hidden; white-space:nowrap; }
+.presentation-chart-ticks > span { position:absolute; right:0; transform:translateY(50%); white-space:nowrap; }
+.presentation-chart-plot { border-left:1px solid var(--edge); border-bottom:1px solid var(--edge); }
+.presentation-chart-rule { position:absolute; left:0; right:0; border-top:1px solid var(--edge); opacity:.5; }
+.presentation-chart-lines { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+.presentation-chart-bar { position:absolute; }
+.presentation-chart-dot { position:absolute; border-radius:50%; transform:translate(-50%, 50%); }
+.presentation-chart-x.ticks > span { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; }
+/* The end ticks sit at the plot's edges: aligned inside it, never past the slot. */
+.presentation-chart-x.ticks > span:first-child { transform:none; }
+.presentation-chart-x.ticks > span:last-child { transform:translateX(-100%); }
 .presentation-slot [data-member]:focus { outline:3px solid var(--accent); outline-offset:3px; }
 .presentation-inspector { position:fixed; inset:1em; z-index:100; background:var(--surface); border:1px solid var(--edge); padding:1em; overflow:auto; }
 .presentation-inspector[hidden] { display:none; }

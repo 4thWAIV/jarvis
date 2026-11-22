@@ -18,12 +18,15 @@ what can be computed is proven here:
   JARVIS's own (`template_hashes`), so no package carries a changed
   renderer.
 
-Words are drawn in a system font stack, so how much room they take is not
-computed here: each slide's words are drawn at the largest size at which
-the slide fits its frame (deck.js fitSlide, within layout-spec.json's
-"fit"), so the proof records the range each style may be drawn in
-(`text_px_range`), and the size drawn is measured where it is drawn
-(deck_fit, `drawn` on each slide of .jarvis/fit.json).
+Words are drawn in a system font stack. How much room they take is held
+by the language, not measured: every slot's content is within its
+capacity, worked out from the layout spec at the smallest frame with every
+word at its floor (deck_capacity, refused by presentation_source as the
+deck is written), and each slide's words are then drawn at the largest size
+at which the slide fits its frame (deck.js fitSlide, within
+layout-spec.json's "fit"). The proof records the range each style may be
+drawn in (`text_px_range`) and each object's capacity (`capacity`: the
+lines its slot holds and the lines it needs, at the floor).
 
 `record` is the proof, written as .jarvis/layout-proof.json in the
 built package; each `Failure` is said in the author's terms. It carries
@@ -43,8 +46,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import data_paths, layout_spec, picture_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, TableObject,
+from jarvis import data_paths, deck_capacity, layout_spec, picture_proof
+from jarvis.presentation_schema import (BarObject, CalloutObject, ChartObject, ContentSlide,
+                                        FiguresObject, ImageObject, StepsObject, TableObject,
                                         TextObject, VectorObject)
 
 PROOF_FILE = ".jarvis/layout-proof.json"
@@ -74,8 +78,7 @@ def sizes() -> dict[str, tuple[float, float]]:
 
 def _style_px(style: str) -> dict[str, list[float]]:
     """The least and the most a style may be drawn at at both sizes: the
-    slide's fit (deck.js fitSlide) chooses within it, and deck_fit measures
-    what it chose."""
+    slide's fit (deck.js fitSlide) chooses within it."""
     return {name: [round(px, 1) for px in layout_spec.style_range(style, layout_spec.unit(frame))]
             for name, frame in sizes().items()}
 
@@ -196,6 +199,23 @@ def _object_layout(obj, box, pictures: dict) -> dict:
     elif isinstance(obj, VectorObject):
         out.update(alt=obj.alt, members=[{"id": m.id, "type": m.type, "alt": m.alt}
                                          for m in obj.members])
+    elif isinstance(obj, CalloutObject):
+        out.update(style="body", text_px_range=_style_px("body"), label=obj.label, says=obj.says)
+    elif isinstance(obj, FiguresObject):
+        out.update(style="figure", text_px_range=_style_px("figure"),
+                   items=[{"id": i.id, "value": i.value, "label": i.label} for i in obj.items])
+    elif isinstance(obj, StepsObject):
+        out.update(style="body", text_px_range=_style_px("body"),
+                   items=[{"id": i.id, "title": i.title, "says": i.says} for i in obj.items])
+    elif isinstance(obj, ChartObject):
+        drawn = obj._drawn or {}
+        out.update(alt=obj.alt, kind=obj.kind, dataset=obj.data.dataset, x=obj.x, y=list(obj.y),
+                   categories=drawn.get("categories"),
+                   series=[{"label": s["label"], "points": [p["name"] for p in s["points"]]}
+                           for s in drawn.get("series") or []])
+    room = deck_capacity.object_capacity(obj, box)
+    if room is not None:
+        out["capacity"] = room
     return out
 
 

@@ -2,9 +2,9 @@
 proof covers (Tim 2026-11-22): the question, the recommendation, the
 context, each option with its Choose bar, Decide later, None of these, his
 words field and the line saying what is recorded, nothing clipped and
-nothing to scroll. Measured the way the deck step measures every build
-(deck_fit.measure: the built deck drawn in JARVIS's frame in headless
-Chromium at every frame from 662 x 489 to 1600 x 900).
+nothing to scroll. Measured in CI on this fixture deck (tests/deck_measure.py:
+the built deck drawn in JARVIS's frame in headless Chromium at every frame
+from 662 x 489 to 1600 x 900); no package is measured on its way.
 
 The decision here has the words of the first real package's decision that
 ran past the bottom at 662 x 489 (as long, in the same places), so the
@@ -19,7 +19,8 @@ import copy
 import pytest
 import yaml
 
-from jarvis import deck_fit, make_package as mp
+from jarvis import make_package as mp
+from tests import deck_measure as deck_fit
 
 pytestmark = pytest.mark.page
 
@@ -85,8 +86,7 @@ def test_what_cannot_fit_is_measured_and_said(tmp_path):
     [problem] = deck_fit.problems(fit)
     assert problem.startswith("Slide 3 (where) does not fit even after JARVIS's own fitting")
     assert "Split it into two slides" in problem
-    # One slide alone (the step cache keeps each slide's fit, and only a
-    # slide whose layout changed is measured again): the same measure.
+    # One slide alone: the same measure.
     alone = deck_fit.measure(folder, [(662, 489), (1600, 900)], only=["where"])
     assert [s["id"] for s in alone["slides"]] == ["where"]
     assert alone["slides"][0]["cut"] == where["cut"] and alone["slides"][0]["slide"] == 3

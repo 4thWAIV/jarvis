@@ -3,10 +3,11 @@ standing preference: text large, using the slide's space): the shared deck
 fits every slide's words to its frame (deck.js fitSlide, a binary search on
 the slide's scale between the 13 px floor and the ceiling, run again on
 every resize), so a sparse slide draws its words well past the floor and a
-dense one comes down to it, never under it, nothing clipped. Measured the
-way the deck step measures every build (deck_fit.measure: the built deck
-drawn in JARVIS's frame in headless Chromium), at the smallest and the
-largest frame.
+dense one comes down to it, never under it, nothing clipped. Measured in
+CI on fixture decks (tests/deck_measure.py: the built deck drawn in
+JARVIS's frame in headless Chromium), at the smallest and the largest
+frame; no package is measured on its way. What does not fit at the floor is
+refused as the deck is written (deck_capacity, tests/test_deck_capacity.py).
 
 A browser page test: run with `pytest -m page` (see pytest.ini)."""
 from __future__ import annotations
@@ -16,7 +17,8 @@ import copy
 import pytest
 import yaml
 
-from jarvis import deck_fit, layout_spec, make_package as mp
+from jarvis import layout_spec, make_package as mp
+from tests import deck_measure as deck_fit
 
 pytestmark = pytest.mark.page
 
@@ -26,19 +28,16 @@ SENTENCE = ("Each repair is checked on the live system before the next one start
             "it changed is written to the item it belongs to. ")
 
 
-def _paragraphs(prefix: str, texts: list[str]) -> list[dict]:
-    return [{"id": f"{prefix}-{n}", "role": "paragraph",
-             "runs": [{"id": f"{prefix}-{n}-w", "text": t, "emphasis": "normal"}]}
-            for n, t in enumerate(texts, 1)]
-
-
 def _deck(folder):
     deck = copy.deepcopy(mp.EXAMPLE)
+    # Nearly as much as the body slot holds at the floor: six steps, each with
+    # two sentences (deck_capacity lets it through; the fit brings it down).
     dense = {"id": "dense", "type": "content", "title": "Everything the repairs change",
              "layout": "title-and-body",
-             "objects": [{"id": "dense-words", "type": "text", "slot": "body",
+             "objects": [{"id": "dense-words", "type": "steps", "slot": "body",
                           "source": {"reference": "lunch-plan"},
-                          "paragraphs": _paragraphs("dense", [SENTENCE * 3] * 4)}],
+                          "items": [{"id": f"dense-{n}", "title": f"Repair {n}",
+                                     "says": SENTENCE.strip()} for n in range(1, 7)]}],
              "readingOrder": ["dense-words"],
              "narration": [{"id": "dense-cue", "focus": ["dense-words"],
                             "say": "Everything the repairs change."}], "notes": ""}
@@ -92,17 +91,3 @@ def test_the_fit_follows_the_frame(tmp_path):
     fresh = deck_fit.measure(folder, [(662, 489)])
     assert [_drawn(there, s)[(662, 489)] for s in ("what-changed", "dense")] == \
         [_drawn(fresh, s)[(662, 489)] for s in ("what-changed", "dense")]
-
-
-def test_what_cannot_fit_at_the_floor_is_cut_and_goes_back_to_be_split(tmp_path):
-    deck = copy.deepcopy(mp.EXAMPLE)
-    deck["slides"][1]["objects"][0]["paragraphs"] = _paragraphs("long", [SENTENCE * 8] * 6)
-    source = tmp_path / "presentation.yaml"
-    source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    made = mp.make_presentation(source, tmp_path / "out")
-    fit = deck_fit.measure(tmp_path / "out" / "compiled" / made.deck["name"], [(662, 489)])
-    long = deck_fit.of_slide(fit, "what-changed")
-    assert not long["fits"] and long["cut"][0]["fit"] == "cut"
-    assert _drawn(fit, "what-changed")[(662, 489)]["least"] >= FLOOR
-    [problem] = deck_fit.problems(fit)
-    assert "Split it into two slides" in problem

@@ -162,8 +162,61 @@ def generated_css() -> str:
                 for slot, box in boxes(layout, filled).items():
                     lines.append(_box(f'.presentation-slot[data-layout="{layout}"][data-columns="{count}"]'
                                       f'[data-slot="{slot}"]', box))
+    lines += _components_css() + _chart_css()
     lines.append(GENERATED_END)
     return "\n".join(lines) + "\n"
+
+
+def _components_css() -> list[str]:
+    """JARVIS's own components (callout, figures, steps): their lengths,
+    the ones deck_capacity counts."""
+    c = spec()["components"]
+    callout, figures, steps = c["callout"], c["figures"], c["steps"]
+    return [
+        f".presentation-callout {{ border-left: {callout['border_px']}px solid var(--accent); "
+        f"padding: {_length(callout['pad'][1])} {_length(callout['pad'][0])}; }}",
+        f".presentation-figures {{ display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); "
+        f"gap: {_length(figures['gap'])}; }}",
+        f".presentation-figure {{ padding: {_length(figures['pad'][1])} {_length(figures['pad'][0])}; }}",
+        ".presentation-figure-value { font-size: var(--deck-figure); line-height: var(--deck-figure-line); }",
+        f".presentation-steps {{ display: flex; flex-direction: column; gap: {_length(steps['gap'])}; }}",
+        f".presentation-step {{ display: grid; grid-template-columns: {steps['marker']:g}em minmax(0, 1fr); "
+        f"column-gap: {steps['marker_gap']:g}em; align-items: start; }}",
+        f".presentation-step-marker {{ width: {steps['marker']:g}em; height: {steps['marker']:g}em; }}",
+    ]
+
+
+def chart_px(u: float) -> float:
+    """A chart's words in px at deck unit `u`: its style at the deck size,
+    never grown or shrunk by the slide's fit, so its plot keeps its room."""
+    return style_px(spec()["chart"]["style"], u)
+
+
+def _chart_css() -> list[str]:
+    """A chart: legend over the plot, y labels at its left, x labels under
+    it; marks placed by presentation.js as shares of the plot, so the only
+    lengths are these and the words (deck_capacity.chart_needs)."""
+    c = spec()["chart"]
+    style = spec()["styles"][c["style"]]
+    size = f"clamp({style['min_px']}px, {_length(style['units'])}, {style['max_px']}px)"
+    half = f"calc(var(--deck-chart) * {style['line']:g} / 2)"
+    return [
+        f".presentation-chart {{ --deck-chart: {size}; display: grid; grid-template-columns: auto minmax(0, 1fr); "
+        f"grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; font-size: var(--deck-chart); "
+        f"line-height: {style['line']:g}; }}",
+        f".presentation-chart-legend {{ grid-column: 1 / 3; display: flex; flex-wrap: wrap; "
+        f"column-gap: {c['legend_gap']:g}em; }}",
+        f".presentation-chart-swatch {{ display: inline-block; width: {c['swatch']:g}em; height: {c['swatch']:g}em; "
+        f"margin-right: {c['swatch_gap']:g}em; }}",
+        f".presentation-chart-y {{ grid-row: 2; grid-column: 1; position: relative; padding-right: {c['axis_gap']:g}em; }}",
+        f".presentation-chart-y > .presentation-chart-ticks {{ position: absolute; inset: {half} {c['axis_gap']:g}em {half} 0; }}",
+        f".presentation-chart-plot {{ grid-row: 2; grid-column: 2; position: relative; margin: {half} 0; }}",
+        ".presentation-chart-x { grid-row: 3; grid-column: 2; position: relative; }",
+        ".presentation-chart-x.categories { display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); "
+        "text-align: center; }",
+        f".presentation-chart-x.ticks {{ height: calc(var(--deck-chart) * {style['line']:g}); }}",
+        f".presentation-chart-dot {{ width: {c['dot']:g}em; height: {c['dot']:g}em; }}",
+    ]
 
 
 def _with_generated(css: str) -> str:

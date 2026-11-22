@@ -34,7 +34,8 @@ def test_a_key_is_the_canonical_hash_of_the_inputs_never_their_order():
     two = step_cache.Unit("research", "", {"c": {"x": 1, "y": 2}, "b": [1, 2], "a": 1})
     assert one.key == two.key
     assert step_cache.Unit("research", "", {"a": 2}).key != one.key
-    assert step_cache.Unit("deck-fit", "s1", {}).key != step_cache.Unit("deck-fit", "s2", {}).key
+    assert step_cache.Unit("deck-review", "s1", {}).key != \
+        step_cache.Unit("deck-review", "s2", {}).key
 
 
 def test_an_output_is_kept_with_its_timing_and_restored_where_asked(tmp_path):
@@ -114,7 +115,7 @@ def test_a_run_with_unchanged_inputs_recomputes_nothing(marked, deck_plan, keyge
     computed = _computed(first)
     assert {"research", "swarm-outline", "swarm-fill", "swarm-passes", "deck-header",
             "deck-build", "deck", "deliver"} <= computed
-    assert {"deck-source:where", "deck-fit:what-changed", "deck-review:opening"} <= computed
+    assert {"deck-source:where", "deck-review:what-changed", "deck-review:opening"} <= computed
     # Every computed unit has its own time, measured: a model step's is
     # never nothing.
     assert all(isinstance(u["seconds"], float) for u in _units(first))
@@ -169,7 +170,7 @@ def test_a_change_naming_one_slide_recomputes_only_that_slide(marked, deck_plan,
     done = _run(later["id"], deck_plan)
     assert _computed(done) == {"swarm-revision:1",
                                "deck-source:what-changed", "deck-build",
-                               "deck-fit:what-changed", "deck-review:what-changed", "deck",
+                               "deck-review:what-changed", "deck",
                                "deliver"}
     new = Path(done["folder"])
     passed = ps.package_script.read(new / ps.SCRIPT)
@@ -369,20 +370,20 @@ def test_a_changed_engine_choice_redoes_the_role_s_steps(marked, deck_plan, keyg
     assert not [c for c in _computed(done) if c.startswith("mark-file")]
 
 
-def test_a_change_to_the_deck_pipeline_s_code_rebuilds_and_measures_only(
+def test_a_change_to_the_deck_pipeline_s_code_rebuilds_only(
         marked, deck_plan, keygen, monkeypatch):  # noqa: F811
     first = _run(marked["id"], deck_plan)
     real = step_cache._path_sha
     monkeypatch.setattr(step_cache, "_path_sha", lambda path: "changed" if path.name ==
                         "presentation_proof.py" else real(path))
     done = _again(first, deck_plan)
-    # The fit measured came out the same, so the reviews and the deck's
+    # The layout data came out the same, so the reviews and the deck's
     # record are reused; the delivery is signed again exactly when the new
-    # build's zip differs in its bytes (its input).
+    # build's zip differs in its bytes (its input). No build is drawn in a
+    # browser.
     zips = [step_cache.file_sha(Path(d["deck"]["archive"])) for d in (first, done)]
     signed = {"deliver"} if zips[0] != zips[1] else set()
-    assert _computed(done) == {"deck-build", "deck-fit:opening", "deck-fit:what-changed",
-                               "deck-fit:where"} | signed
+    assert _computed(done) == {"deck-build"} | signed
     assert {"deck-header", "deck-source:where", "deck-review:where", "deck"} <= _reused(done)
 
 
@@ -397,7 +398,8 @@ def test_code_is_named_by_its_source_hash(tmp_path, monkeypatch):
     # Every deck pipeline module is in the build's key.
     assert set(pd.PIPELINE_CODE) >= {"jarvis.presentation", "jarvis.presentation_source",
                                      "jarvis.decision_package", "jarvis.presentation_proof",
-                                     "jarvis.picture_proof", "jarvis.deck_fit"}
+                                     "jarvis.picture_proof", "jarvis.deck_capacity",
+                                     "jarvis.presentation_data"}
 
 
 def test_a_kept_deck_source_that_no_longer_builds_is_replaced_by_the_working_one(

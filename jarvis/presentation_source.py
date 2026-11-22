@@ -10,10 +10,11 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from jarvis import layout_spec, picture_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, Ellipse, ImageObject,
-                                       Presentation, Rectangle, ShapePath, TableObject,
-                                       TextObject, VectorObject)
+from jarvis import deck_capacity, layout_spec, picture_proof, presentation_data
+from jarvis.presentation_schema import (BarObject, ChartObject, ContentSlide, Ellipse,
+                                       FiguresObject, ImageObject, Presentation, Rectangle,
+                                       ShapePath, StepsObject, TableObject, TextObject,
+                                       VectorObject)
 
 
 _NUMBER = re.compile(r"[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?\Z")
@@ -151,9 +152,22 @@ def read_source(path: Path, built: bool = False, language: str | None = None) ->
             message = f"{missing}: {item['msg']}" if missing and item["type"] == "missing" else item["msg"]
             diagnostics.append(source.diagnostic(code, message, candidate))
         raise DeckCompileError(tuple(diagnostics)) from None
-    _semantics(source, data, built)
     source.language = source.document.language or language or "en"
+    _semantics(source, data, built)
+    if not built:
+        _capacity(source)
     return source
+
+
+def _capacity(source: Source) -> None:
+    """Every slot's content within its capacity (deck_capacity), refused as
+    the deck is written, every problem said at once. A built deck arriving
+    is not held to it again: it is a rule for writing."""
+    found = [source.diagnostic("capacity", message, member=member if member in source.nodes else None)
+             for slide in source.document.slides if isinstance(slide, ContentSlide)
+             for member, message in deck_capacity.problems(slide)]
+    if found:
+        raise DeckCompileError(tuple(found))
 
 
 NO_LAYOUT = ("JARVIS lays out every deck: a source names one of its layouts on each content "
@@ -214,6 +228,10 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
                                              else reference.locator)
             if not evidence.is_file() or evidence.is_symlink():
                 source.fail("reference", "File evidence must identify a regular source file.", member=reference.id)
+    datasets = {dataset.id: dataset for dataset in doc.datasets}
+    for dataset in doc.datasets:
+        provenance(dataset.source, dataset.id)
+        _data(source, presentation_data.check_dataset, dataset)
     pictures = {}
     for asset in doc.assets:
         provenance(asset.source, asset.id)
@@ -264,11 +282,24 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
                     source.fail("reference", "Unknown image asset.", member=obj.id)
                 _drawn(source, pictures[obj.asset], layout_spec.slot_px(boxes[obj.slot]), obj.id)
             elif isinstance(obj, TableObject):
+                _data(source, presentation_data.expand_table, obj, datasets, source.language)
                 width = len(obj.head) if obj.head else len(obj.rows[0].cells)
                 for row in obj.rows:
+                    if obj.data:
+                        _drawn_id(source, row.id, obj.id, visible)
                     visible.add(row.id)
                     if len(row.cells) != width:
                         source.fail("schema", f"Every row of the table has {width} cells.", member=row.id)
+                for row in presentation_data.cell_ids(obj):
+                    for cell in row:
+                        _drawn_id(source, cell, obj.id, visible)
+            elif isinstance(obj, ChartObject):
+                drawn = _data(source, presentation_data.resolve_chart, obj, datasets, source.language)
+                for series in drawn["series"]:
+                    for point in series["points"]:
+                        _drawn_id(source, point["id"], obj.id, visible)
+            elif isinstance(obj, (FiguresObject, StepsObject)):
+                visible.update(item.id for item in obj.items)
             elif isinstance(obj, BarObject):
                 if obj.domain[0] != 0 or obj.domain[1] <= 0:
                     source.fail("schema", "The bar domain starts at zero and ends above zero.", member=obj.id)
@@ -319,6 +350,30 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
             if asset not in assets:
                 source.fail("reference", f"The decision's {field} names an unknown asset.", member=decision.id)
             _drawn(source, pictures[asset], layout_spec.picture_box(role), decision.id)
+
+
+def _data(source: Source, work, *args):
+    """A data step (presentation_data), its problem a compiler diagnostic."""
+    try:
+        return work(*args)
+    except presentation_data.DataProblem as problem:
+        source.fail("data", str(problem), member=problem.member if problem.member in source.nodes else None)
+
+
+_ID = re.compile(r"^[a-z][a-z0-9-]{0,79}$")
+
+
+def _drawn_id(source: Source, ident: str, owner: str, visible: set) -> None:
+    """An id JARVIS makes for what it draws (a data row, a cell, a point):
+    a target narration may name, never one an author's id already takes."""
+    if not _ID.fullmatch(ident):
+        source.fail("data", f"{ident!r} is too long or not an id; give {owner} or its rows shorter ids.",
+                    member=owner)
+    if ident in source.nodes:
+        source.fail("reference", f"{ident!r} names something JARVIS draws for {owner}; give yours "
+                    f"another id.", member=ident)
+    source.nodes[ident] = source.nodes[owner]
+    visible.add(ident)
 
 
 def data_at(path, data):

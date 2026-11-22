@@ -2,7 +2,7 @@
 
     python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
                                   --session ID [--project P] [--workflow ID] [--work ID]
-                                  [--check-only] [--fill-assets] [--example [decisions|presentation]]
+                                  [--check-only] [--fill-assets] [--example [decisions|presentation|visuals]]
                                   [--document ID --revision REV]... [--start]
     python -m jarvis.make_package --start --handoff HANDOFF.json --session ID
                                   [--work ID | --general] [--workflow ID] [--project P]
@@ -135,6 +135,75 @@ EXAMPLE = {**PRESENTATION_EXAMPLE, "id": "team-lunch-choice", "title": "Team lun
                                       {"id": "restaurant", "name": "A restaurant", "says": "A short walk away."}],
                           "recommended": "office", "reason": "Nobody has to book a table.",
                           "text_only": "Both places are familiar to everyone, so a picture adds nothing."}]}
+
+# A deck that shows what can be shown (make_package --example visuals): the
+# bottom line as a callout, a sequence as numbered steps, the key numbers as
+# figures, numbers as a chart and a table drawn from one dataset, each with
+# its source; the author turns dry text into these, never long paragraphs.
+_LUNCH = {"reference": "lunch-survey"}
+VISUALS_EXAMPLE = {
+    "version": "presentation/1", "id": "team-lunch-numbers", "title": "Where the team eats",
+    "purpose": "Show where the team eats on Fridays and what each place costs.",
+    "conclusion": "The office lunch costs least and every team member can come.",
+    "language": "en", "requires": ["presentation-core/1"], "assets": [],
+    "references": [{"id": "lunch-survey", "kind": "authored-example", "locator": "The lunch survey",
+                    "revision": "1", "description": "Each place's cost per person, the walk and the "
+                                                     "team's votes, from the team's survey."}],
+    "datasets": [{"id": "places", "source": _LUNCH,
+                  "columns": [{"id": "place", "label": "Place", "type": "text"},
+                              {"id": "cost", "label": "Cost a person", "type": "number", "units": "€"},
+                              {"id": "walk", "label": "Walk", "type": "number", "units": "min"},
+                              {"id": "votes", "label": "Votes", "type": "number"}],
+                  "rows": [{"id": ident, "values": {"place": place, "cost": cost, "walk": walk,
+                                                    "votes": votes}}
+                           for ident, place, cost, walk, votes in (
+                               ("office", "Office", 9, 0, 7), ("cafe", "Café", 14, 5, 4),
+                               ("bistro", "Bistro", 22, 12, 2))]}],
+    "slides": [
+        {"id": "opening", "type": "content", "title": "The office lunch costs least",
+         "layout": "opening",
+         "objects": [{"id": "opening-callout", "type": "callout", "slot": "words", "source": _LUNCH,
+                      "label": "Bottom line",
+                      "says": "Lunch in the office costs 9 € a person, and all seven votes it got "
+                              "were from people who cannot walk far."}],
+         "readingOrder": ["opening-callout"],
+         "narration": [{"id": "opening-cue", "focus": ["opening-callout"],
+                        "say": "The office lunch costs least, and everyone can come."}],
+         "notes": ""},
+        {"id": "how", "type": "content", "title": "How Friday's lunch works", "layout": "title-and-body",
+         "objects": [{"id": "how-steps", "type": "steps", "slot": "body", "source": _LUNCH,
+                      "items": [{"id": "how-order", "title": "Order by Thursday noon",
+                                 "says": "Each person picks a dish on the team list."},
+                                {"id": "how-deliver", "title": "Food arrives at 12:00"},
+                                {"id": "how-pay", "title": "The team budget pays",
+                                 "says": "Nobody pays at the table."}]}],
+         "readingOrder": ["how-steps"],
+         "narration": [{"id": "how-cue", "focus": ["how-order"],
+                        "say": "Order by Thursday noon; the food arrives at twelve, paid for."}],
+         "notes": ""},
+        {"id": "costs", "type": "content", "title": "What each place costs", "layout": "two-pictures",
+         "objects": [{"id": "cost-figures", "type": "figures", "slot": "first", "source": _LUNCH,
+                      "items": [{"id": "office-cost", "value": "9 €", "label": "a person, office"},
+                                {"id": "bistro-cost", "value": "22 €", "label": "a person, bistro"}]},
+                     {"id": "cost-chart", "type": "chart", "slot": "second", "source": _LUNCH,
+                      "kind": "bar", "data": {"dataset": "places"}, "x": "place", "y": ["cost"],
+                      "alt": "Cost a person at each place"}],
+         "readingOrder": ["cost-figures", "cost-chart"],
+         "narration": [{"id": "costs-cue", "focus": ["office-cost", "cost-chart-office-cost"],
+                        "say": "The office is nine euros a person; the bistro twenty-two."}],
+         "notes": ""},
+        {"id": "voting", "type": "content", "title": "How the team voted", "layout": "table",
+         "objects": [{"id": "vote-table", "type": "table", "slot": "table", "source": _LUNCH,
+                      "alt": "Each place's votes, walk and cost", "rowHeads": True,
+                      "data": {"dataset": "places", "sort": {"column": "votes", "order": "descending"}},
+                      "columns": ["place", "votes", "walk", "cost"]}],
+         "readingOrder": ["vote-table"],
+         "narration": [{"id": "voting-cue", "focus": ["vote-table-office-votes"],
+                        "say": "The office got seven of the thirteen votes."}],
+         "notes": ""},
+    ],
+    "decisions": [],
+}
 
 # What a checked architecture document's package is called (make_package --document).
 ARCHITECTURE_KIND = "architecture package"
@@ -704,7 +773,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                              "sender_answers, questions, typed evidence)")
     parser.add_argument("--engine", choices=("claude", "codex"), help="the originating session’s own engine")
     parser.add_argument("--example", nargs="?", const="decisions",
-                        choices=("decisions", "presentation"),
+                        choices=("decisions", "presentation", "visuals"),
                         help="print a minimal deck to start from, and stop")
     parser.add_argument("--check-only", action="store_true",
                         help="check the content and stop: nothing is built or delivered")
@@ -768,8 +837,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
 
     if args.example:
         import yaml
-        print(yaml.safe_dump(EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
-                             sort_keys=False, allow_unicode=True, width=100), end="")
+        shown = {"decisions": EXAMPLE, "presentation": PRESENTATION_EXAMPLE,
+                 "visuals": VISUALS_EXAMPLE}[args.example]
+        print(yaml.safe_dump(shown, sort_keys=False, allow_unicode=True, width=100), end="")
         return 0
     if args.source is None and (args.check_only or args.fill_assets or args.handoff is None):
         parser.error("give source for --check-only or --fill-assets, or --handoff for creation")

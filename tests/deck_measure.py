@@ -1,37 +1,24 @@
-"""Whether every slide of a built deck fits its frame, and the size its
-words are drawn at, measured by the program (Tim 2026-11-22,
-construction-drafts.md "Found on the first full run": the program measures
-every slide's fit at every frame size, gives it to the reviewers as fact,
-and fixes the layout itself, never the sender).
+"""The CI page tests' measure of a fixture deck: whether every slide fits
+its frame and the size its words are drawn at, read in headless Chromium.
+It is CI's, never a package's: no package is drawn in a browser on its way
+to Tim (his decision of 18 November, construction-drafts.md "Visuals, the
+salvage, and sizing": sizing comes from the language, each slot's capacity
+worked out by program, jarvis/deck_capacity.py). These tests hold the
+shared deck's own fit (deck.js fitSlide) and the capacity model to the
+browser on fixture decks.
 
-How much room words take in the system font stack is only known where they
-are drawn, so the program draws the built deck as JARVIS's package frame
-does (inside a frame, `html.hosted`, the shared deck's own layout and its
-own fit, deck.js fitSlide: each slide's words at the largest size at which
-it fits, between the 13 px floor and the ceiling) in headless Chromium, at
-every frame the layout proof covers (layout_spec.frames(), 662 x 489 to
-1600 x 900), and reads, for every slide, whether anything on it is clipped
-or needs scrolling (its words, its pictures, and a decision's controls: the
-options and their Choose bars, Decide later, None of these, his words field
-and the line saying what is recorded) and the size its words are drawn at
-(`drawn`: the least, the most and the one most of its characters are drawn
-at, the scale its fit chose and how far down the slide its words and
-pictures reach). Nothing is looked at by a model and no screenshot is
-taken: it is a measurement, kept in the built folder as `.jarvis/fit.json`
-and given to the deck review beside each slide's layout data
-(package_deck.review_turn).
-
-A slide that does not fit with its words at the floor goes back to the
-author to split (`problems`): type size and fit are the program's, never a
-reviewer's finding or a question for the sender.
-
-`measure` raises Unavailable when it cannot draw the deck (Playwright's
-Chromium missing): the deck step cannot know its fit and stops in Error
-saying so.
+The built deck is drawn as JARVIS's package frame does (inside a frame,
+`html.hosted`, the shared deck's own layout and its own fit: each slide's
+words at the largest size at which it fits, between the 13 px floor and
+the ceiling) at the frames given (layout_spec.frames() by default), and,
+for every slide, what is clipped or needs scrolling is read (its words,
+its pictures, and a decision's controls) with the size its words are drawn
+at (`drawn`: the least, the most and the one most of its characters are
+drawn at, the scale its fit chose and how far down the slide its words and
+pictures reach). `measure` raises Unavailable when it cannot draw the deck.
 """
 from __future__ import annotations
 
-import json
 import tempfile
 import threading
 from pathlib import Path
@@ -39,7 +26,6 @@ from typing import Optional
 
 from jarvis import layout_spec
 
-FILE = ".jarvis/fit.json"
 VERSION = "deck-fit/1"
 CLIPPED, SCROLLS = "clipped", "needs scrolling"
 
@@ -167,12 +153,10 @@ def _measure_now(folder: Path, sizes: list[tuple[int, int]],
 def measure(folder: Path, sizes: Optional[list[tuple[int, int]]] = None,
             only: Optional[list[str]] = None) -> dict:
     """Every slide of the built deck in `folder` (with `only`, those slide
-    ids alone: the step cache keeps each slide's fit, deck_fit's per slide,
-    and only a slide whose layout changed is measured again), drawn at
-    every frame:
+    ids alone), drawn at every frame:
     {version, frames, fits, slides: [{slide, id, fits, cut: [{frame, parts:
-    [{part, how, by_px}]}]}]}. Run in a thread of its own (the deck step's
-    loop is running). Raises Unavailable."""
+    [{part, how, by_px}]}]}]}. Run in a thread of its own (an event loop may
+    be running). Raises Unavailable."""
     sizes = list(sizes or frames())
     got: dict = {}
 
@@ -252,8 +236,3 @@ def problems(fit: dict) -> list[str]:
 def of_slide(fit: dict, slide_id: str) -> Optional[dict]:
     return next((s for s in fit.get("slides") or [] if s["id"] == slide_id), None)
 
-
-def write(folder: Path, fit: dict) -> None:
-    path = Path(folder) / FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(fit, indent=2) + "\n", encoding="utf-8")

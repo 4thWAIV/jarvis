@@ -21,11 +21,14 @@ in the run's folder. A round:
                    and a complete example.
   build_and_prove  the program fills each picture's size and hash
                    (make_package.fill_assets), compiles and proves it
-                   (make_package.make_presentation: every picture drawn
-                   readable at every frame, every word's style at least
-                   the text floor at both sizes, the story's targets, the
-                   renderer JARVIS's own, the story about fifteen minutes at
-                   most), checks the package carries the standard vote,
+                   (make_package.make_presentation: every slot's content
+                   within its capacity, worked out from the layout spec at
+                   662 x 489 with every word at its floor (deck_capacity),
+                   and no slide of only prose over one paragraph; every
+                   picture drawn readable at every frame, every word's
+                   style at least the text floor at both sizes, the story's
+                   targets, the renderer JARVIS's own, the story about
+                   fifteen minutes at most), checks the package carries the standard vote,
                    Approve and Reject at the check mark, and checks the deck
                    against the script (`script_problems`): its slides the
                    script's, one to one, and every piece of Tim's own words
@@ -52,21 +55,28 @@ in the run's folder. A round:
                    each owner re-checks its own items (package_swarm.
                    fix_passes).
 
-Every build is measured too (deck_fit, Tim 2026-11-22): JARVIS draws the
-built deck as its package frame does, at every frame from 662 x 489 to
-1600 x 900, and reads for each slide whether anything on it is clipped or
-needs scrolling and the size its words are drawn at. The shared deck fits
-its slides itself (deck.js fitSlide): each slide's words at the largest
-size at which it fits its frame, between the 13 px floor and the ceiling.
-Type size and fit are the program's: the fit and the sizes drawn go to the
-reviewers beside each slide's layout data as facts (`drawn_px`), never a
-question for them or the sender, and whether every word is readable at its
-size (deck-readable, PROGRAM_QUESTIONS) is answered by that measure
-(`readable`, the review's `program`). A slide that does not fit with its
-words at the floor does not build: the author is told to split it, an
-owner's edit that makes one unfit is not applied, and a deck JARVIS cannot
-make fit stops the step in Error (NOT_FIT_FIX), never findings for the
-sender.
+No build is drawn in a browser (Tim 2026-11-22, construction-drafts.md
+"Visuals, the salvage, and sizing": no per-package browser measurement).
+Sizing comes from the language: each slot holds what deck_capacity works
+out from the layout spec at the smallest frame with every word at its
+floor, and content over it does not build, said to the author with the slot
+and how much over, to split it or show it as a visual; an owner's edit
+that puts a slot over is not applied. The shared deck fits its slides
+itself as it draws them (deck.js fitSlide): each slide's words at the
+largest size at which it fits its frame, never under the floor. Type size
+is the program's: each object's capacity goes to the reviewers in its
+layout data as a fact, never a question for them or the sender, and
+whether every word is readable at its size (deck-readable,
+PROGRAM_QUESTIONS) is answered by the build (`readable`, the review's
+`program`).
+
+The author turns dry text into visuals (Tim 2026-11-22): it is told to show
+what can be shown (a sequence as numbered steps, numbers as a chart from a
+dataset of the evidence's figures, a key number as a key figure, a
+comparison as a comparison or a table, a warning or finding as a callout),
+never long paragraphs, and is given an example that does
+(make_package.VISUALS_EXAMPLE); each owner and the editor signs off that
+it did (deck-shown).
 
 Every part of the step is a unit of the step cache (step_cache.py, Tim
 2026-11-22), one a slide where the work is a slide's: the deck's header
@@ -86,10 +96,9 @@ author writes it all again and what it writes replaces the kept entries
 build (`deck-build`, keyed by the source, its pictures, the script and
 JARVIS's presentation pipeline: the Python that lays out, builds, proves
 and measures a deck, the shared deck's files and the presentation assets,
-`pipeline_digest`) is the deck's, one program call; each slide's fit
-(`deck-fit`, keyed by its layout data and the pipeline) is measured only
-for the slides whose layout changed. Each slide's review (`deck-review`,
-keyed by its source, its fit, its script slide, what it is reviewed with,
+`pipeline_digest`) is the deck's, one program call. Each slide's review
+(`deck-review`, keyed by its source, its layout data, its script slide,
+what it is reviewed with,
 `review_tool`, and the answers to an earlier run's findings on the review)
 is done only for the slides not kept: the review turn and the fix passes
 cover those alone (`flow["slides"]`), and the kept ones' reviewed source
@@ -113,9 +122,10 @@ from typing import Callable, Optional
 
 import yaml
 
-from jarvis import (data_paths, deck_fit, decision_package as dp, layout_spec, make_package,
+from jarvis import (data_paths, decision_package as dp, layout_spec, make_package,
                     package_evidence as pe, package_inbox, package_jobs, package_script,
-                    package_swarm as ps, presentation_proof, sessions, spoken_words, step_cache)
+                    package_swarm as ps, presentation_proof, sessions,
+                    spoken_words, step_cache)
 from jarvis.presentation_schema import HIS_WORDS
 
 DECK = "deck"
@@ -140,14 +150,18 @@ DECK_QUESTIONS = (
     ("deck-narration", "Does the narration say the substance, not read headings?"),
     ("deck-readable", "Is every word on the slide readable at the size the layout data gives "
                       "it?"),
+    # Authors turn dry text into visuals (Tim 2026-11-22; first-round
+    # wording, pre-approved, owner-prompts.md "Deck review: what can be shown").
+    ("deck-shown", "Is what can be shown shown: a sequence as numbered steps, numbers as a chart "
+                   "or key figures from the evidence, a comparison as a comparison or a table, a "
+                   "warning or finding as a callout, never a long paragraph?"),
 )
-# Type size and fit are the program's (Tim 2026-11-22): whether every word
-# is readable at its size is answered by JARVIS's own measure of the built
-# deck (deck_fit: each slide's words drawn at the largest size at which it
-# fits its frame, never under the 13 px floor, nothing clipped or to
-# scroll), never signed off by a reviewer, never a finding or a question
-# for the sender. A slide that does not fit with its words at the floor
-# does not build and goes back to the author to split.
+# Type size is the program's (Tim 2026-11-22): whether every word is
+# readable at its size is answered by the build itself (deck_capacity: every
+# slot's content within what it holds at 662 x 489 with every word at its
+# 13 px floor; the shared deck draws it as large as the slide allows), never
+# signed off by a reviewer, never a finding or a question for the sender. A
+# slot over its capacity does not build and goes back to the author.
 PROGRAM_QUESTIONS = ("deck-readable",)
 # The deck review is run by the same owners, the same way (construction-
 # drafts.md "Cooperative swarm"): each owner and the editor signs off each
@@ -185,9 +199,30 @@ def source_of(run: ps.Run) -> Path:
     return run.folder / FOLDER / SOURCE
 
 
+def visuals_example() -> str:
+    """A deck that shows what can be shown (make_package --example visuals)."""
+    return yaml.safe_dump(make_package.VISUALS_EXAMPLE, sort_keys=False, allow_unicode=True,
+                          width=100)
+
+
+# What the author is told about visuals (Tim 2026-11-22, construction-drafts.md
+# "Visuals, the salvage, and sizing"; first-round wording, role-prompts.md
+# "Author: the deck shows what can be shown").
+SHOW_NOTE = (
+    "Turn dry text into visuals; never wait for the evidence to supply a picture. Show what can "
+    "be shown with JARVIS's own parts: a sequence as numbered steps (steps), numbers as a chart "
+    "drawn from a dataset you build from the evidence's figures, each with its source (chart, or "
+    "a table from the same dataset), a key number as a key figure (figures), a comparison as a "
+    "comparison layout or a table, a warning or a finding as a callout. Never put long "
+    "paragraphs on a slide. Each slot holds only so much at 662 x 489 with words at their 13 px "
+    "floor: JARVIS refuses a slot over its capacity, naming the slot and how much over, and a "
+    "slide of only prose longer than one paragraph; split it, or show it as a visual. The "
+    "visuals example below shows each part.")
+
+
 def write_note(run: ps.Run) -> str:
     """The program's words to the author for writing the deck (workflow.yaml
-    deck write_deck and his_words_highlighted)."""
+    deck write_deck and his_words_highlighted), and what can be shown."""
     return "\n\n".join([
         f"The script has passed. Now write the deck from the passed script alone, as one "
         f"presentation/1 source, in {source_of(run)}, with any pictures beside it as files, by "
@@ -201,12 +236,14 @@ def write_note(run: ps.Run) -> str:
         f"runs with emphasis {HIS_WORDS}, which JARVIS draws highlighted in a very bright, "
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
         f"with a block of text. JARVIS checks every one.",
+        SHOW_NOTE,
         "JARVIS fills each picture's size and hash, builds the deck and proves it; what does "
         "not build comes back to you here. The owners and the editor then compare each slide "
         "with the script.",
         sessions._tag("script", ps._read(run.script), file=ps.SCRIPT),
         sessions._tag("format", deck_format()),
-        sessions._tag("example", example(), file=SOURCE)])
+        sessions._tag("example", example(), file=SOURCE),
+        sessions._tag("visuals", visuals_example(), file=SOURCE)])
 
 
 def revise_note(run: ps.Run) -> str:
@@ -224,9 +261,11 @@ def revise_deck_note(run: ps.Run, slides: list[str], kept: list[str]) -> str:
         f"changed (the script changed on: {', '.join(slides) or 'none'}). Each script slide is "
         f"still one deck slide, in the same order and with the same id. Say which slides you "
         f"changed.",
+        SHOW_NOTE,
         sessions._tag("script", ps._read(run.script), file=ps.SCRIPT),
         sessions._tag("format", deck_format()),
-        sessions._tag("example", example(), file=SOURCE)])
+        sessions._tag("example", example(), file=SOURCE),
+        sessions._tag("visuals", visuals_example(), file=SOURCE)])
 
 
 def _findings_of_build(problems: list[str]) -> list[dict]:
@@ -242,34 +281,8 @@ def build_problems_note(problems: list[str]) -> str:
 # ── build and prove ───────────────────────────────────────────────────────
 
 class Built:
-    def __init__(self, archive: Path, folder: Path, proof: dict, deck: dict,
-                 fit: Optional[dict] = None):
+    def __init__(self, archive: Path, folder: Path, proof: dict, deck: dict):
         self.archive, self.folder, self.proof, self.deck = archive, folder, proof, deck
-        self.fit = fit or {}
-
-
-class Problems(list):
-    """Why a round's deck did not build; `unfit` when what is left is only
-    that a slide does not fit its frame even after JARVIS's own fitting
-    (deck_fit): the program's to fix, never the sender's or a reviewer's."""
-    unfit = False
-
-
-def _unfit(problems: list[str]) -> Problems:
-    out = Problems(problems)
-    out.unfit = True
-    return out
-
-
-# How a build's fit is measured (deck_fit.measure; the suite gives its own
-# outside the page tests, conftest._deck_fit_without_a_browser).
-MEASURE: Callable[[Path], dict] = deck_fit.measure
-
-# Where the deck step stops when JARVIS cannot make a slide fit (Tim
-# 2026-11-22: a layout failure is the program's, never the sender's).
-NOT_FIT_FIX = ("JARVIS's shared deck (examples/packages/decision-deck, its fit in deck.css and "
-               "deck.js) must lay the slide out to fit; once it does, a new run of the package "
-               "(make_package --rerun) goes on from the deck.")
 
 
 def _words(text: str) -> list[str]:
@@ -324,19 +337,20 @@ def script_problems(script: dict, deck: dict) -> list[str]:
     return out
 
 
-HEADER, SLIDE_SOURCE, BUILD, FIT, SLIDE_REVIEW, STEP_UNIT = (
-    "deck-header", "deck-source", "deck-build", "deck-fit", "deck-review", "deck")
+HEADER, SLIDE_SOURCE, BUILD, SLIDE_REVIEW, STEP_UNIT = (
+    "deck-header", "deck-source", "deck-build", "deck-review", "deck")
 REVIEW_LABEL = SLIDE_REVIEW            # the stage an earlier run's findings answer
 # Findings on a deck that never built are the writing's: their answers are
 # said before the author writes and are in every deck-header and
 # deck-source key, so the author writes again with them.
 WRITE_LABEL = SLIDE_SOURCE
 
-# The Python that lays out, builds, proves and measures a deck (in the
-# build and fit keys, whole), and the shared deck's own files.
+# The Python that lays out, sizes, builds and proves a deck (in the build
+# key, whole), and the shared deck's own files.
 PIPELINE_CODE = ("jarvis.presentation", "jarvis.presentation_source",
                  "jarvis.presentation_schema", "jarvis.presentation_proof",
-                 "jarvis.picture_proof", "jarvis.decision_package", "jarvis.deck_fit",
+                 "jarvis.presentation_data", "jarvis.deck_capacity",
+                 "jarvis.picture_proof", "jarvis.decision_package",
                  "jarvis.layout_spec", "jarvis.make_package")
 # The code that shapes what the author and the reviewers write.
 DECK_CODE = ("jarvis.package_deck",)
@@ -349,17 +363,15 @@ def format_digest() -> str:
 
 
 def pipeline_digest() -> str:
-    """JARVIS's presentation pipeline as a build and a fit read it: the
-    Python that lays out, builds, proves and measures a deck
-    (PIPELINE_CODE, each module's source), the shared deck's files
-    (examples/packages/decision-deck, its new_deck.py among them) and the
-    presentation assets (the layout spec, the CSS and JS), the renderer
-    files a built deck carries, and the fit's frames."""
+    """JARVIS's presentation pipeline as a build reads it: the Python that
+    lays out, sizes, builds and proves a deck (PIPELINE_CODE, each module's
+    source), the shared deck's files (examples/packages/decision-deck, its
+    new_deck.py among them) and the presentation assets (the layout spec,
+    the CSS and JS), and the renderer files a built deck carries."""
     return step_cache.digest({"code": step_cache.code(*PIPELINE_CODE),
                               "deck": step_cache.tree_sha(dp.BUILDER.parent),
                               "assets": step_cache.tree_sha(layout_spec.ASSETS),
-                              "templates": presentation_proof.template_hashes(),
-                              "frames": deck_fit.frames()})
+                              "templates": presentation_proof.template_hashes()})
 
 
 def writing_tool(doc: dict) -> dict:
@@ -478,40 +490,6 @@ def _compile(run: ps.Run, out: Path) -> list[str]:
     return []
 
 
-def fit_of(run: ps.Run, folder: Path, proof: dict) -> dict:
-    """Every slide's fit at every frame (deck_fit): each slide's reused from
-    the step cache when its layout data is kept, the rest measured
-    together."""
-    pipeline = pipeline_digest()
-    units, have, missing = {}, {}, []
-    for s in proof.get("slides") or []:
-        layout = {k: v for k, v in s.items() if k != "slide"}
-        units[s["id"]] = unit = step_cache.Unit(FIT, s["id"], {"layout": layout,
-                                                               "pipeline": pipeline})
-        entry = step_cache.reuse(unit, run.doc)
-        if entry is None:
-            missing.append(s["id"])
-        else:
-            have[s["id"]] = entry.value
-    if missing:
-        began = time.time()
-        whole = len(missing) == len(units)
-        measured = MEASURE(folder) if whole else MEASURE(folder, only=missing)
-        # The slides are measured in one drawing: each one's time is its share.
-        share = (time.time() - began) / len(missing)
-        for one in measured.get("slides") or []:
-            if one["id"] in missing:
-                have[one["id"]] = one
-                step_cache.computed(units[one["id"]], run.doc, began, seconds=share,
-                                    value={k: v for k, v in one.items() if k != "slide"})
-    slides = []
-    for n, s in enumerate(proof.get("slides") or [], 1):
-        if s["id"] in have:
-            slides.append({**have[s["id"]], "slide": s.get("slide", n)})
-    return {"version": deck_fit.VERSION, "frames": [list(f) for f in deck_fit.frames()],
-            "fits": all(x["fits"] for x in slides), "slides": slides}
-
-
 def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[str]]:
     """The author's source filled, compiled and proven by JARVIS's own
     presentation pipeline (make_package.make_presentation), into
@@ -547,22 +525,7 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
                               yaml.safe_load(source.read_text(encoding="utf-8")) or {})
     if against:
         return None, against
-    # Every slide's fit at every frame, measured where its words are drawn
-    # (deck_fit, Tim 2026-11-22): a fact for the reviewers, and a slide
-    # that does not fit even after JARVIS's own fitting does not build.
-    try:
-        fit = fit_of(run, folder, proof)
-    except deck_fit.Unavailable as e:
-        raise package_jobs.Blocked(
-            DECK, f"JARVIS could not measure whether the deck's slides fit their frame: {e}",
-            "JARVIS built and proved the deck and drew it in headless Chromium at every frame "
-            "from 662 x 489 to 1600 x 900 to measure each slide.",
-            "Install Playwright's Chromium (.venv/bin/python -m playwright install chromium); "
-            "then a new run of the package (make_package --rerun) goes on from the deck.") from e
-    deck_fit.write(folder, fit)
-    if not fit["fits"]:
-        return None, _unfit(deck_fit.problems(fit))
-    return Built(archive, folder, proof, deck, fit), []
+    return Built(archive, folder, proof, deck), []
 
 
 # ── the review ────────────────────────────────────────────────────────────
@@ -578,8 +541,7 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
     layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     slides = "\n".join(sessions._tag("slide", "\n".join([
         sessions._tag("script", package_script.dump(s), file=ps.SCRIPT),
-        sessions._tag("layout", json.dumps(_with_fit(layout.get(s["id"]), built.fit, s["id"]),
-                                           indent=1, ensure_ascii=False),
+        sessions._tag("layout", json.dumps(layout.get(s["id"]), indent=1, ensure_ascii=False),
                       file=presentation_proof.PROOF_FILE)]), id=s["id"])
         for s in script.get("slides") or [])
     return "\n\n".join([
@@ -588,14 +550,14 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
         "passed script beside the layout data JARVIS computed for its deck slide as it compiled "
         "and proved it (its text and pictures with their positions and sizes at the smallest "
         "and the largest frame, in deck units on the 880 x 640 canvas and in pixels) and its "
-        "narration, and its fit and the size its words are drawn at: JARVIS drew every slide "
-        "at every frame from 662 x 489 to 1600 x 900, drawing each slide's words at the "
-        "largest size at which the slide fits, never under the 13 px floor, and measured that "
-        "nothing on it, words, pictures or a decision's controls, is clipped or needs "
-        "scrolling, and the size its words are drawn at (drawn_px). Type size and fit are the "
-        "program's to measure and to fix, facts here: they are not for the review or the "
-        "sender, and whether every word is readable at its size is answered by that measure. "
-        "No screenshots. Compare each slide with the script.",
+        "narration, and each object's capacity: the lines of words its slot holds at 662 x 489 "
+        "with every word at its 13 px floor and the lines it needs (JARVIS refuses a slot over "
+        "its capacity, so every word fits; the deck draws each slide's words as large as the "
+        "slide allows). Type size is the program's, a fact here: it is not for the review or "
+        "the sender, and whether every word is readable at its size is answered by the build. "
+        "No screenshots. Compare each slide with the script, and see that what can be shown "
+        "is shown (steps, a chart or key figures, a comparison or a table, a callout), not a "
+        "long paragraph.",
         *([f"Only the slides this revision changed are below ({', '.join(only)}); every "
            f"other slide of the deck is as the run before made it and was reviewed then."]
           if only else []),
@@ -605,29 +567,20 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
             if qid not in PROGRAM_QUESTIONS)])
 
 
-def _with_fit(layout: Optional[dict], fit: dict, slide_id: str) -> Optional[dict]:
-    """A slide's layout data with its measured fit (deck_fit) beside it."""
-    measured = deck_fit.of_slide(fit, slide_id)
-    if layout is None or measured is None:
-        return layout
-    return {**layout, "fit": {"fits": measured["fits"], "said": deck_fit.said(measured)},
-            "drawn_px": deck_fit.drawn_at_ends(measured)}
-
-
-def readable(fit: dict) -> dict:
+def readable(proof: dict) -> dict:
     """The program's answer to whether every word is readable at its size
-    (PROGRAM_QUESTIONS): the build's measure, each slide's words drawn at
-    the largest size at which it fits, at the floor at least."""
+    (PROGRAM_QUESTIONS): the build's, every object within its slot's
+    capacity at 662 x 489 with every word at its floor (deck_capacity), so
+    the deck draws every word at the floor at least."""
     floor = layout_spec.spec()["text"]["min_px"]
-    least = [t["least"] for s in fit.get("slides") or [] for d in s.get("drawn") or []
-             if (t := d.get("text_px"))]
-    ok = bool(fit.get("fits")) and all(px >= floor for px in least)
+    rooms = [o["capacity"] for s in proof.get("slides") or [] for o in s.get("objects") or []
+             if o.get("capacity")]
+    ok = bool(proof.get("proven")) and all(r["fits"] for r in rooms)
     return {"question": "deck-readable", "by": PROGRAM, "state": "resolved" if ok else "not_yet",
-            "reason": (f"Measured: every slide fits its frame at every frame, its words drawn "
-                       f"as large as it allows, the smallest word {min(least):g} px, never "
-                       f"under the {floor} px floor." if ok and least else
-                       "Measured: " + " ".join(deck_fit.problems(fit)) if not ok else
-                       "Measured: every slide fits its frame at every frame.")}
+            "reason": (f"Every slot's words are within its capacity at 662 x 489 with every word "
+                       f"at the {floor} px floor, so the deck draws each slide's words as large "
+                       f"as the slide allows and never under {floor} px." if ok else
+                       "A slot is over its capacity or the deck is not proven.")}
 
 
 class DeckSource:
@@ -717,8 +670,7 @@ class Plan:
 
     def release(self) -> None:
         """The kept header and slides given up: the deck they make does not
-        build (JARVIS's pipeline changed since they were kept, or a kept
-        slide no longer fits beside the rest). The author writes them all
+        build (JARVIS's pipeline changed since they were kept). The author writes them all
         again and what it writes replaces them under the same keys."""
         if self.header is not None:
             self.rejected.add(self.header_unit.key)
@@ -780,19 +732,19 @@ class Plan:
 
 
 def review_units(run: ps.Run, built: Built, script: dict) -> dict[str, step_cache.Unit]:
-    """Each slide's review unit: its source part as built, its fit, its
-    script slide, the deck's questions and the sender's answers to an
+    """Each slide's review unit: its source part as built, its layout data,
+    its script slide, the deck's questions and the sender's answers to an
     earlier run's findings on the review."""
     _, parts = parts_of(_read_source(run))
     by_id = {s.get("id"): s for s in script.get("slides") or [] if isinstance(s, dict)}
+    layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     findings = ps.findings_for(run.doc, REVIEW_LABEL)
     tool = review_tool(run.doc)
     out = {}
     for sid, part in parts.items():
-        fit = deck_fit.of_slide(built.fit, sid) or {}
         out[sid] = step_cache.Unit(SLIDE_REVIEW, sid, {
-            "part": step_cache.digest(part), "fit": step_cache.digest(
-                {k: v for k, v in fit.items() if k != "slide"}),
+            "part": step_cache.digest(part), "layout": step_cache.digest(
+                {k: v for k, v in (layout.get(sid) or {}).items() if k != "slide"}),
             "script": step_cache.digest(by_id.get(sid)), "tool": tool,
             "findings": findings})
     return out
@@ -826,7 +778,6 @@ def deck(doc: dict) -> Optional[str]:
         state["builds"] += 1
         built, problems = build_and_prove(run, state["builds"])
         state["problems"] = list(problems)
-        state["unfit"] = bool(getattr(problems, "unfit", False))
         last["built"] = built
         return built
 
@@ -848,8 +799,7 @@ def deck(doc: dict) -> Optional[str]:
         plan.reuse()
         if plan.complete:
             plan.start_source()
-            if build_now() is None and state.get("unfit"):
-                return _not_fit(run, kept, state)
+            build_now()
             if last.get("built") is not None and not begin_review(last["built"]):
                 return _finish(run, kept, plan, outcome, last, state, build_now, began, True)
 
@@ -955,8 +905,6 @@ def deck(doc: dict) -> Optional[str]:
     if outcome.get("waiting"):
         ps._save(run, kept)
         return package_jobs.WAITING
-    if last.get("built") is None and state.get("unfit"):
-        return _not_fit(run, kept, state)
     return _finish(run, kept, plan, outcome, last, state, build_now, began,
                    outcome.get("result") == "passed" and (last.get("built") is not None
                                                           or units.get("phase") == "review"))
@@ -975,15 +923,13 @@ def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, st
     built = last.get("built") or (build_now() if passed else None)
     if passed and built is not None:
         built = _final(run, plan, reviews, units.get("reviewed") or {}, build_now) or built
-    if built is None and state.get("unfit"):
-        return _not_fit(run, kept, state)
     passed = passed and built is not None
     step = step_cache.Unit(STEP_UNIT, "", {"reviews": sorted(u.key for u in reviews.values()),
                                            "source": step_cache.file_sha(source_of(run))})
     if not (passed and "swarm" not in outcome and step_cache.reuse(step, doc, run.folder)):
         swarm = outcome.get("swarm") or {**(kept.get("swarm") or {})}
         result = {**swarm, "result": "passed" if passed else "not passed",
-                  "program": [readable(built.fit)] if built is not None else [],
+                  "program": [readable(built.proof)] if built is not None else [],
                   "findings": [] if passed else (outcome.get("findings") or _findings_of_build(
                       state.get("problems") or [])),
                   "deck_passes": (kept.get("deck_flow") or {}).get("pass", 1),
@@ -1001,8 +947,7 @@ def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, st
         package_jobs.noted(doc["id"], DECK, {
             "result": "passed", "passes": flow.get("pass", 1), "archive": str(built.archive),
             "folder": str(built.folder), "source": str(source_of(run)),
-            "review": str(run.folder / REVIEW), "fit": str(built.folder / deck_fit.FILE),
-            "slides_reviewed": only})
+            "review": str(run.folder / REVIEW), "slides_reviewed": only})
         return None
     package_jobs.noted(doc["id"], DECK, {"result": "not passed", "passes": flow.get("pass", 1),
                                          "review": str(run.folder / REVIEW)})
@@ -1042,12 +987,3 @@ def _final(run: ps.Run, plan: Plan, reviews: dict[str, step_cache.Unit], reviewe
         return build_now()
     return None
 
-
-def _not_fit(run: ps.Run, kept: dict, state: dict):
-    ps._save(run, kept)
-    raise package_jobs.Blocked(
-        DECK, "JARVIS could not make the deck fit its frame: "
-              + " ".join(state.get("problems") or []),
-        "JARVIS laid each slide out with its own fit (its words down to the 13 px floor, "
-        "then smaller gaps and shorter bars) and measured it at every frame from 662 x 489 "
-        "to 1600 x 900; the author was told to split it and revised it.", NOT_FIT_FIX)
