@@ -22,10 +22,13 @@ Two files beside each run (its folder, package_jobs.folder_of):
   sum them, and a step over `STEP_FAILS_AFTER_SEC` is flagged `too_slow`
   (Tim 2026-11-21: more than a few minutes for a step is a failure).
 - `quality.json` (`QUALITY`): per pass of the swarm, each concern signed
-  off or left, its items mapped to the 28 labels, the items repeated in
-  the next pass versus fixed, passes to done, Tim's reader's questions
-  raised versus answered, the script's facts with a checked source versus
-  unanswered, the sender's questions asked and grouped with every merge at
+  off or left, its items mapped to the 28 labels (by the marking role
+  already in use, each finding once: a later write keeps what an earlier
+  one mapped; the report is written as a step of its own, never inside
+  the swarm's or the deck's time), the items repeated in the next pass
+  versus fixed, passes to done, Tim's reader's questions raised versus
+  answered, the script's facts with their source and stated position
+  checked by the program (`located`) versus unanswered, the sender's questions asked and grouped with every merge at
   the 0.85 line (both questions and their score), the deck review's
   findings; then his verdict and his Reject words mapped to the labels
   once he answers (`verdict`).
@@ -43,6 +46,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -283,26 +287,122 @@ def _passes(result: dict, deck: bool = False) -> list[dict]:
     return list(stages.values())
 
 
-def _facts(script: dict, folder: Path, roots: list[Path]) -> dict:
-    """The script's facts: each with a source that is there (a file the
-    run, its evidence or its research holds) versus unanswered or a source
-    not found."""
-    from jarvis import package_script
-    checked, unanswered, missing = 0, 0, []
+_LINES = re.compile(r"\b(?:lines?|L)\s*(\d+)(?:\s*(?:-|\u2013|\u2014|to|through)\s*L?(\d+))?",
+                    re.I)
+_CHARS = re.compile(r"\b(?:characters?|chars?|offsets?)\s*(\d+)\s*"
+                    r"(?:-|\u2013|\u2014|to|through)\s*(\d+)", re.I)
+_SECTION = re.compile(r"\bsection\s+(.+)", re.I)
+_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+
+def _run_in(words: list[str], within: list[str]) -> bool:
+    """`words` found as one run in `within`."""
+    n = len(words)
+    return n > 0 and any(within[i:i + n] == words for i in range(len(within) - n + 1))
+
+
+def located(text: str, position: str) -> Optional[str]:
+    """The words a fact's stated position names in its source's text, read
+    by the program: lines (from 1, both ends kept: "lines 12-20", "line 5",
+    "L12-L20"), characters ("characters 100-240", end not kept) or a
+    section by its heading ("section The plan": from that heading to the
+    next of its level or above). None when the position names none of
+    these, or what it names is not in the text."""
+    from jarvis import spoken_words
+    position = position or ""
+    found = _CHARS.search(position)
+    if found:
+        start, end = int(found.group(1)), int(found.group(2))
+        return text[start:end] if 0 <= start < end <= len(text) else None
+    found = _LINES.search(position)
+    if found:
+        lines = text.splitlines()
+        first = int(found.group(1))
+        last = int(found.group(2) or first)
+        return "\n".join(lines[first - 1:last]) if 1 <= first <= last <= len(lines) else None
+    found = _SECTION.search(position)
+    if found:
+        name = spoken_words.folded_words(found.group(1))
+        lines = text.splitlines()
+        for n, line in enumerate(lines):
+            heading = _HEADING.match(line)
+            if heading and _run_in(name, spoken_words.folded_words(heading.group(2))):
+                level = len(heading.group(1))
+                end = next((m for m in range(n + 1, len(lines))
+                            if (h := _HEADING.match(lines[m])) and len(h.group(1)) <= level),
+                           len(lines))
+                return "\n".join(lines[n:end])
+    return None
+
+
+def _source_file(path: str, roots: list[Path], places: list[tuple[str, Path]]
+                 ) -> Optional[Path]:
+    """The file a fact's source path names: under the run, its evidence or
+    its research, or an engine path of the evidence mapped to its folder."""
+    for prefix, folder in places:
+        if path.startswith(prefix + "/"):
+            found = folder / path[len(prefix) + 1:]
+            if found.is_file():
+                return found
+    for candidate in [Path(path)] + [root / path.lstrip("/") for root in roots]:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _facts(script: dict, folder: Path, roots: list[Path],
+           places: Optional[list[tuple[str, Path]]] = None) -> dict:
+    """The script's facts, each checked by the program: `checked` when its
+    source is a file the run holds and its stated position (lines,
+    characters or section, `located`) is in that file, and of those
+    `quoted` when the fact's words are in what the position names; else
+    `position_not_found` (the source is there, its position names nothing
+    in it), `source_not_found` or `unanswered`."""
+    from jarvis import package_script, spoken_words
+    checked = quoted = unanswered = 0
+    missing: list[str] = []
+    misplaced: list[dict] = []
+    texts: dict[Path, str] = {}
     for slide in script.get("slides") or []:
         for fact in slide.get("facts") or []:
-            source = str((fact or {}).get("source") or "").strip()
+            fact = fact or {}
+            source = str(fact.get("source") or "").strip()
             if not source or source == package_script.UNANSWERED:
                 unanswered += 1
                 continue
-            path = source.split("#", 1)[0].split(" ", 1)[0]
-            there = any((root / path).is_file() or Path(path).is_file() for root in roots)
-            if there:
-                checked += 1
-            else:
+            path, _, anchor = source.partition("#")
+            path = path.split(" ", 1)[0]
+            file = _source_file(path, roots, places or [])
+            if file is None:
                 missing.append(source)
-    return {"checked": checked, "unanswered": unanswered, "source_not_found": len(missing),
-            "not_found": missing[:50]}
+                continue
+            if file not in texts:
+                texts[file] = file.read_bytes().decode("utf-8", errors="replace")
+            position = str(fact.get("position") or "")
+            named = located(texts[file], f"{position} {anchor}".strip())
+            if not named:
+                misplaced.append({"source": source, "position": position})
+                continue
+            checked += 1
+            if _run_in(spoken_words.folded_words(str(fact.get("fact") or "")),
+                       spoken_words.folded_words(named)):
+                quoted += 1
+    return {"checked": checked, "quoted": quoted, "unanswered": unanswered,
+            "position_not_found": len(misplaced), "source_not_found": len(missing),
+            "not_found": missing[:50], "misplaced": misplaced[:50]}
+
+
+def _mapped_before(old: dict) -> dict[str, list[str]]:
+    """The labels an earlier write of the report already gave each finding,
+    by its words, so each finding is mapped once."""
+    out: dict[str, list[str]] = {}
+    stages = list(old.get("passes") or []) + list((old.get("deck_review") or {}).get("stages")
+                                                  or [])
+    for stage in stages:
+        for item in stage.get("items") or []:
+            if isinstance(item.get("labels"), list):
+                out[item.get("what") or ""] = item["labels"]
+    return out
 
 
 def quality(doc: dict, *, mapper: Optional[LabelMapper] = None, embed=None) -> dict:
@@ -322,11 +422,17 @@ def quality(doc: dict, *, mapper: Optional[LabelMapper] = None, embed=None) -> d
     embed = embed or package_swarm.EMBED
     mapper = mapper or (lambda texts: _mark_labels(texts, doc))
     items = [i for p in passes + deck_passes for i in p["items"]]
+    old = _read(folder / QUALITY)
+    mapped = _mapped_before(old)
+    new = list(dict.fromkeys(i["what"] for i in items if i["what"] not in mapped))
     try:
-        for item, labels in zip(items, mapper([i["what"] for i in items])):
-            item["labels"] = labels
+        if new:
+            mapped.update(zip(new, mapper(new)))
     except Exception as e:  # noqa: BLE001 - the report keeps what it has
         log.warning("run_report: findings not mapped to the labels (%s)", e)
+    for item in items:
+        if item["what"] in mapped:
+            item["labels"] = mapped[item["what"]]
     try:
         _repeats(passes, embed)
         _repeats(deck_passes, embed)
@@ -336,13 +442,14 @@ def quality(doc: dict, *, mapper: Optional[LabelMapper] = None, embed=None) -> d
     reader = [i for i in swarm_items if i["owner"] == package_swarm.READER]
     asking = kept.get("asking") or {}
     script = package_script.read(folder / package_swarm.SCRIPT) or {}
-    roots = [folder]
+    roots, places = [folder], []
     try:
         from jarvis import package_evidence
-        roots.append(package_evidence.place_of(doc).folder)
+        place = package_evidence.place_of(doc)
+        roots.append(place.folder)
+        places.append((place.path, place.folder))
     except Exception:  # noqa: BLE001 - the run's own folder alone
         pass
-    old = _read(folder / QUALITY)
     body = {
         "job": doc.get("id"), "package": doc.get("package"), "run": doc.get("run"),
         "result": result.get("result"), "passes_to_done": result.get("passes"),
@@ -352,7 +459,7 @@ def quality(doc: dict, *, mapper: Optional[LabelMapper] = None, embed=None) -> d
         "readers_questions": {"raised": len(reader),
                               "answered": sum(1 for i in reader if i.get("then") == "fixed"),
                               "left": sum(1 for i in reader if i.get("then") == "left")},
-        "facts": _facts(script, folder, roots) if script else {},
+        "facts": _facts(script, folder, roots, places) if script else {},
         "sender_questions": {"asked": sum(len(g.get("asked") or [])
                                           for g in asking.get("groups") or []),
                              "groups": len(asking.get("groups") or []),

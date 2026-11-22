@@ -142,3 +142,46 @@ def test_the_brain_and_the_page_read_the_same_reports(tmp_path, monkeypatch):
     page = TestClient(app).get("/api/work/work-1/package-runs").json()
     assert page["packages"][0]["runs"][0]["quality"]["verdict"]["answer"] == "reject"
     assert seen == ["work-1", "work-1"], "both read run_report.of_work"
+
+
+def test_a_fact_counts_as_checked_only_where_its_stated_position_is_in_its_source(tmp_path):
+    doc = _doc(tmp_path)
+    folder = tmp_path / "run-1"
+    (folder / "ev.md").write_text("# Intro\nWe ship it.\n## Costs\nIt costs ten.\n# Next\nLater.\n")
+    script = {"slides": [{"facts": [
+        {"fact": "It costs ten.", "source": "ev.md", "position": "lines 4-4"},
+        {"fact": "It is cheap.", "source": "ev.md", "position": "section Costs"},
+        {"fact": "We ship it", "source": "ev.md#L2", "position": ""},
+        {"fact": "x", "source": "ev.md", "position": "lines 40-50"},
+        {"fact": "y", "source": "ev.md", "position": "the middle"},
+        {"fact": "z", "source": "unanswered", "position": ""},
+        {"fact": "w", "source": "gone.md", "position": "line 1"}]}]}
+    facts = run_report._facts(script, folder, [folder])
+    assert (facts["checked"], facts["quoted"]) == (3, 2), \
+        "the first and third quote their source at its position; the second is only there"
+    assert facts["position_not_found"] == 2 and facts["unanswered"] == 1
+    assert facts["source_not_found"] == 1
+    text = (folder / "ev.md").read_text()
+    assert run_report.located(text, "characters 0-7") == "# Intro"
+    assert run_report.located(text, "section Intro").splitlines()[-1] == "It costs ten.", \
+        "a section runs to the next heading of its level or above"
+
+
+def test_each_finding_is_mapped_to_the_labels_once(tmp_path):
+    doc = _doc(tmp_path)
+    folder = tmp_path / "run-1"
+    signoffs = [{"concern": "cares", "owner": package_swarm.READER, "state": "not_yet",
+                 "stage": "pass-1", "left": [{"what": "Why now?", "fix": ""}]}]
+    (folder / package_swarm.RESULT).write_text(json.dumps({"signoffs": signoffs}))
+    asked = []
+
+    def mapper(texts):
+        asked.append(list(texts))
+        return [["cares"] for _ in texts]
+    run_report.quality(doc, mapper=mapper, embed=_vectors)
+    signoffs.append({"concern": "cares", "owner": package_swarm.READER, "state": "not_yet",
+                     "stage": "pass-2", "left": [{"what": "What does it cost?", "fix": ""}]})
+    (folder / package_swarm.RESULT).write_text(json.dumps({"signoffs": signoffs}))
+    body = run_report.quality(doc, mapper=mapper, embed=_vectors)
+    assert asked == [["Why now?"], ["What does it cost?"]]
+    assert [i["labels"] for p in body["passes"] for i in p["items"]] == [["cares"], ["cares"]]
