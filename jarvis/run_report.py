@@ -66,6 +66,17 @@ log = logging.getLogger("jarvis.run_report")
 TIMING = "timing.json"
 QUALITY = "quality.json"
 
+# A package run's bookkeeping in its run folder (beside these two: the
+# swarm's state, package_swarm.STATE; the job's record and log,
+# package_jobs.RECORD_NAME and LOG; the research log and the hits used,
+# research_log.NAME and USED), and the role servers' own configuration
+# folder (sessions.py). None of it is the package's: the content child
+# never indexes it (knowledge_content.skipper), so no search returns it, and
+# the role file tools never show it (package_swarm.WORKING).
+BOOKKEEPING: frozenset[str] = frozenset({TIMING, QUALITY, "swarm.json", "run.job", "job.log",
+                                         "research-log.jsonl", "research-used.json"})
+ROLE_CONFIG = ".jarvis-role"
+
 # How each call ended.
 ANSWERED, REFUSED, TIME_LIMIT, RATE_LIMITED, FAILED = (
     "answered", "refused", "time_limit", "rate_limited", "failed")

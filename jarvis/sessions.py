@@ -256,7 +256,7 @@ class BrainChatSession:
     def _mcp_config(self) -> Optional[Path]:
         if not self.role.release.tools:
             return None
-        path = self.folder / ".jarvis-role" / f"{self.role.name}-mcp.json"
+        path = self.folder / run_report.ROLE_CONFIG / f"{self.role.name}-mcp.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         folders = (self.folder, *self.reads) if self.role.release.reads_files else ()
         body = {"mcpServers": {roles.SERVER_NAME: role_mcp.entry(self.role.name,

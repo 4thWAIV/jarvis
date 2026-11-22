@@ -597,8 +597,11 @@ def gather(doc: dict) -> None:
                         step_cache.REUSED, 0.0)
         # Its vectors were waited for when it was gathered; what was written
         # since (the mark step's output, the sender's answers) waits only
-        # until its words are read.
+        # until its words are read. Evidence that has lost its vectors since
+        # (an engine rebuild, the model installed again) is waited for as a
+        # fresh gather waits, never researched without its meaning.
         pe.wait_indexed(place, STEP, vectors=False)
+        pe.wait_lost_vectors(place, STEP, held.get("gathered") or [])
         return
     if place.folder.exists():               # a run that stopped part way: gathered again
         shutil.rmtree(place.folder)

@@ -5,13 +5,16 @@ sleep at 11:13:00 (`pmset -g log`: "Entering Sleep state due to 'Idle
 Sleep'") while the swarm opened Tim's reader, and woke only for 45-second
 maintenance wakes (11:28:06, 11:43:59, 11:59:51) until a person woke it at
 12:07:15. The run moved only inside those wakes: the outline turn at
-11:28:11, the owners' reads at 11:44. Nothing held the Mac awake, because a
-run's process is a background process with no person at the keyboard.
+11:28:11, the owners' reads at 11:44. Another program's caffeinate was held
+then, but a renewing one (`-t`, started again each time it ran out), and
+the Mac slept in a gap between two of them; nothing of the run's own held
+it awake.
 
-`held` is the one way JARVIS keeps it awake: `caffeinate` (part of macOS)
-holds the power assertions named by its flags for as long as this process
-lives (`-w <pid>`), and is let go when the block ends. No caffeinate (not
-macOS) holds nothing.
+`held` is the one way JARVIS keeps it awake: one assertion, held with no gap
+for the run's whole life. `caffeinate` (part of macOS) holds the power
+assertions named by its flags for as long as this process lives (`-w
+<pid>`), and is let go when the block ends; never a renewing `-t`, whose
+gaps are what let the Mac sleep. No caffeinate (not macOS) holds nothing.
 
 `Clock` tells a wait's time by the wall clock from its time awake:
 `time.monotonic` on macOS is `mach_absolute_time`, which stops while the
@@ -27,8 +30,9 @@ import subprocess
 import time
 from typing import Iterator
 
-# Idle sleep only: the sleep that stopped the run. The display may sleep.
-RUN_FLAGS: tuple[str, ...] = ("-i",)
+# Idle sleep (`-i`, the sleep that stopped the run) and system sleep while
+# on mains power (`-s`). The display may sleep.
+RUN_FLAGS: tuple[str, ...] = ("-i", "-s")
 # A sleep shorter than this is the clocks' own drift, never reported.
 SLEPT_MIN_SEC = 2.0
 

@@ -266,7 +266,8 @@ def index_files(paths, uds=None) -> list[str]:
     child's own reader; their meaning vectors follow in the background and
     nothing waits on them (the swarm never waits on vectors for what it has
     just written). The item paths read; a file no content root holds, or
-    the reader passes over, is not one."""
+    the content child's rule passes over (knowledge_content.wanted: a run's
+    bookkeeping, a sensitive name, out of scope), is not one."""
     from jarvis import fs_watch, knowledge_content
     from jarvis.knowledge.uds import Stream
     indexer = knowledge_content.Indexer(uds or records.uds())
@@ -279,6 +280,8 @@ def index_files(paths, uds=None) -> list[str]:
         except LookupError:
             continue
         rel = os.path.normpath(os.path.join(rel_dir, path.name))
+        if not knowledge_content.wanted(root, rel):
+            continue                       # the content child's own rule passes it over
         item = knowledge_content.item_path(root, rel)
         stat = fs_watch.stat_of(str(path))
         if item is None or stat is None:
@@ -345,9 +348,29 @@ def wait_indexed(place: Place, step: str, uds=None, text_only: tuple = (),
         return _wait_indexed(place, step, uds, text_only, vectors)
 
 
+def wait_lost_vectors(place: Place, step: str, items: list[str], uds=None) -> list[str]:
+    """A reused gather's evidence (`items`, the package's record's
+    `gathered`) given back the vectors it has lost since it was gathered (an
+    engine rebuild, the embedding model installed again): waited for as a
+    fresh gather waits for them, at most INDEX_WAIT_SEC, then the run is in
+    Error; never research on evidence its meaning is missing from. The
+    wait is named in the step's report (run_report.wait) only when there is
+    one. The items that had lost their vectors."""
+    from jarvis import run_report
+    lost = not_indexed(list(items), uds).paths
+    if lost:
+        with run_report.wait("indexing", f"{step}: the evidence's meaning, lost since it "
+                             f"was gathered", items=len(lost)):
+            _wait_for(step, lost, uds, (), True)
+    return lost
+
+
 def _wait_indexed(place: Place, step: str, uds, text_only: tuple, vectors: bool) -> list[str]:
+    return _wait_for(step, index_now(place, uds), uds, text_only, vectors)
+
+
+def _wait_for(step: str, items: list[str], uds, text_only: tuple, vectors: bool) -> list[str]:
     from jarvis.package_jobs import Blocked
-    items = index_now(place, uds)
     started = CLOCK()
     while True:
         waiting = not_indexed(items, uds, text_only, vectors)

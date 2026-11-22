@@ -46,9 +46,11 @@ def test_a_run_holds_idle_sleep_off_for_its_process_and_lets_go(monkeypatch):
     with awake.held() as held:
         assert held
     args = started[0].args
-    assert args[0] == "/usr/bin/caffeinate" and "-i" in args
-    assert "-d" not in args, "the display may sleep: only idle sleep stopped the run"
+    assert args[0] == "/usr/bin/caffeinate" and "-i" in args and "-s" in args
+    assert "-d" not in args, "the display may sleep"
+    assert "-t" not in args, "never a renewing assertion: its gaps let the Mac sleep"
     assert args[args.index("-w") + 1].isdigit(), "held only while this process lives"
+    assert len(started) == 1, "one assertion for the whole run, no gap"
     assert started[0].ended
 
 
@@ -197,16 +199,100 @@ def test_a_step_s_own_writing_is_read_into_the_engine_at_once(tmp_path, monkeypa
             return "indexed"
     monkeypatch.setattr(knowledge_content, "Indexer", Indexer)
     monkeypatch.setattr(knowledge_content, "item_path", lambda root, rel: f"/work/{rel}")
+    monkeypatch.setattr(knowledge_content, "wanted",
+                        lambda root, rel: not rel.endswith(("timing.json", ".jarvis-role/x.json")))
     monkeypatch.setattr(pe, "_root_and_rel", lambda folder: (
         "root", str(Path(folder).relative_to(tmp_path / "work"))))
-    read = pe.index_files([run / "research.md", run / "prep.md", run / "missing.md"],
-                          uds=object())
+    (run / "timing.json").write_text("{}")
+    read = pe.index_files([run / "research.md", run / "prep.md", run / "missing.md",
+                           run / "timing.json"], uds=object())
     assert read == ["/work/w1/packages/p1/runs/run-1/research.md",
                     "/work/w1/packages/p1/runs/run-1/prep.md"]
     assert calls == [("note", "w1/packages/p1/runs/run-1/research.md"),
                      ("extract", "w1/packages/p1/runs/run-1/research.md"),
                      ("note", "w1/packages/p1/runs/run-1/prep.md"),
-                     ("extract", "w1/packages/p1/runs/run-1/prep.md")]
+                     ("extract", "w1/packages/p1/runs/run-1/prep.md")], \
+        "what the content child's rule passes over (knowledge_content.wanted) is not read"
+
+
+def test_index_files_applies_the_content_child_s_own_rule(tmp_path, monkeypatch):
+    from jarvis import knowledge_content
+    run = tmp_path / "work" / "w1" / "packages" / "p1" / "runs" / "run-1"
+    run.mkdir(parents=True)
+    (run / "job.log").write_text("log")
+    root = knowledge_content.Root("/work", str(tmp_path / "work"), "text", "untrusted", shares=True)
+    monkeypatch.setattr(pe, "_root_and_rel", lambda folder: (
+        root, str(Path(folder).relative_to(tmp_path / "work"))))
+
+    class Indexer:
+        def __init__(self, uds):
+            self.uds = self
+
+        def get(self, *a):
+            raise AssertionError("a run's bookkeeping is never read in")
+    monkeypatch.setattr(knowledge_content, "Indexer", Indexer)
+    assert pe.index_files([run / "job.log"], uds=object()) == []
+
+
+class _Vectors:
+    def __init__(self, complete):
+        self.data = {"state": "indexed"}
+        self.vectors = {"state": "on", "complete": complete}
+
+
+def test_a_reused_gather_waits_for_vectors_its_evidence_has_lost(tmp_path, monkeypatch):
+    lost = {"/e/files/a.md": _Vectors(False), "/e/files/b.md": _Vectors(True)}
+
+    class Uds:
+        def get(self, writer, path, streams):
+            return lost[path]
+    looks = []
+
+    def sleep(sec):
+        looks.append(sec)
+        lost["/e/files/a.md"] = _Vectors(True)       # the background build made it
+    monkeypatch.setattr(pe, "SLEEP", sleep)
+    with run_report.step(_doc(tmp_path), "gather"):
+        assert pe.wait_lost_vectors(object(), "gather", list(lost), Uds()) == ["/e/files/a.md"]
+    assert looks, "it waited, as a fresh gather does"
+    step = json.loads((tmp_path / run_report.TIMING).read_text())["steps"][0]
+    assert [(w["wait"], w["name"], w.get("items")) for w in step["waits"]] == [
+        ("indexing", "gather: the evidence's meaning, lost since it was gathered", 1)]
+
+
+def test_a_reused_gather_with_every_vector_names_no_wait(tmp_path):
+    class Uds:
+        def get(self, writer, path, streams):
+            return _Vectors(True)
+    with run_report.step(_doc(tmp_path), "gather"):
+        assert pe.wait_lost_vectors(object(), "gather", ["/e/files/a.md"], Uds()) == []
+    step = json.loads((tmp_path / run_report.TIMING).read_text())["steps"][0]
+    assert not step.get("waits")
+
+
+def test_lost_vectors_never_waited_for_past_the_bound_put_the_run_in_error(tmp_path, monkeypatch):
+    class Uds:
+        def get(self, writer, path, streams):
+            return _Vectors(False)
+    now = [0.0]
+    monkeypatch.setattr(pe, "CLOCK", lambda: now[0])
+    monkeypatch.setattr(pe, "SLEEP", lambda sec: now.__setitem__(0, now[0] + pe.INDEX_WAIT_SEC))
+    with run_report.step(_doc(tmp_path), "gather"), pytest.raises(pj.Blocked):
+        pe.wait_lost_vectors(object(), "gather", ["/e/files/a.md"], Uds())
+
+
+def test_the_reused_gather_step_asks_for_lost_vectors(tmp_path, monkeypatch):
+    from jarvis import package_gather, step_cache
+    calls = []
+    monkeypatch.setattr(pe, "place_of", lambda doc: "place")
+    monkeypatch.setattr(pe, "gathered", lambda place: {"gathered": ["/e/files/a.md"],
+                                                       "gather_key": "k"})
+    monkeypatch.setattr(step_cache, "note", lambda *a, **k: None)
+    monkeypatch.setattr(pe, "wait_indexed", lambda place, step, **kw: calls.append(("words", kw)))
+    monkeypatch.setattr(pe, "wait_lost_vectors",
+                        lambda place, step, items: calls.append(("lost", items)))
+    package_gather.gather({})
+    assert calls == [("words", {"vectors": False}), ("lost", ["/e/files/a.md"])]
 
 
 # ── the role file tools: the package's files, never the run's bookkeeping ─

@@ -1846,10 +1846,15 @@ position) and `mark/marked.json` (the labels, the questions, the files),
 indexed with the raw files, its words waited for, never its vectors (gather
 waited for every vector of the evidence: every later wait,
 `wait_indexed(vectors=False)`, the mark step's, gather reused, the swarm's,
-waits only until what was written since is read);
+waits only until what was written since is read; but a reused gather whose
+evidence (its record's `gathered`) has lost vectors since, an engine rebuild
+or the model installed again, waits for them as a fresh gather does,
+`package_evidence.wait_lost_vectors`, named in timing.json as an
+`indexing` wait with the count, never researching without them);
 `package_mark.marked(place)` reads it all back. What the research step
 writes (research.md, prep.md, research-searches.md) is read into the
-engine at once, words only (`package_evidence.index_files`), its meaning
+engine at once, words only (`package_evidence.index_files`, under the
+content child's own rule, `knowledge_content.wanted`), its meaning
 following in the background; nothing waits on it.
 A Work item's own research (`work_research.py`; design: research
 work_item_research) is made again on every change of the item
@@ -2154,10 +2159,13 @@ less time awake, since `time.monotonic` stops while the Mac sleeps) and
 the seconds no wait, call or search covers (`unaccounted`, what runs at
 once counted once), so no gap is unexplained; and every wait on the
 sender (`sender`: each round, its kind, asked and answered, seconds). The
-run's process keeps the Mac from idle sleep while it runs (`awake.held`,
-`caffeinate -i -w <pid>`, from `package_jobs.main`): measured on
-package-9a8f7c72f87b run-1, a run left to itself slept from 11:13 to
-12:07, moving only in the Mac's 45-second maintenance wakes. A step
+run's process keeps the Mac from idle sleep, and from system sleep on
+mains power, while it runs (`awake.held`, `caffeinate -i -s -w <pid>`,
+from `package_jobs.main`): one assertion held with no gap for the run's
+whole life, never a renewing `-t`. Measured on package-9a8f7c72f87b run-1,
+another program's renewing caffeinate was held and the Mac slept in a gap
+between two, from 11:13 to 12:07, the run moving only in the Mac's
+45-second maintenance wakes. A step
 over `STEP_FAILS_AFTER_SEC` (five minutes; Tim 2026-11-21: more than a
 few minutes a step is a failure) is flagged `too_slow`, and `totals` sums
 them. `quality.json` (`run_report.quality`, written after the swarm and
@@ -3092,7 +3100,11 @@ package's made for no Work item (`data_paths.package_dir()`,
 `/packages/<package id>/<rel>`, both text scope, untrusted, under prefixes
 that also hold records (`Root.shares`: the content child writes and removes
 only its own file items, those with `file`, never a record at a file's
-path; `forget_root` likewise leaves records); data holds the path entry (`file`,
+path; `forget_root` likewise leaves records), a package run's bookkeeping
+in them never indexed (`knowledge_content.run_bookkeeping`:
+`run_report.BOOKKEEPING` directly in a `runs/<run id>/` folder, and the
+role servers' `.jarvis-role/`), one indexed before removed on the next
+scan; data holds the path entry (`file`,
 `size`, `mtime`, `inode`, `sha256`), `state` (pending, indexed,
 unreadable with `reason`), `trust` and what the reader found; content the
 text and sections from `content_sections.py` (bundle_readers for PDF,
@@ -3913,9 +3925,10 @@ given to the server as `--read`), hidden, credential and key files never
 shown; in the run folder only the package's working files
 (`package_swarm.WORKING`, given as `--show`: research.md, prep.md,
 outline.yaml, script.yaml, research-searches.md and the deck's source),
-never the run's bookkeeping (timing.json, quality.json, swarm.json,
-run.job, job.log, research-log.jsonl, research-used.json), which is
-neither listed, found nor read. The author has the research tools (`roles.RESEARCH_TOOLS`, the
+never the run's bookkeeping (`run_report.BOOKKEEPING`: timing.json,
+quality.json, swarm.json, run.job, job.log, research-log.jsonl,
+research-used.json), which is neither listed, found nor read, nor indexed
+by the content child, so no search returns it. The author has the research tools (`roles.RESEARCH_TOOLS`, the
 research right's with `search_history` and `read_history`), the file tools,
 the batch search (`search_at_once`) and Write and Edit; the editor the evidence search (`knowledge_search`) and
 the file tools; the context owner and the structure and decision owner

@@ -203,7 +203,8 @@ def item_path(root: Root, rel: str) -> Optional[str]:
 def skipper(root: Root) -> Callable[[str, bool], bool]:
     """What the walk passes over in one root: the folder catalog's rule,
     git-ignored paths, `SKIP_DIRS`, JARVIS's own data inside a registered
-    folder, files out of scope or with no item path."""
+    folder, a package run's bookkeeping under /work and /packages
+    (`run_bookkeeping`), files out of scope or with no item path."""
     from jarvis import repo_read
     ignored = fs_watch.git_ignored(root.path)
     data = os.path.realpath(data_paths.data_dir())
@@ -218,6 +219,8 @@ def skipper(root: Root) -> Callable[[str, bool], bool]:
             return True
         if inside is not None and (rel == inside or rel.startswith(inside + "/")):
             return True
+        if root.shares and run_bookkeeping(rel, is_dir):
+            return True
         if repo_read.sensitive_reason(Path(rel), named_dotfiles=root.folder_id is not None) is not None:
             return True
         if ignored(rel, is_dir):
@@ -226,6 +229,21 @@ def skipper(root: Root) -> Callable[[str, bool], bool]:
             return True
         return False
     return skip
+
+
+def run_bookkeeping(rel: str, is_dir: bool) -> bool:
+    """Whether a path in a Work item's or a package's folder is a package
+    run's bookkeeping (run_report.BOOKKEEPING: timing.json, quality.json,
+    swarm.json, run.job, job.log, research-log.jsonl, research-used.json,
+    each directly in a run's folder, `.../runs/<run id>/`) or the role
+    servers' configuration folder (run_report.ROLE_CONFIG). Never indexed,
+    so no search returns it; one indexed before leaves on the next scan."""
+    from jarvis import run_report
+    parts = rel.split("/")
+    if is_dir:
+        return parts[-1] == run_report.ROLE_CONFIG
+    return (len(parts) >= 3 and parts[-3] == "runs"
+            and parts[-1] in run_report.BOOKKEEPING)
 
 
 def wanted(root: Root, rel: str, is_dir: bool = False,
