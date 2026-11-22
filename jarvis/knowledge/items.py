@@ -75,6 +75,7 @@ LINK_KIND_MAX = 200
 SEARCH_LIMIT_MAX = 200
 QUERY_TEXT_MAX = 2000
 RRF_K = 60
+SEARCH_READ_BATCH = 256    # documents read in one batched read while checking a phrase
 PROPOSALS = "/proposals/links"
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 
@@ -1365,8 +1366,18 @@ class Items:
         (construction-drafts "Knowledge search: no deadline that drops
         results"); `gone` says when its caller no longer needs it, checked
         between its stages and as it reads, and then it raises `Cancelled`.
-        The sections where a word matched are read only for the hits it
-        answers with, never for every candidate."""
+
+        The standard way, so seconds is never normal: each index's
+        candidates are judged first from the resident key column alone
+        (place, type, the conditions, the reader's rights at the path), the
+        lists are fused, and only the documents of the fused top hits are
+        read, in one batched read (`DocumentStore.get_many`: sorted by key,
+        one pass over the segments) and checked in full; a hit that fails
+        leaves its lists and they are fused again, so the answer is the one
+        a check of every candidate would give. An exact phrase is checked
+        in batches the same way, and with nothing ranking it stops at the
+        first `limit` hits in path order, which are the answer. `stages`
+        gives each stage's seconds."""
         person = self._reader(body)
         limit = body.get("limit", 20)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= SEARCH_LIMIT_MAX:
@@ -1379,6 +1390,13 @@ class Items:
         def check() -> None:
             if gone():
                 raise Cancelled()
+        stages: dict[str, float] = {}
+        clock = [time.monotonic()]
+
+        def lap(stage: str) -> None:
+            now = time.monotonic()
+            stages[stage] = round(stages.get(stage, 0.0) + now - clock[0], 4)
+            clock[0] = now
         preds, prefix, _, types = self._preds(body)
         has_where = bool(body.get("where"))
         matched: dict[str, set] = {}
@@ -1403,6 +1421,32 @@ class Items:
                 cond = found if cond is None else cond & found
                 for p in found:
                     matched.setdefault(p, set()).add("graph")
+            lap("conditions")
+
+            key_of = self.docs.columns.key
+            prefix_b = prefix.encode()
+            type_set = None if types is None else set(types)
+
+            def placed(o: int) -> Optional[str]:
+                """The path of ordinal `o` unless the resident key column
+                alone rules it out (not an item, outside `under`, not of
+                `types`, outside the conditions, no right at the path that
+                could let this reader see it); what passes is checked in
+                full on its document (`readable`) before it is answered."""
+                if candidates is not None and o not in candidates:
+                    return None                   # without every indexed word of the phrase
+                key = key_of(o)
+                if key is None or not kinds.is_item_key(key) or not key.startswith(prefix_b):
+                    return None
+                path = key.decode()
+                if type_set is not None and paths.type_of(path) not in type_set:
+                    return None
+                if cond is not None and path not in cond:
+                    return None
+                access = self.access(person, path)
+                if not access.content and not (access.data and paths.type_of(path) in lexical_record_types):
+                    return None
+                return path
 
             def readable(doc: Optional[dict]) -> bool:
                 """An item found by its content (the content right), or a
@@ -1423,61 +1467,86 @@ class Items:
                 access = self.access(person, doc["_key"])
                 return lexical_record_text(doc, access.sees_field if access.hidden else None)
 
-            def sections_of(path: str) -> list[dict]:
-                c = self.store.get(CONTENT, path.encode(), lsn)
-                return [] if c is None or c.value is None else json.loads(c.value).get("sections") or []
-
+            candidates: Optional[set[int]] = None
+            phrase_seen: dict[str, bool] = {}
             if phrase:
-                hits = set()
                 candidates = self.lexical.phrase_candidates(phrase) if self.lexical is not None else None
-                docs: Iterator[dict]
                 if candidates is None:
                     notes.append("the phrase has no indexed word: items were read one by one")
-                    docs = (d for d in self._select([], prefix, None, types, lsn, person=person))
-                else:
-                    docs = (self.docs.by_ordinal(o, lsn) for o in sorted(candidates))
-                for n, doc in enumerate(docs):
-                    if n % 256 == 0:
-                        check()
-                    if not readable(doc):
-                        continue
+
+            def phrase_check(wanted: list[str], held: Optional[dict[str, dict]] = None) -> None:
+                """Whether each item holds the exact phrase, its documents
+                and contents read in one batched read each (`held`: the
+                documents already read); a hit's sections are kept."""
+                todo = [p for p in wanted if p not in phrase_seen]
+                if not todo:
+                    return
+                got = held if held is not None else self.docs.get_many(todo, lsn)
+                batch = [got[p] for p in todo if readable(got.get(p))]
+                for p in todo:
+                    phrase_seen[p] = False
+                sections = self._sections_many([d["_key"] for d in batch if d.get("_content") is not None], lsn)
+                for doc in batch:
                     if doc.get("_content") is None:
                         found_in = lexical_phrase_in(phrase, record_words(doc))
                         at = []
                     else:
-                        at = [s["index"] for s in sections_of(doc["_key"])
+                        at = [s["index"] for s in sections.get(doc["_key"], [])
                               if lexical_phrase_in(phrase, f"{s.get('heading') or ''}\n{s.get('text') or ''}")]
                         found_in = bool(at)
                     if found_in:
-                        hits.add(doc["_key"])
-                        ords[doc["_key"]] = doc.get("_ord", self.docs._ord_from_store(doc["_key"].encode()))
+                        phrase_seen[doc["_key"]] = True
+                        ords[doc["_key"]] = doc["_ord"]
                         where.setdefault(doc["_key"], set()).update(at)
                         matched.setdefault(doc["_key"], set()).add("fulltext")
+
+            if phrase and not (words or meaning):
+                # Nothing ranks: the answer is the first `limit` hits in path
+                # order, so the candidates are checked in path order, a batch
+                # at a time, until that many are found.
+                hits: set[str] = set()
+                if candidates is None:
+                    batch: list[dict] = []
+                    selected = self._select([], prefix, None, types, lsn, person=person)
+                    while len(hits) < limit:
+                        batch = [d for _, d in zip(range(SEARCH_READ_BATCH), selected)]
+                        if not batch:
+                            break
+                        check()
+                        phrase_check([d["_key"] for d in batch], {d["_key"]: d for d in batch})
+                        hits.update(d["_key"] for d in batch if phrase_seen[d["_key"]])
+                else:
+                    order = sorted(p for p in map(placed, candidates) if p is not None)
+                    for i in range(0, len(order), SEARCH_READ_BATCH):
+                        if len(hits) >= limit:
+                            break
+                        check()
+                        part = order[i:i + SEARCH_READ_BATCH]
+                        phrase_check(part)
+                        hits.update(p for p in part if phrase_seen[p])
                 cond = hits if cond is None else cond & hits
+                lap("phrase")
 
             check()
-            rankings: list[list[str]] = []
+            lists: list[tuple[str, list[str]]] = []      # each index's candidates, best first
+            vector_at: dict[str, list] = {}
             query_terms = set(lexical_terms(words)) if words else set()
             if words and self.lexical is not None:
                 ranked = []
                 for o, _, _ in self.lexical.search(words, k=max(limit * 5, 50), items=True):
-                    doc = self.docs.by_ordinal(o, lsn)
-                    if not readable(doc):
-                        continue
-                    if doc.get("_content") is None and person != OWNER and \
-                            not query_terms & set(lexical_terms(record_words(doc))):
-                        continue                  # found only by a field hidden from this reader
-                    path = doc["_key"]
-                    ords[path] = o
-                    ranked.append(path)
-                    matched.setdefault(path, set()).add("fulltext")
-                rankings.append(ranked)
+                    path = placed(o)
+                    if path is not None:
+                        ords[path] = o
+                        ranked.append(path)
+                lists.append(("fulltext", ranked))
+                lap("words")
             check()
             if meaning:
                 if self.vectors is None or self.vectors.embedder is None:
                     notes.append("no embedding model: nothing was searched by meaning")
                 else:
                     vector = self.vectors.embed_query(meaning)
+                    lap("embed")
                     check()
                     if vector is not None:
                         within = None
@@ -1485,46 +1554,134 @@ class Items:
                             within = {ords.get(p) or self.docs._ord_from_store(p.encode()) for p in cond}
                             within.discard(None)
                         elif person != OWNER or prefix != "/" or types is not None:
-                            within = {d["_ord"] for d in self._select([], prefix, None, types, lsn, person=person)
-                                      if embedded_summary(d) is not None and readable(d)}
-                        found = self.vectors.search_items(vector, k=max(limit * 5, 50), within=within)
-                        partial |= bool(found.get("partial"))
-                        ranked = []
-                        for o, _, at in found["hits"]:
-                            doc = self.docs.by_ordinal(o, lsn)
-                            if not readable(doc):
-                                continue
-                            if doc.get("_content") is None and self.access(person, doc["_key"]).hidden:
-                                continue          # a record's vectors hold every field, hidden ones too
-                            path = doc["_key"]
-                            ranked.append(path)
-                            matched.setdefault(path, set()).add("vector")
-                            where.setdefault(path, set()).update(at)
-                        rankings.append(ranked)
-            scores: dict[str, float] = {}
-            if rankings:
-                for ranked in rankings:
-                    for rank, path in enumerate(ranked):
+                            within = self._placed_ordinals(prefix, types, person, lsn, readable)
+                        if candidates is not None:
+                            within = candidates if within is None else within & candidates
+                        want = max(limit * 5, 50)
+                        k = want
+                        while True:
+                            found = self.vectors.search_items(vector, k=k, within=within)
+                            partial |= bool(found.get("partial"))
+                            ranked, at_of = [], {}
+                            for o, _, at in found["hits"]:
+                                path = placed(o)
+                                if path is not None:
+                                    ords[path] = o
+                                    ranked.append(path)
+                                    at_of[path] = at
+                            if phrase:
+                                # The nearest `want` holding the phrase: the
+                                # nearest are checked, and more asked for
+                                # while too few hold it and more are there.
+                                phrase_check(ranked)
+                                ranked = [p for p in ranked if phrase_seen[p]]
+                                check()
+                                if len(ranked) < want and len(found["hits"]) >= k:
+                                    k *= 2
+                                    continue
+                            break
+                        ranked = ranked[:want]
+                        vector_at.update((p, at_of[p]) for p in ranked)
+                        lists.append(("vector", ranked))
+                        lap("meaning")
+
+            removed: list[set[str]] = [set() for _ in lists]
+
+            def fused() -> tuple[list[tuple[str, float]], dict[str, set]]:
+                scores: dict[str, float] = {}
+                found_by: dict[str, set] = {}
+                for (name, ranked), out in zip(lists, removed):
+                    rank = 0
+                    for path in ranked:
+                        if path in out:
+                            continue
                         scores[path] = scores.get(path, 0.0) + 1.0 / (RRF_K + rank + 1)
-                if cond is not None:
+                        found_by.setdefault(path, set()).add(name)
+                        rank += 1
+                if not lists:
+                    scores = {p: 0.0 for p in (cond or set())}
+                elif cond is not None:
                     scores = {p: s for p, s in scores.items() if p in cond}
-            else:
-                scores = {p: 0.0 for p in (cond or set())}
-            for p in scores:
-                scores[p] += len(matched.get(p, ())) * 1e-6
-            best = sorted(scores.items(), key=lambda ps: (-ps[1], ps[0]))[:limit]
+                every = {"fulltext"} if phrase else set()   # every hit answered holds the phrase
+                for p in scores:
+                    scores[p] += len(matched.get(p, set()) | found_by.get(p, set()) | every) * 1e-6
+                return sorted(scores.items(), key=lambda ps: (-ps[1], ps[0]))[:limit], found_by
+
+            # Only the fused top is read, in one batched read, and checked in
+            # full; a hit that fails leaves its lists and they are fused again.
+            best, found_by = fused()
+            checked: set[str] = set()
+            while lists:
+                todo = [p for p, _ in best if p not in checked]
+                if not todo:
+                    break
+                check()
+                docs = self.docs.get_many(todo, lsn)
+                if phrase:
+                    phrase_check(todo, docs)
+                for path in todo:
+                    checked.add(path)
+                    doc = docs.get(path)
+                    if not readable(doc) or (phrase and not phrase_seen[path]):
+                        for out in removed:
+                            out.add(path)
+                        continue
+                    if doc.get("_content") is None:
+                        for (name, _), out in zip(lists, removed):
+                            if name == "fulltext" and person != OWNER and \
+                                    not query_terms & set(lexical_terms(record_words(doc))):
+                                out.add(path)       # found only by a field hidden from this reader
+                            elif name == "vector" and self.access(person, path).hidden:
+                                out.add(path)       # a record's vectors hold every field, hidden ones too
+                best, found_by = fused()
+            lap("fuse_and_read")
+            for p, _ in best:
+                matched.setdefault(p, set()).update(found_by.get(p, ()))
+                if "vector" in found_by.get(p, ()):
+                    where.setdefault(p, set()).update(vector_at.get(p, ()))
             check()
             # Where a word matched, for the hits answered only.
             if query_terms:
-                for p, _ in best:
-                    if "fulltext" not in matched.get(p, ()):
-                        continue
-                    for s in sections_of(p):
+                answered = [p for p, _ in best if "fulltext" in matched.get(p, ())]
+                for p, sections in self._sections_many(answered, lsn).items():
+                    for s in sections:
                         if query_terms & set(lexical_terms(f"{s.get('heading') or ''} {s.get('text') or ''}")):
                             where.setdefault(p, set()).add(s["index"])
+                lap("sections")
         return {"hits": [{"path": p, "score": round(s, 6), "sections": sorted(where.get(p, ())),
                           "matched_by": sorted(matched.get(p, ()))} for p, s in best],
-                "partial": partial, "notes": notes, "lsn": lsn}
+                "partial": partial, "notes": notes, "lsn": lsn, "stages": stages}
+
+    def _sections_many(self, wanted: list[str], lsn: int) -> dict[str, list[dict]]:
+        """The sections of each item's content, in one batched read."""
+        found = self.store.newest_many(CONTENT, (p.encode() for p in wanted), lsn)
+        return {k.decode(): json.loads(v.value).get("sections") or []
+                for k, v in found.items() if v.value is not None}
+
+    def _placed_ordinals(self, prefix: str, types: Optional[list[str]], person: str, lsn: int,
+                         readable: Callable[[Optional[dict]], bool]) -> set[int]:
+        """The items under `prefix` of `types` this reader could see, for a
+        meaning search to keep within: from the general index's posting for
+        their place and the resident key column (`_placed`), the reader's
+        rights at each path, nothing decoded. Only when the index cannot
+        answer the place are the documents read."""
+        place = Predicate("_kind", "=", kinds.ITEM) if prefix == "/" else \
+            Predicate("_ancestors[]", "=", prefix[:-1])
+        found = self.docs.answer(place, [kinds.ITEM])
+        if found is None:
+            return {d["_ord"] for d in self._select([], prefix, None, types, lsn, person=person)
+                    if embedded_summary(d) is not None and readable(d)}
+        out = self._placed(found[0], prefix, None, types)
+        if person == OWNER:
+            return out
+        key_of = self.docs.key_of
+        kept = set()
+        for o in out:
+            path = key_of(o)
+            access = self.access(person, path)
+            if access.content or (access.data and paths.type_of(path) in lexical_record_types):
+                kept.add(o)
+        return kept
 
     # -- proposals: what an AI suggests waits for the owner's yes ----------------
     def propose_link(self, body: dict) -> dict:

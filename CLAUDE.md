@@ -2818,7 +2818,24 @@ words' postings intersected, then checked in each section
 meaning and words (they rank) and where, phrase, linked_to, under and
 types (conditions), one hit an item with `matched_by` and the sections
 where it matched (a word's sections read only for the hits it answers
-with). No search has a deadline (Tim's yes, 2026-11-21, construction-drafts
+with). It reads only what it answers with (the search's second part,
+construction-drafts "Knowledge search"): each index's candidates are
+judged first from the resident key column (place, type, the conditions,
+the reader's rights at the path; `placed`), the lists are fused, and only
+the fused top's documents are read, in one batched multi-get
+(`DocumentStore.get_many` over `Store.newest_many`: the keys sorted, each
+segment once, newest first, each block read once,
+`Segment.newest_many`) and checked in full; one that fails leaves its
+lists and they are fused again, so the answer is the one a check of every
+candidate gives. An exact phrase is that same batched check
+(`SEARCH_READ_BATCH` documents a read): beside words, on the fused top;
+beside meaning, on the nearest, more asked for while too few hold it;
+alone, in path order, stopping at the first `limit` hits, which are the
+answer. Every answer carries each stage's seconds (`stages`: conditions,
+phrase, words, embed, meaning, fuse_and_read, sections). Measured on a
+copy of the owner's records: a search's document reads went from 0.1 to
+1 s to under 0.04 s, and a phrase from 80 to 110 s to under 0.4 s, with
+the same hits. No search has a deadline (Tim's yes, 2026-11-21, construction-drafts
 "Knowledge search: no deadline that drops results"): `items.search`,
 `query.run` and a graph walk run to the end and answer in full, never
 partial for time, and a search ends early only when its caller no longer

@@ -66,13 +66,20 @@ def test_a_search_answers_in_full_however_long_it_takes(engine, monkeypatch):
 def test_a_word_s_sections_are_read_only_for_the_hits_answered(engine, monkeypatch):
     uds = _fill(engine)
     read: list[str] = []
-    real = engine.store.get
+    real, real_many = engine.store.get, engine.store.newest_many
 
     def counting(family, key, *a, **k):
         if family == items_mod.CONTENT:
             read.append(key.decode())
         return real(family, key, *a, **k)
+
+    def counting_many(family, keys, *a, **k):
+        keys = list(keys)
+        if family == items_mod.CONTENT:
+            read.extend(key.decode() for key in keys)
+        return real_many(family, keys, *a, **k)
     monkeypatch.setattr(engine.store, "get", counting)
+    monkeypatch.setattr(engine.store, "newest_many", counting_many)
     found = uds.search_page(TIM, Query(words="lighthouse keeper", limit=3))
     assert len(found["hits"]) == 3
     assert sorted(read) == sorted(h.path for h in found["hits"])

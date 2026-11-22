@@ -514,6 +514,19 @@ class DocumentStore:
         doc["_lsn"], doc["_ord"] = v.lsn, o
         return doc
 
+    def get_many(self, keys: Iterable[str], at: Optional[int] = None) -> dict[str, dict]:
+        """`get` of many documents in one batched read (`Store.newest_many`:
+        sorted by key, one pass over the segments). A key with no live
+        document is left out."""
+        out: dict[str, dict] = {}
+        for k, v in self.store.newest_many(DOCS, (key.encode() for key in keys), at).items():
+            if v.value is None:
+                continue
+            o, doc = decode_doc(v.value)
+            doc["_lsn"], doc["_ord"] = v.lsn, o
+            out[k.decode()] = doc
+        return out
+
     def key_of(self, ordinal: int) -> Optional[str]:
         k = self.columns.key(ordinal)
         return None if k is None else k.decode()
