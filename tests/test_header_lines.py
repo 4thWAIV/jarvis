@@ -456,6 +456,9 @@ EXEMPT = {
         "it writes the sender's answers into the package's evidence file sender-answers/<n>.md, read by the package's steps as the sender's words; never a brain header, never said"),
     "package_gather.gather_jarvis_material": (
         "it writes JARVIS's own material into the package's evidence files (jarvis/), read by the package's steps as material; never a brain header, never said"),
+    "package_gather._read_now": (
+        "it hashes each evidence row's type, stored path, SHA-256, resolution and origin into "
+        "a step-cache key; it prints nothing"),
     "package_gather.retrieve_labels": (
         "it writes manifest rows for the labels retrieval resolved, in the package's evidence; never a brain header, never said"),
     "package_mark._fact_item": (

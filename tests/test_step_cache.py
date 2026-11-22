@@ -377,9 +377,12 @@ def test_a_change_to_the_deck_pipeline_s_code_rebuilds_and_measures_only(
                         "presentation_proof.py" else real(path))
     done = _again(first, deck_plan)
     # The fit measured came out the same, so the reviews and the deck's
-    # record are reused; the new build is a new zip, so it is signed again.
+    # record are reused; the delivery is signed again exactly when the new
+    # build's zip differs in its bytes (its input).
+    zips = [step_cache.file_sha(Path(d["deck"]["archive"])) for d in (first, done)]
+    signed = {"deliver"} if zips[0] != zips[1] else set()
     assert _computed(done) == {"deck-build", "deck-fit:opening", "deck-fit:what-changed",
-                               "deck-fit:where", "deliver"}
+                               "deck-fit:where"} | signed
     assert {"deck-header", "deck-source:where", "deck-review:where", "deck"} <= _reused(done)
 
 
