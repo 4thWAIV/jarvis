@@ -682,6 +682,14 @@ def mount(app: FastAPI, recorded: Recorded, view) -> None:
             raise HTTPException(status_code=404, detail="No such work item")
         return found
 
+    @app.get("/api/work/{item_id}/package-runs")
+    async def item_package_runs(item_id: str):
+        """Each package made for the item, each run's timing and quality
+        reports and their sum (run_report.of_work; the brain's
+        package_run_reports reads the same)."""
+        from jarvis import run_report
+        return await asyncio.to_thread(run_report.of_work, item_id)
+
     @app.get("/api/work/{item_id}/events")
     async def item_events(item_id: str, after: int = 0, kinds: str = ""):
         wanted = {k for k in kinds.split(",") if k} or None

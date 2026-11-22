@@ -562,10 +562,15 @@ def group_by_meaning(asks: list[dict], vectors: list[list[float]]) -> list[dict]
     """The questions to the sender grouped by meaning (swarm ask_sender
     merged, Tim 2026-11-20): each ask is {"stage" (where it was asked),
     "from" (who asked), "ask"}; one wording a group, with how many asked
-    it (`askers`)."""
+    it (`askers`), and every merge at the SAME_MEANING line (`merges`: the
+    wording kept, the one merged into it and their score), for the run's
+    quality report (run_report)."""
     who = [a["from"] for a in asks]
     return [{"id": f"ask-{n}", "question": asks[k]["ask"], "askers": len({who[i] for i in g}),
-             "asked": [asks[i] for i in g]}
+             "asked": [asks[i] for i in g],
+             "merges": [{"kept": asks[k]["ask"], "merged": asks[i]["ask"],
+                         "score": round(_cosine(vectors[k], vectors[i]), 4)}
+                        for i in g if i != k]}
             for n, (g, k) in enumerate(meaning_groups(vectors, who), 1)]
 
 
@@ -665,6 +670,7 @@ def _ask_sender(run: Run, swarm: sessions.BrainSwarmSession, kept: dict, among) 
         _embedded([a["ask"] for a in asks], "the swarm's questions to the sender"))
     if not package_jobs.ask(run.doc["id"], grouped):
         return False
+    asking.setdefault("groups", []).extend(grouped)
     swarm.sent()
     asking["open_when_asked"] = still
     return True

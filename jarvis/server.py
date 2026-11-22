@@ -97,8 +97,8 @@ from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
-from jarvis import (package_gather, package_jobs, package_jobs_api, package_request, sessions,
-                    work_research)
+from jarvis import (package_gather, package_jobs, package_jobs_api, package_request, run_report,
+                    sessions, work_research)
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, package_signature
@@ -10884,9 +10884,22 @@ def _rejected_starts_new_run(entry, package) -> None:
     same package id"; record_and_start new_run): his words are kept on that
     run and in the package's evidence, in Tim's record (`jarvis/tim.md`,
     package_gather.refresh_tim), and the next run of the package starts.
-    Blocking; never raises."""
-    question = _rejected(package_inbox.questions(package))
+    Blocking; never raises. His verdict, Approve or Reject with his words,
+    goes in that run's quality report either way (run_report.verdict; his
+    words are mapped to the labels by the next run's process)."""
+    asked = package_inbox.questions(package)
+    question = _rejected(asked)
     if question is None or question.id != package_inbox.VOTE_ID:
+        approved = next((q for q in asked if q.id == package_inbox.VOTE_ID and q.answer
+                         and q.answer.get("answer") == package_inbox.VOTE_APPROVE), None)
+        if approved is not None:
+            try:
+                job = package_jobs.delivered_as(entry.id)
+                if job is not None:
+                    run_report.verdict(job, package_inbox.VOTE_APPROVE)
+            except Exception:
+                log.warning("packages: his Approve of %s was not kept in its run's report",
+                            entry.id, exc_info=True)
         return
     try:
         job = package_jobs.delivered_as(entry.id)
@@ -10894,6 +10907,11 @@ def _rejected_starts_new_run(entry, package) -> None:
             return
         words = question.answer.get("note") or question.answered_words()
         package_jobs.rejected(job["id"], words)
+        try:
+            run_report.verdict(job, package_inbox.VOTE_REJECT, words, map_now=False)
+        except Exception:
+            log.warning("packages: his Reject of %s was not kept in its run's report",
+                        entry.id, exc_info=True)
         package_gather.refresh_tim(job)
         doc = _new_package_run(job["id"], f"Tim rejected the delivered package: {words}")
         log.info("packages: Tim rejected %s (job %s); %s of package %s started (job %s)",
@@ -11615,7 +11633,79 @@ async def tool_close_inbox_package(args: dict) -> str:
     return "Dismissed, sir; what was answered is kept in its record, and nothing went back."
 
 
+def package_run_reports_text(found: dict) -> str:
+    """Package runs' reports as the brain reads them: per package and run,
+    each step's seconds (a step over a few minutes flagged), calls, pages,
+    retries, limits and tokens, the quality report's passes, repeats, his
+    reader's questions, facts sourced and his verdict. The concerns' items
+    are the swarm's own words, walled."""
+    lines, words = [], []
+    packages = found.get("packages") or ([found] if found.get("runs") is not None else [])
+    for p in packages:
+        total = (p.get("summed") or {}).get("timing") or {}
+        lines.append(f"Package {p['package']}: {len(p.get('runs') or [])} run(s), "
+                     f"{total.get('seconds', 0)} s, {total.get('calls', 0)} calls, "
+                     f"{(total.get('tokens') or {}).get('in', 0)} tokens in, "
+                     f"{(total.get('tokens') or {}).get('out', 0)} out"
+                     + (f"; too slow: {', '.join(total['too_slow'])}"
+                        if total.get("too_slow") else ""))
+        for r in p.get("runs") or []:
+            lines.append(f"  {r['run']} (job {r['job']}, {r.get('state')}):")
+            for st in ((r.get("timing") or {}).get("steps") or []):
+                lines.append(
+                    f"    {st['step']}: {st['seconds']} s{' TOO SLOW' if st.get('too_slow') else ''}"
+                    f", {len(st.get('calls') or [])} calls, {st.get('pages_asked', 0)} pages, "
+                    f"{st.get('retries', 0)} retries, {st.get('time_limits', 0)} time limits, "
+                    f"{st.get('rate_limited', 0)} rate limited, "
+                    f"{st.get('app_server_starts', 0)} app servers, tokens "
+                    f"{st['tokens']['in']} in ({st['tokens']['cached']} cached), "
+                    f"{st['tokens']['out']} out")
+            q = r.get("quality") or {}
+            if q:
+                reader = q.get("readers_questions") or {}
+                facts = q.get("facts") or {}
+                lines.append(
+                    f"    quality: {q.get('result')}, {q.get('passes_to_done')} pass(es), "
+                    f"{q.get('repeated', 0)} items repeated, {q.get('fixed', 0)} fixed; his "
+                    f"reader's questions {reader.get('raised', 0)} raised, "
+                    f"{reader.get('answered', 0)} answered; facts {facts.get('checked', 0)} "
+                    f"sourced, {facts.get('unanswered', 0)} unanswered; sender questions "
+                    f"{(q.get('sender_questions') or {}).get('asked', 0)} asked in "
+                    f"{(q.get('sender_questions') or {}).get('groups', 0)} groups")
+                said = q.get("verdict")
+                if said:
+                    lines.append(f"    his verdict: {said.get('answer')}"
+                                 + (f", labels {', '.join(said.get('labels') or [])}"
+                                    if said.get("labels") else ""))
+                for stage in q.get("passes") or []:
+                    for item in stage.get("items") or []:
+                        words.append(f"{r['run']} {stage['stage']} {item['concern']} "
+                                     f"({item.get('then', '')}; "
+                                     f"{', '.join(item.get('labels') or [])}): {item['what']}")
+                if (said or {}).get("words"):
+                    words.append(f"{r['run']} his Reject words: {said['words']}")
+    if not lines:
+        return "No package runs to report, sir."
+    body = "\n".join(lines)
+    if words:
+        body += "\n" + _wrap_untrusted("package-run-findings", "\n".join(words))
+    return body
+
+
+async def tool_package_run_reports(args: dict) -> str:
+    """What each package run took and how well it went (run_report): for a
+    Work item every package made for it, or one package by its id."""
+    work = str(args.get("work") or "").strip()
+    package = str(args.get("package") or "").strip()
+    if not work and not package:
+        return "Name the Work item (work) or the package (package)."
+    found = await asyncio.to_thread(run_report.of_work, work) if work else \
+        await asyncio.to_thread(run_report.package, package)
+    return package_run_reports_text(found)
+
+
 TOOL_HANDLERS.update({
+    "package_run_reports": tool_package_run_reports,
     "package_inbox": tool_package_inbox,
     "open_inbox_package": tool_open_inbox_package,
     "answer_package_decision": tool_answer_package_decision,
@@ -11625,6 +11715,8 @@ TOOL_HANDLERS.update({
 ACTING_TOOLS.update({"open_inbox_package", "answer_package_decision",
                      "sign_off_package", "close_inbox_package"})
 TAINTING_TOOLS.update({
+    "package_run_reports": "the swarm's own words on what was left in a package run, and "
+                           "his Reject words",
     "package_inbox": "the titles and questions of packages agents sent",
     "open_inbox_package": "a package's own package.json, skill and questions, which an agent wrote",
 })

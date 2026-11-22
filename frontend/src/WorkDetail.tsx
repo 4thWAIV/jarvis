@@ -1,4 +1,5 @@
 import { WorkOwnerActivity } from "./WorkerStatus";
+import { PackageRuns } from "./PackageRuns";
 /**
  * One work item, in full: the centre area's Work view, opened by clicking
  * its row in the right panel's Work tab (`work.open`), which stays in view;
@@ -393,6 +394,7 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
         {who.length === 0 ? <p className="workflow-empty">{t("main.work.noPieces")}</p>
           : <ul className="work-who">{who.map((w) => <li key={w}>{w}</li>)}</ul>}
       </section>
+      <PackageRuns itemId={item.id} />
     </>
   );
 }

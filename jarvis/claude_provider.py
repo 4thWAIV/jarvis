@@ -233,6 +233,8 @@ ALLOWED_TOOLS = [
     # The package inbox (package_inbox.py): the backlog read, walled; opening,
     # answering, sending back and closing as ACTING_TOOLS.
     "mcp__jarvis__package_inbox",
+    # What each package run took and how well it went (run_report.py).
+    "mcp__jarvis__package_run_reports",
     "mcp__jarvis__open_inbox_package",
     "mcp__jarvis__answer_package_decision",
     "mcp__jarvis__sign_off_package",

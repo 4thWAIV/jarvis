@@ -2814,6 +2814,26 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "package_run_reports",
+        "description": (
+            "What each package run took and how well it went (the run reports beside each "
+            "run: timing.json and quality.json; a Work item's Overview shows the same): for "
+            "a Work item, every package made for it, or one package by its id; per run, each "
+            "step's seconds (a step over a few minutes is flagged too slow), its calls, pages, "
+            "retries, time-limit and rate-limit hits, app servers and tokens in, cached and "
+            "out; then the swarm's passes, items repeated versus fixed, his reader's "
+            "questions raised versus answered, facts sourced versus unanswered, the sender's "
+            "questions grouped, and his verdict with his Reject words mapped to the labels. "
+            "What was left is the swarm's own words, walled."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "work": {"type": "string", "description": "The Work item's id."},
+                "package": {"type": "string", "description": "The package's id."},
+            },
+        },
+    },
+    {
         "name": "package_inbox",
         "description": (
             "The packages agents have sent him, waiting in his package inbox (the Inbox tab's "

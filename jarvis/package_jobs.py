@@ -198,6 +198,16 @@ def get(job_id: str) -> dict:
     return found[0]
 
 
+def runs_of(package: str) -> list[dict]:
+    """Every run's job of a package."""
+    return _jobs([["package", "=", package]])
+
+
+def runs_of_work(work: str) -> list[dict]:
+    """Every run's job of every package made for a Work item."""
+    return _jobs([["work", "=", work]])
+
+
 def _change(job_id: str, change: str, fn: Callable[[dict], Optional[bool]]) -> dict:
     """One change of the job: `fn(doc)` edits it (returns False: leave it)."""
     path = path_of(get(job_id))
@@ -658,6 +668,8 @@ def run(job_id: str) -> int:
         return 1
     _change(job_id, RUNNING, lambda d: d.update(state=RUNNING, pid=os.getpid()))
     step = doc.get("step") or STEPS[0]
+    from jarvis import run_report
+    _map_his_words(doc)
     try:
         for step in STEPS:
             if step in doc["done"]:
@@ -669,7 +681,13 @@ def run(job_id: str) -> int:
                               f"JARVIS took the request and reached the {step} step.",
                               f"This JARVIS needs the {step} step; until then no package can "
                               f"be made.")
-            if producer(get(job_id)) == WAITING:
+            try:
+                with run_report.step(doc, step):
+                    said = producer(get(job_id))
+            finally:
+                if step in REPORTED_AFTER:
+                    _quality_report(doc)
+            if said == WAITING:
                 return 0
             doc = _change(job_id, f"{step} done",
                           lambda d, s=step: d.update(done=d["done"] + [s]))
@@ -688,6 +706,39 @@ def run(job_id: str) -> int:
         if isinstance(failed, Exception):
             return 1
         raise
+
+
+# The steps after which the run's quality report is written again
+# (run_report.quality: the swarm's passes, then the deck review's).
+REPORTED_AFTER = ("swarm", "deck")
+
+
+def _quality_report(doc: dict) -> None:
+    """The run's quality report written, timed as a step of its own; it
+    never stops the run."""
+    from jarvis import run_report
+    try:
+        with run_report.step(doc, "quality-report"):
+            run_report.quality(doc)
+    except Exception as e:  # noqa: BLE001 - the report never stops the run
+        print(f"The run's quality report could not be written: {e}", flush=True)
+
+
+def _map_his_words(doc: dict) -> None:
+    """His Reject words on the run this one follows, mapped to the labels
+    in that run's quality report (the server keeps them unmapped)."""
+    if not doc.get("after"):
+        return
+    from jarvis import run_report
+    try:
+        before = get(doc["after"])
+        if not run_report.waits_mapping(before):
+            return
+        with run_report.step(doc, "quality-report"):
+            run_report.map_pending(before)
+    except Exception as e:  # noqa: BLE001 - the report never stops the run
+        print(f"His words on the earlier run could not be mapped to the labels: {e}",
+              flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
