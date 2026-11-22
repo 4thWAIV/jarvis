@@ -1655,8 +1655,10 @@ one closest in meaning (the engine's own embeddings, where it has them).
 a prose-typed file, the sender's words in `handoff.json`, a retrieved pull
 request's description; never the prose parts of a log or a transcript; no
 file left out) to MarkingSession (tier 3) at once
-(`sessions.BrainMarkingSession.mark_files`), every part scored against the
-28 labels (`briefing_labels.py`, the one list: name, meaning, action, kind
+(`sessions.BrainMarkingSession.mark_files`), each whole sentence (never
+its phrases) given at most its top 3 of the 28 labels at 0.5 or more,
+none when none reaches 0.5 (smart passes, Tim 2026-11-21; `sessions.TOP`,
+`FLOOR`) (`briefing_labels.py`, the one list: name, meaning, action, kind
 keep, fix or remove, origin and example), with Tim's material: every item
 he knows or had access to, whole, each with its state, and every item he
 probably does not know named by its source and state only
@@ -1668,31 +1670,41 @@ program to a budget from the model's own context window (`pages.Budget`,
 Codex home, else `model_tiers.WINDOW`; the smallest of the models its
 sweep may take): the instructions (system prompt, labels, Tim's material,
 the form and the brain's starting context) and the page at most half the
-window, and with them the most the page's answer can take (every part with
-every label) and a margin of a quarter of the window, all inside it; the
-answer never more than the brain gives in one turn
-(`model_tiers.ANSWER_MOST`). Tokens are counted cheaply and high
+window, and with them the answer's reserve and a margin of a quarter of
+the window, all inside it; the answer never more than the brain gives in
+one turn (`model_tiers.ANSWER_MOST`). The reserve is the expected sparse
+answer measured on the 2026-11-21 proof (`pages.EXPECTED_ANSWER`: 0.25
+output tokens per input token for marking, 0.5 for classification) times
+`pages.SAFETY` (2), never more than the most the page's answer can take
+(each sentence with its top 3), so pages fill toward half the window. Tokens are counted cheaply and high
 (`pages.tokens`, three bytes a token). Several files to a page, each given
 whole beside its parts; a file too long for one page split across pages,
 a piece ending at a section break (a heading, else a paragraph) where one
 falls in its later half, each piece keeping its file and positions and
 given with its whole file. The answer is sparse (`sessions._sparse_form`):
-each part by its id with only the labels that apply and their scores, one
-left out 0; the program checks every id is the page's, each once and none
-missing, and every label one of the 28 (`_check_sparse`); a page that does
-not check is asked again once, then split in half, each half the same
-way, down to one sentence. The pages are asked at once, at most the
-brain's own number (`model_tiers.PARALLEL`, 3), each worker keeping one
+each sentence by its id with at most 3 labels, each scored 0.5 or more;
+a part's `scores` holds only those; the program checks every id is the
+page's, each once and none missing, every label one of the 28, at most 3
+to an id, each between 0.5 and 1 (`_check_sparse`); a page that does not
+check (a cut-off answer among them) is asked again once, then split in
+half, each half the same way, down to one sentence. The pages are asked
+at once, at most the brain's own number (`model_tiers.PARALLEL`: Claude
+3, Codex 10; a call Codex refuses as rate-limited, `sessions.RateLimited`
+from its blocked usage report or its error's words, pauses every worker
+until its reset time, else for a doubling wait, never past the run's wall
+clock, and the page is asked again, each hit counted), each worker keeping one
 session across its pages (`pages.run`; `BrainChatSession.fresh`: on Codex
 a new thread on the same app server, `CodexSession.new_thread`; on Claude,
 whose one-shot process answers one turn, started again); what it took is
-logged (`pages.Report`: pages, calls, asked again, halved, seconds and
-tokens). `relate_to_questions`: every fact and marked part of every file,
-in the same order, to ClassificationSession (tier 3) at once, packed and
-asked the same way (an item never split; each answered with only the
-questions it bears on), every one with its place in the file, scored
-against each of the handoff's questions plus background, never told what
-Tim knows. Each call
+logged and kept in the run's timing report (`pages.Report`: pages, calls,
+asked again, halved, rate-limit hits and the wait, seconds and tokens;
+`run_report.pages`). `extract_prose` asks every file on one session, a
+new conversation a file (`BrainExtractionSession.extract_many`).
+`relate_to_questions`: every fact and marked sentence of every file, in
+the same order, to ClassificationSession (tier 3) at once, packed and
+asked the same way (an item never split), each given at most its top 3
+of the handoff's questions plus background at 0.5 or more, every one with
+its place in the file, never told what Tim knows. Each call
 that finds no model or cannot answer puts the run in Error
 (`package_jobs.asked`, which the gather step's retrieval uses too). What it
 read goes beside the evidence, `mark/<stored file>.json` for each file (its
@@ -1901,6 +1913,33 @@ starts the package's next run too (`server._rejected_starts_new_run`,
 in Tim's record in the evidence (`package_gather.refresh_tim`,
 `jarvis/tim.md`, "His Reject of its package runs", or with no Work item
 "His Reject of this package's earlier runs").
+Each run's reports (`run_report.py`, work-list item 38; no new judge, no
+new model) are written beside it by the program. `timing.json`: each step
+of `package_jobs.run` timed (`run_report.step`; a step run again after
+waiting is one more entry, `resumed`), with every role call made in it
+(`BrainChatSession._record`: role, engine, model, tier, effort, seconds,
+tokens in, cached and out, and how it ended: answered, refused by the
+model sweep, time limit, rate limited, failed), each paged role's pages
+(`pages.Report`), the app servers started and the swarm's stages; a step
+over `STEP_FAILS_AFTER_SEC` (five minutes; Tim 2026-11-21: more than a
+few minutes a step is a failure) is flagged `too_slow`, and `totals` sums
+them. `quality.json` (`run_report.quality`, written after the swarm and
+the deck steps, timed as a `quality-report` step): per stage the concerns
+signed off and left, each item left mapped to the 28 labels by the
+marking role (each sentence's top labels), repeated in the next pass by
+the same concern (by meaning at `package_swarm.SAME_MEANING`) versus
+fixed, passes to done, Tim's reader's questions raised versus answered,
+the script's facts with a source that is there versus unanswered, the
+sender's questions asked and grouped with every merge at the 0.85 line
+(both wordings and their score, kept by `group_by_meaning` in
+`swarm.json`'s `asking.groups`), and the deck review's stages and
+findings; then his verdict (`run_report.verdict`, from
+`server._rejected_starts_new_run`: Approve, or Reject with his words,
+mapped to the labels by the next run's process, `map_pending`).
+`run_report.package` sums a package's runs; `of_work` lists each package
+of a Work item with its runs, read by `GET /api/work/{id}/package-runs`
+(the item's Overview, `PackageRuns.tsx`) and the brain's
+`package_run_reports` alike.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
@@ -3540,17 +3579,17 @@ the turn's whole use, `turn_tokens`: the change in the thread's running
 total, input, cached input and output, `CodexSession.turn_usage`) are in
 its `result`. Nobody votes. `BrainDecisionSession` asks each question `ASKS` (3) times in
 one-shot sessions of its own with no tools, the answer most gave and the
-share that agreed (`agreement`); `BrainClassificationSession` scores each
-item against every question plus `background`; `BrainExtractionSession`
+share that agreed (`agreement`); `BrainClassificationSession` gives each
+item at most its top 3 questions (with `background`) at 0.5 or more; `BrainExtractionSession`
 keeps only values the program finds verbatim at their offsets, a field
 not found empty and its context the sentence around it;
 `BrainMarkingSession` splits the text by program (`text_parts.py`: speech.py's
 sentence rule, `speech.sentence_end`, extended for headings, list items
 and paragraphs, and phrases cut at commas, semicolons, colons, dashes,
-brackets and the joining words) and scores every part against every label
-in pages that fit the model (`pages.py`: several files to a page, a
-sentence never apart from its phrases, each file given whole beside its
-parts; the answer sparse and checked; one that does not check asked again
+brackets and the joining words) and gives each whole sentence (its
+phrases are not marked) at most its top 3 labels at 0.5 or more, in
+pages that fit the model (`pages.py`: several files to a page, each file
+given whole beside its sentences; the answer sparse and checked; one that does not check asked again
 once, then halved; the pages asked in parallel, one session a worker; a
 script slide by slide, `mark_slides`), Tim's material with its knowledge
 states; `BrainClassificationSession` is paged the same way;
@@ -3687,6 +3726,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   mark step, what a program reads in the evidence (each file's type, its
   structured facts, its prose), and the 28 labels a briefing is marked with
   (see "A package's evidence")
+- `run_report.py` — Each package run's timing.json and quality.json, the
+  collector the run's process records every role call into, and their sums
+  per package and Work item (see "A package's evidence")
 - `pages.py` — A role's material packed into pages that fit its model's
   window with room for the answer, files grouped by type, folder and
   meaning, and the pages asked in parallel, one session a worker (marking,
