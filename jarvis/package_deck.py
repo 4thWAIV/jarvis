@@ -71,17 +71,26 @@ sender.
 Every part of the step is a unit of the step cache (step_cache.py, Tim
 2026-11-22), one a slide where the work is a slide's: the deck's header
 (`deck-header`: everything but its slides, keyed by the script's slide ids,
-its opening slide and the deck format) and each slide's source
-(`deck-source`: the deck slide, its decision, the pictures and references
-it names, keyed by its script slide and the format) are written by the
-author only when not kept: nothing kept, the whole deck is written; some
-kept, the author writes only the others and the program puts every kept
-one back exactly. The build (`deck-build`, keyed by the source, its
-pictures, the script and JARVIS's presentation pipeline) is the deck's,
-one program call; each slide's fit (`deck-fit`, keyed by its layout data
-and the pipeline) is measured only for the slides whose layout changed.
-Each slide's review (`deck-review`, keyed by its source, its fit, its
-script slide and the answers to an earlier run's findings on the review)
+its opening slide and how it is written: the author's role, prompt and
+engine choice, the deck format and the code, `writing_tool`) and each
+slide's source (`deck-source`: the deck slide, its decision, the pictures
+and references it names, keyed by its script slide and the same) are
+written by the author only when not kept: nothing kept, the whole deck is
+written; some kept, the author writes only the others and the program puts
+every kept one back exactly. Both also key the sender's answers to a deck
+that never built (findings filed under `WRITE_LABEL`), which are said to
+the author before it writes. A kept source that no longer builds (the
+pipeline changed since it was kept) is given up (`Plan.release`): the
+author writes it all again and what it writes replaces the kept entries
+(step_cache `replaced`), so no later run restores the broken parts. The
+build (`deck-build`, keyed by the source, its pictures, the script and
+JARVIS's presentation pipeline: the Python that lays out, builds, proves
+and measures a deck, the shared deck's files and the presentation assets,
+`pipeline_digest`) is the deck's, one program call; each slide's fit
+(`deck-fit`, keyed by its layout data and the pipeline) is measured only
+for the slides whose layout changed. Each slide's review (`deck-review`,
+keyed by its source, its fit, its script slide, what it is reviewed with,
+`review_tool`, and the answers to an earlier run's findings on the review)
 is done only for the slides not kept: the review turn and the fix passes
 cover those alone (`flow["slides"]`), and the kept ones' reviewed source
 stands. The step's record (`deck`: the review and the conversation) is
@@ -318,6 +327,19 @@ def script_problems(script: dict, deck: dict) -> list[str]:
 HEADER, SLIDE_SOURCE, BUILD, FIT, SLIDE_REVIEW, STEP_UNIT = (
     "deck-header", "deck-source", "deck-build", "deck-fit", "deck-review", "deck")
 REVIEW_LABEL = SLIDE_REVIEW            # the stage an earlier run's findings answer
+# Findings on a deck that never built are the writing's: their answers are
+# said before the author writes and are in every deck-header and
+# deck-source key, so the author writes again with them.
+WRITE_LABEL = SLIDE_SOURCE
+
+# The Python that lays out, builds, proves and measures a deck (in the
+# build and fit keys, whole), and the shared deck's own files.
+PIPELINE_CODE = ("jarvis.presentation", "jarvis.presentation_source",
+                 "jarvis.presentation_schema", "jarvis.presentation_proof",
+                 "jarvis.picture_proof", "jarvis.decision_package", "jarvis.deck_fit",
+                 "jarvis.layout_spec", "jarvis.make_package")
+# The code that shapes what the author and the reviewers write.
+DECK_CODE = ("jarvis.package_deck",)
 
 
 def format_digest() -> str:
@@ -328,10 +350,33 @@ def format_digest() -> str:
 
 def pipeline_digest() -> str:
     """JARVIS's presentation pipeline as a build and a fit read it: the
-    layout spec, the renderer files and the fit's own version and frames."""
-    return step_cache.digest({"spec": step_cache.file_sha(layout_spec.PATH),
+    Python that lays out, builds, proves and measures a deck
+    (PIPELINE_CODE, each module's source), the shared deck's files
+    (examples/packages/decision-deck, its new_deck.py among them) and the
+    presentation assets (the layout spec, the CSS and JS), the renderer
+    files a built deck carries, and the fit's frames."""
+    return step_cache.digest({"code": step_cache.code(*PIPELINE_CODE),
+                              "deck": step_cache.tree_sha(dp.BUILDER.parent),
+                              "assets": step_cache.tree_sha(layout_spec.ASSETS),
                               "templates": presentation_proof.template_hashes(),
-                              "fit": deck_fit.VERSION, "frames": deck_fit.frames()})
+                              "frames": deck_fit.frames()})
+
+
+def writing_tool(doc: dict) -> dict:
+    """What the deck source is written with: the author's role, prompt and
+    engine choice, the format it is told and the code."""
+    return {"author": step_cache.role_tool(ps.AUTHOR, requester=doc.get("engine")),
+            "format": format_digest(),
+            "code": step_cache.code(*step_cache.MODEL_CODE, *ps.SWARM_CODE, *DECK_CODE)}
+
+
+def review_tool(doc: dict) -> dict:
+    """What each slide is reviewed with: every participant's role, prompt
+    and engine choice, the deck's concerns and questions, the labels and
+    the code (package_swarm.tool_of)."""
+    return {**ps.tool_of(doc, more=DECK_CONCERNS), "questions": [list(q) for q in DECK_QUESTIONS],
+            "program": list(PROGRAM_QUESTIONS),
+            "code": step_cache.code(*step_cache.MODEL_CODE, *ps.SWARM_CODE, *DECK_CODE)}
 
 
 def _ids_in(value) -> set[str]:
@@ -452,10 +497,12 @@ def fit_of(run: ps.Run, folder: Path, proof: dict) -> dict:
         began = time.time()
         whole = len(missing) == len(units)
         measured = MEASURE(folder) if whole else MEASURE(folder, only=missing)
+        # The slides are measured in one drawing: each one's time is its share.
+        share = (time.time() - began) / len(missing)
         for one in measured.get("slides") or []:
             if one["id"] in missing:
                 have[one["id"]] = one
-                step_cache.computed(units[one["id"]], run.doc, began,
+                step_cache.computed(units[one["id"]], run.doc, began, seconds=share,
                                     value={k: v for k, v in one.items() if k != "slide"})
     slides = []
     for n, s in enumerate(proof.get("slides") or [], 1):
@@ -641,13 +688,21 @@ class Plan:
         self.run = run
         self.slides = [s for s in script.get("slides") or [] if isinstance(s, dict)]
         self.ids = [s.get("id") for s in self.slides]
-        fmt = format_digest()
+        tool = writing_tool(run.doc)
+        # The sender's answers to a deck that never built: the writing's
+        # inputs, said to the author before it writes.
+        self.findings = ps.findings_for(run.doc, WRITE_LABEL)
         self.header_unit = step_cache.Unit(HEADER, "", {
-            "slides": self.ids, "opening": step_cache.digest(self.slides[:1]), "format": fmt})
+            "slides": self.ids, "opening": step_cache.digest(self.slides[:1]), "tool": tool,
+            "findings": self.findings})
         self.source_units = {s.get("id"): step_cache.Unit(SLIDE_SOURCE, s.get("id"), {
-            "script": step_cache.digest(s), "format": fmt}) for s in self.slides}
+            "script": step_cache.digest(s), "tool": tool, "findings": self.findings})
+            for s in self.slides}
         self.header: Optional[dict] = None
         self.parts: dict[str, dict] = {}
+        # The keys whose kept output was rejected (it no longer builds):
+        # what the author writes in their place replaces them.
+        self.rejected: set[str] = set()
 
     def reuse(self) -> None:
         entry = step_cache.reuse(self.header_unit, self.run.doc)
@@ -659,6 +714,18 @@ class Plan:
             if entry is not None:
                 _restore_files(self.run, entry)
                 self.parts[sid] = entry.value
+
+    def release(self) -> None:
+        """The kept header and slides given up: the deck they make does not
+        build (JARVIS's pipeline changed since they were kept, or a kept
+        slide no longer fits beside the rest). The author writes them all
+        again and what it writes replaces them under the same keys."""
+        if self.header is not None:
+            self.rejected.add(self.header_unit.key)
+        self.rejected |= {self.source_units[sid].key for sid in self.parts
+                          if sid in self.source_units}
+        self.header = None
+        self.parts.clear()
 
     @property
     def to_write(self) -> list[str]:
@@ -700,11 +767,14 @@ class Plan:
         header, parts = parts_of(_read_source(self.run))
         if self.header is None:
             step_cache.computed(self.header_unit, self.run.doc, began, value=header,
-                                files_from=_part_entry(self.run, header)["files_from"])
+                                files_from=_part_entry(self.run, header)["files_from"],
+                                replace=self.header_unit.key in self.rejected)
             self.header = header
         for sid in self.to_write:
             if sid in parts:
-                step_cache.computed(self.source_units[sid], self.run.doc, began,
+                unit = self.source_units[sid]
+                step_cache.computed(unit, self.run.doc, began,
+                                    replace=unit.key in self.rejected,
                                     **_part_entry(self.run, parts[sid]))
                 self.parts[sid] = parts[sid]
 
@@ -716,14 +786,14 @@ def review_units(run: ps.Run, built: Built, script: dict) -> dict[str, step_cach
     _, parts = parts_of(_read_source(run))
     by_id = {s.get("id"): s for s in script.get("slides") or [] if isinstance(s, dict)}
     findings = ps.findings_for(run.doc, REVIEW_LABEL)
-    questions = step_cache.digest(DECK_QUESTIONS)
+    tool = review_tool(run.doc)
     out = {}
     for sid, part in parts.items():
         fit = deck_fit.of_slide(built.fit, sid) or {}
         out[sid] = step_cache.Unit(SLIDE_REVIEW, sid, {
             "part": step_cache.digest(part), "fit": step_cache.digest(
                 {k: v for k, v in fit.items() if k != "slide"}),
-            "script": step_cache.digest(by_id.get(sid)), "questions": questions,
+            "script": step_cache.digest(by_id.get(sid)), "tool": tool,
             "findings": findings})
     return out
 
@@ -800,6 +870,13 @@ def deck(doc: dict) -> Optional[str]:
                                         f"were: their script slides did not change.")
                 if build_now() is not None:
                     return True
+                if plan.parts or plan.header is not None:
+                    # The kept slides are in the deck that does not build:
+                    # the author may change them too now, and what it
+                    # writes replaces them.
+                    plan.release()
+                    swarm_.say(PROGRAM, "Every slide of the deck is yours to change now, the "
+                                        "ones JARVIS put back too.")
                 swarm_.say(PROGRAM, build_problems_note(state["problems"]))
             return False
 
@@ -817,9 +894,15 @@ def deck(doc: dict) -> Optional[str]:
             ps._take_answers(run, swarm_, kept)
             if units.get("phase") != "review":
                 if plan.complete and last.get("built") is None:
-                    # The kept source no longer builds: the author writes it all.
-                    plan.parts.clear()
-                    plan.header = None
+                    # The kept source no longer builds: the author writes it
+                    # all, and what it writes replaces what was kept.
+                    plan.release()
+                if plan.findings and not units.get("write_said"):
+                    swarm_.say(PROGRAM, "The run before ended with a deck that did not build, "
+                                        "with findings for the sender; its answers follow, and "
+                                        "the deck is written again with them.")
+                    swarm_.say("sender", ps.findings_said(plan.findings))
+                    units["write_said"] = True
                 if not plan.complete:
                     write = plan.to_write
                     kept_ids = [i for i in plan.ids if i in plan.parts and i not in write]
@@ -828,7 +911,7 @@ def deck(doc: dict) -> Optional[str]:
                         note = (write_note(run) if not kept_ids and plan.header is None
                                 else revise_deck_note(run, write, kept_ids))
                         if not await written(note):
-                            outcome.update(result="not passed",
+                            outcome.update(result="not passed", stage=WRITE_LABEL,
                                            findings=_findings_of_build(state["problems"]))
                             return
                     plan.keep_written(began)
@@ -844,7 +927,7 @@ def deck(doc: dict) -> Optional[str]:
                     swarm_.say("sender", said)
                 built = last.get("built") or build_now()
                 if built is None:
-                    outcome.update(result="not passed",
+                    outcome.update(result="not passed", stage=WRITE_LABEL,
                                    findings=_findings_of_build(state["problems"]))
                     return
                 swarm_.say(PROGRAM, review_turn(run, built, flow.get("slides")))
@@ -925,7 +1008,8 @@ def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, st
                                          "review": str(run.folder / REVIEW)})
     findings = json.loads((run.folder / REVIEW).read_text(encoding="utf-8"))["findings"]
     package_jobs.failed_swarm(doc["id"], ps.findings_questions(findings), findings,
-                              stage=REVIEW_LABEL)
+                              stage=outcome.get("stage") or (
+                                  WRITE_LABEL if built is None else REVIEW_LABEL))
     return package_jobs.WAITING
 
 

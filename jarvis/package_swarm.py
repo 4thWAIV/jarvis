@@ -89,15 +89,20 @@ it reached (`flow`).
 
 Every run goes through the step cache (step_cache.py, construction-drafts.md
 "Step cache keyed by inputs", Tim 2026-11-22). Research is one unit, keyed
-by the handoff, the evidence as gathered and what the mark step read in
-it; each stage of the swarm is one unit (`swarm-outline`, `swarm-fill`,
-`swarm-passes`), keyed by the output of the unit before it and the
-sender's answers to an earlier run's findings on that stage. A run reuses
-each stage whose key is kept (its files and swarm.json copied into its
-folder; a Claude participant, whose session lives in its own folder,
-starts a new session given the whole conversation) and runs the first
-whose inputs changed and every one after it. A finished stage is kept; a
-stage that failed or waits on the sender keeps nothing until it finishes.
+by the handoff, the evidence as gathered, what the mark step read in it,
+the Work item's own research folder as it stands, and the author's role,
+prompt, engine choice and the code (`research_unit`); each stage of the
+swarm is one unit (`swarm-outline`, `swarm-fill`, `swarm-passes`), keyed
+by the output of the unit before it, the sender's answers to an earlier
+run's findings on that stage, and what it is made with (`tool_of`: every
+participant's role, prompt and engine choice, the concerns, the labels and
+the code). A run reuses each stage whose key is kept (its files and
+swarm.json copied into its folder; every participant, on either brain,
+starts a new session given the whole conversation as the stage left it,
+so no session carries what was said after it, and no two packages resume
+one thread) and runs the first whose inputs changed and every one after
+it. A finished stage is kept; a stage that failed or waits on the sender
+keeps nothing until it finishes.
 
 A revision (the sender said what is wrong at its check, or Tim rejected the
 package; package_jobs.new_run's inputs) is one more stage,
@@ -107,12 +112,11 @@ them, naming the slides it changes (`changed`), and researches again only
 where the words say something is missing, with its tools in that turn;
 every slide it did not name is put back exactly as it was (`_put_back`);
 only the slides that changed are marked again, and the owners and the
-editor re-check only those (`flow["slides"]`). Each slide of the script is
-a unit too (`script-slide`, keyed by the passed script and each
-revision's words that changed it), so a revision naming one slide makes
-only that slide again. The job records what was redone (`revision`: the
-slides changed and kept, the slides the author named and put back, whether
-research was done again and its searches).
+editor re-check only those (`flow["slides"]`). The deck step then makes
+again only the deck slides whose script slide changed (package_deck.py).
+The job records what was redone (`revision`: the slides changed and kept,
+the slides the author named and put back, whether research was done again
+and its searches).
 """
 from __future__ import annotations
 
@@ -668,15 +672,41 @@ def research_note(run: Run) -> str:
     return "\n".join(lines)
 
 
+# The code that shapes the research and every stage's output: this module,
+# the script's form and marking, the research log and the Work item's
+# research (step_cache.code).
+SWARM_CODE = ("jarvis.package_swarm", "jarvis.package_script", "jarvis.research_log",
+              "jarvis.work_research", "jarvis.package_mark", "jarvis.package_evidence")
+
+
+def tool_of(doc: dict, names: tuple[str, ...] = NAMES, more: tuple = ()) -> dict:
+    """What a stage is made with, as its key names it: each participant's
+    role (its approved prompt, tier, effort and release, and the engine and
+    model its kind chooses, step_cache.role_tool), the concerns signed off
+    (every one's id, question and owner, and `more`, the deck's), the
+    labels the script is marked with, whole, and the code."""
+    return {"roles": step_cache.roles_tool(names, doc.get("engine")),
+            "concerns": [dataclasses.asdict(c) for c in list(concerns()) + list(more)],
+            "labels": step_cache.labels_key(),
+            "marking": step_cache.role_tool("marking", requester=doc.get("engine")),
+            "code": step_cache.code(*step_cache.MODEL_CODE, *SWARM_CODE)}
+
+
 def research_unit(run: Run) -> step_cache.Unit:
     """The research step's unit (step_cache.py): its inputs are the handoff
     (its questions, the sender's answers and options, its evidence as
-    named), the evidence as gathered (each file's SHA-256) and what the
-    mark step read in it."""
+    named), the evidence as gathered (each file's SHA-256), what the mark
+    step read in it, the Work item's own research folder as it stands now
+    (each file's SHA-256: work_research rewrites it on every change of the
+    item), and the author's role, prompt, engine choice and code."""
+    folder = run.work_research
     return step_cache.Unit(RESEARCH, "", {
         "request": run.doc.get("request"), "work": run.doc.get("work"),
         "evidence": sorted([r.stored, r.sha256] for r in run.rows if r.stored),
-        "marks": package_mark.marks_digest(run.place)})
+        "marks": package_mark.marks_digest(run.place),
+        "work_research": step_cache.tree_sha(folder) if folder is not None else None,
+        "tool": {"author": step_cache.role_tool(AUTHOR, requester=run.doc.get("engine")),
+                 "code": step_cache.code(*step_cache.MODEL_CODE, *SWARM_CODE)}})
 
 
 def research(doc: dict) -> None:
@@ -783,19 +813,21 @@ def finish_unit(run: Run, kept: dict, unit: step_cache.Unit, began: float,
 
 def _fresh_sessions(kept: dict) -> None:
     """swarm.json kept by another run, made this run's: no round of this
-    run's job is answered yet, and a Claude participant starts a new
-    session (Claude Code finds a session only in its own folder), given
-    the whole conversation; a Codex participant's thread goes on."""
+    run's job is answered yet, and every participant, on either brain,
+    starts a new session given the whole conversation as the stage left
+    it. A session kept by another run holds what was said after the stage
+    it was kept at (the run before's later stages, or another package's
+    whole run), which no key covers, and two packages must never resume
+    one thread."""
     asking = kept.get("asking") or {}
     kept["asking"] = {"answers_said": 0, "groups": asking.get("groups") or []}
     saved = kept.setdefault("swarm", {})
-    seen, introduced = saved.setdefault("seen", {}), set(saved.get("introduced") or [])
-    for name, had in list((kept.get("participants") or {}).items()):
-        if had.get("engine") == "claude":
-            del kept["participants"][name]
-            seen[name] = 0
-            introduced.discard(name)
-    saved["introduced"] = sorted(introduced)
+    seen = saved.setdefault("seen", {})
+    for name in list(kept.get("participants") or {}):
+        del kept["participants"][name]
+    for name in NAMES:
+        seen[name] = 0
+    saved["introduced"] = []
 
 
 # ── grouping by meaning ───────────────────────────────────────────────────
@@ -1228,7 +1260,7 @@ async def fix_passes(run: Run, swarm: sessions.BrainSwarmSession, kept: dict, fl
 # the sender's check, or Tim's Reject), and one unit a slide of the script.
 OUTLINE_STAGE, FILL_STAGE, PASSES_STAGE = "swarm-outline", "swarm-fill", "swarm-passes"
 STAGES = (OUTLINE_STAGE, FILL_STAGE, PASSES_STAGE)
-REVISION_STAGE, SLIDE = "swarm-revision", "script-slide"
+REVISION_STAGE = "swarm-revision"
 # The flow's steps within the outline stage and the fill stage.
 OUTLINE_STEPS = ("outline", "outline-owners", "outline-settle", "outline-signoff")
 FILL_STEPS = ("fill", "revise")
@@ -1279,30 +1311,15 @@ def stage_specs(doc: dict) -> list[tuple[str, str, dict]]:
     return out
 
 
-def stage_unit(doc: dict, kind: str, name: str, more: dict, before: str) -> step_cache.Unit:
+def stage_unit(doc: dict, kind: str, name: str, more: dict, before: str,
+               tool: Optional[dict] = None) -> step_cache.Unit:
     """A stage's unit: the output it goes on from (`before`, the digest of
-    the research or the stage before), its own inputs, and the answers to
-    any earlier run's findings on it."""
+    the research or the stage before), its own inputs, the answers to any
+    earlier run's findings on it, and what it is made with (`tool_of`)."""
     label = f"{kind}:{name}" if name else kind
     return step_cache.Unit(kind, name, {"before": before, **more,
-                                        "findings": findings_for(doc, label)})
-
-
-def _slide_units(run: Run, kept: dict, changed: Optional[set] = None) -> None:
-    """One unit a slide of the script (step_cache.py `script-slide`): its
-    key the passed script it was made in (the fix passes' output) and each
-    revision's words that changed it. A slide in `changed` was made by the
-    stage just computed (noted computed); every other is reused."""
-    base = digest_of(kept, PASSES_STAGE)
-    words = kept.get("slide_words") or {}
-    script = package_script.read(run.script) or {}
-    for slide in script.get("slides") or []:
-        sid = slide.get("id")
-        unit = step_cache.Unit(SLIDE, sid, {"base": base, "words": words.get(sid) or []})
-        if (changed is None or sid not in changed) and step_cache.reuse(unit, run.doc):
-            continue
-        step_cache.computed(unit, run.doc, time.time(), files_from={
-            "slide.yaml": package_script.dump(slide).encode("utf-8")})
+                                        "findings": findings_for(doc, label),
+                                        "tool": tool if tool is not None else tool_of(doc)})
 
 
 def _put_back(run: Run, base: dict, named: list[str]) -> tuple[list[str], list[str]]:
@@ -1340,9 +1357,10 @@ def swarm(doc: dict) -> Optional[str]:
         raise package_jobs.Blocked(SWARM, "The research step did not finish.",
                                    "JARVIS reached the swarm step.", "A new run.")
     specs = stage_specs(doc)
+    tool = tool_of(doc)
     before, todo = research_digest, None
     for i, (kind, name, more) in enumerate(specs):
-        unit = stage_unit(doc, kind, name, more, before)
+        unit = stage_unit(doc, kind, name, more, before, tool)
         if kept.get("pending") == unit.key:
             todo = i
             break
@@ -1355,7 +1373,6 @@ def swarm(doc: dict) -> Optional[str]:
             kept, record = adopted, _in_place(adopted, unit)
         before = record["digest"]
     if todo is None:
-        _slide_units(run, kept)
         return _swarm_passed(run, kept)
     pe.wait_indexed(run.place, SWARM, text_only=("/mark/",))
     labels = briefing_labels.for_marking()
@@ -1526,7 +1543,7 @@ def swarm(doc: dict) -> Optional[str]:
             await swarm_.open()
             _take_answers(run, swarm_, kept)
             for kind, name, more in specs[todo:]:
-                unit = stage_unit(doc, kind, name, more, before)
+                unit = stage_unit(doc, kind, name, more, before, tool)
                 label = unit.label
                 if kept.get("pending") != unit.key:
                     kept["pending"], kept["pending_began"] = unit.key, time.time()
@@ -1538,11 +1555,6 @@ def swarm(doc: dict) -> Optional[str]:
                     return
                 if end != "done":
                     return
-                if kind == REVISION_STAGE:
-                    rev = kept["revision"]
-                    words = kept.setdefault("slide_words", {})
-                    for sid in rev.get("slides_changed") or []:
-                        words.setdefault(sid, []).append(rev["words"])
                 flow.pop("revision_base", None)
                 _write_result(run, {**swarm_.result(), "result": "passed", "findings": [],
                                     "passes": flow.get("pass", 1),
@@ -1550,12 +1562,7 @@ def swarm(doc: dict) -> Optional[str]:
                 entry = finish_unit(run, kept, unit, float(kept.pop("pending_began", 0) or
                                                             time.time()), STAGE_FILES)
                 before = entry.digest
-                if kind == PASSES_STAGE:
-                    _slide_units(run, kept, changed=set(package_script.slide_ids(
-                        script.read())))
-                elif kind == REVISION_STAGE:
-                    _slide_units(run, kept, changed=set(kept["revision"].get(
-                        "slides_changed") or []))
+                if kind == REVISION_STAGE:
                     package_jobs.noted(doc["id"], "revision", {
                         k: kept["revision"].get(k) for k in (
                             "by", "slides_changed", "slides_kept", "named", "put_back",

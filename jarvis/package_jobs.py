@@ -696,6 +696,24 @@ def rejections(package: str) -> list[dict]:
     return _rejected_runs([["package", "=", package]])
 
 
+def rejections_of_request(doc: dict) -> list[dict]:
+    """His Reject of each delivered run of this package and of every other
+    package with no Work item that the same session asked with the same
+    handoff, each package's in run order (Tim's record for a package with
+    no Work item: a new request with the same handoff carries his word on
+    the earlier ones)."""
+    from jarvis import step_cache
+
+    def asked(d: dict):
+        return step_cache.digest(d.get("submitted") if d.get("submitted") is not None
+                                 else d.get("request"))
+    mine = asked(doc)
+    same = {d["package"] for d in _jobs([["session", "=", doc.get("session") or ""]])
+            if not d.get("work") and asked(d) == mine}
+    same.add(doc["package"])
+    return [r for p in sorted(same) for r in rejections(p)]
+
+
 def rejections_on_work(work: str) -> list[dict]:
     """His Reject of each delivered run of every package made for a Work
     item, each package's in run order: {package, run, words, at}."""

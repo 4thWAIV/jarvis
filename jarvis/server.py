@@ -3375,6 +3375,20 @@ async def _open_records_then_start() -> None:
     await _open_records()
 
 
+def _prune_step_cache() -> None:
+    """Every step cache entry unused for step_cache.PRUNE_AFTER_SEC (30
+    days) removed, at server start. Never raises."""
+    from jarvis import step_cache
+    try:
+        removed = step_cache.prune()
+    except Exception:
+        log.warning("step cache: pruning failed", exc_info=True)
+        return
+    if removed:
+        log.info("step cache: %d entr%s unused for 30 days removed", removed,
+                 "y" if removed == 1 else "ies")
+
+
 async def _start_on_records() -> None:
     """Everything that needs the records, once they are in the engine."""
     global _on_records_begun
@@ -3414,6 +3428,8 @@ async def _start_on_records() -> None:
     await asyncio.to_thread(wait_links.sweep)
     # Reports' keys past their keeping (report_keys.py).
     await asyncio.to_thread(report_keys.prune)
+    # The package steps' cache: entries unused for 30 days (step_cache.py).
+    await asyncio.to_thread(_prune_step_cache)
 
     # The language chosen in Settings, and its speech model
     # (language_setting.py). Put in force before the brain starts: its launch

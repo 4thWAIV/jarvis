@@ -5,19 +5,21 @@ JARVIS knows from its own records (workflow.yaml gather, decided
 Run as the first step of a package's run (package_jobs.PRODUCERS), in
 JARVIS's own process, once per package: a later run of the same package
 reuses the evidence already gathered (package_evidence.gathered) and only
-waits for it to be indexed. Its key (step_cache.py, `unit_of`) is the
-handoff, the Work items it is about, the sending session and its engine:
-a package asked again with the same handoff (a new request) reuses the
-evidence any run gathered from it, copied into its own evidence folder and
-indexed there. In order:
+waits for it to be indexed. A new package reads everything again: every
+program read (the files, the content, each reference, the Work item, the
+PRs and CI runs recorded against it, the sending session's transcript and
+Tim's record) is live, so it is always read, and the gather unit's key
+(step_cache.py) is the hash of what was read. The one model call, the
+labels to RetrievalSession, is its own unit (`gather-labels`), keyed by
+the labels, the retrieval role and its code, and everything the program
+read before it: reused only while all of that is unchanged, and the typed
+entries it gave are always fetched again. The steps after it key on each
+stored file's hash, so an unchanged file is never marked again and a
+changed one always is. In order:
 
   copy_files             each file entry copied into `files/`, its name kept
                          and its hash recorded; not there, not_found
   keep_content           each content entry into `given/<n>.md`, as given
-  retrieve_labels        the free-text labels, all in one call, to
-                         RetrievalSession (tier 3), which answers with typed
-                         entries and why each matches and never fetches;
-                         each entry is then handled as one of its type
   resolve_typed          every other type fetched by its program
                          (evidence_readers) into `retrieved/<type>-<id>.md`;
                          a reference named twice (in the handoff and on the
@@ -30,6 +32,10 @@ indexed there. In order:
                          else that bears on the package, found in the
                          engine); into `jarvis/`, the PRs and CI runs into
                          `retrieved/`
+  retrieve_labels        the free-text labels, all in one call, to
+                         RetrievalSession (tier 3), which answers with typed
+                         entries and why each matches and never fetches;
+                         each entry is then handled as one of its type
   set_knowledge_state    each row's state, by program (package_evidence)
   manifest               `manifest.json`, one row per stored file
   index                  indexed urgently and waited for, then linked
@@ -138,19 +144,23 @@ class Gathering:
 
 # ── retrieve_labels ───────────────────────────────────────────────────────
 
-def retrieve_labels(g: Gathering, labels: list[tuple[int, dict]]) -> None:
-    """The labels to RetrievalSession in one call; each typed entry it gives
-    handled as an entry of its type; a label it finds nothing for is
-    not_found with what it searched. A model sweep that finds no model, or
-    a session that cannot answer, puts the run in Error."""
+def retrieve_labels(g: Gathering, labels: list[tuple[int, dict]],
+                    answered: Optional[list] = None) -> list:
+    """The labels to RetrievalSession in one call (unless `answered`, its
+    answer kept from before, is given); each typed entry it gives handled
+    as an entry of its type, fetched by its program now; a label it finds
+    nothing for is not_found with what it searched. A model sweep that
+    finds no model, or a session that cannot answer, puts the run in
+    Error. Its answer."""
     from jarvis import package_jobs, sessions
     if not labels:
-        return
-    references = [sessions.Reference(f"label-{n}", e["text"]) for n, e in labels]
-    # The design gives retrieval no deadline: it answers when its lookups do.
-    answered = package_jobs.asked(STEP, "retrieval",
-                                  f"JARVIS asked retrieval what {len(labels)} label(s) name.",
-                                  RETRIEVAL(g.doc).resolve(references, None))
+        return []
+    if answered is None:
+        references = [sessions.Reference(f"label-{n}", e["text"]) for n, e in labels]
+        # The design gives retrieval no deadline: it answers when its lookups do.
+        answered = package_jobs.asked(STEP, "retrieval",
+                                      f"JARVIS asked retrieval what {len(labels)} label(s) name.",
+                                      RETRIEVAL(g.doc).resolve(references, None))
     by_id = {a["id"]: a for a in answered}
     for n, entry in labels:
         said = by_id.get(f"label-{n}") or {"resolved": NOT_FOUND, "entries": [], "searched": ""}
@@ -166,6 +176,7 @@ def retrieve_labels(g: Gathering, labels: list[tuple[int, dict]]) -> None:
                 g.file(typed, origin, n * 100 + m, found.get("why", ""))
             else:
                 g.typed(typed, origin, n * 100 + m, found.get("why", ""))
+    return list(answered)
 
 
 # ── gather_jarvis_material ────────────────────────────────────────────────
@@ -254,14 +265,17 @@ def tim_text(work_ids: list[str]) -> str:
     return "\n".join(parts)
 
 
-def rejections_text(package: str) -> str:
-    """His Reject words on this package's delivered runs, each with its run."""
+def rejections_text(doc: dict) -> str:
+    """His Reject words on the delivered runs of this package and of every
+    earlier package asked with the same handoff by the same session (a
+    package with no Work item), each with its package and run."""
     from jarvis import package_jobs
-    said = package_jobs.rejections(package)
+    said = package_jobs.rejections_of_request(doc)
     if not said:
         return ""
-    return "\n".join(["### His Reject of this package's earlier runs", ""]
-                     + [f"- {r['run']}: {r['words']}" for r in said] + [""])
+    return "\n".join(["### His Reject of this package's earlier runs, and of earlier packages "
+                      "asked with the same handoff", ""]
+                     + [f"- {r['package']} {r['run']}: {r['words']}" for r in said] + [""])
 
 
 # Tim's record comes from everything he has said (construction-drafts.md,
@@ -411,7 +425,7 @@ def tim_record(doc: dict) -> tuple[str, str]:
         own = tim_text(ids)
         source = ", ".join(work_store.path_of(i) for i in ids)
     else:
-        own = rejections_text(doc["package"]) or "- no Work item, and nothing of his on " \
+        own = rejections_text(doc) or "- no Work item, and nothing of his on " \
             "this package yet\n"
         source = package_jobs.path_of(doc)
     text = "\n".join(["# Tim's record on this work", "", OWN_PART, "", own,
@@ -539,49 +553,53 @@ def _handoff(g: Gathering) -> None:
                origin="jarvis", record=package_jobs.path_of(g.doc)))
 
 
-def unit_of(doc: dict) -> step_cache.Unit:
-    """The gather step's unit: its inputs are the handoff (as submitted and
-    as checked), the Work items it is about, the sending session and its
-    engine."""
-    submitted = doc.get("submitted")
-    return step_cache.Unit(STEP, "", {
-        "handoff": submitted if submitted is not None else doc.get("request"),
-        "request": doc.get("request"), "work": _work_ids(doc),
-        "session": doc.get("session") or "", "engine": doc.get("engine") or ""})
+# The gather step's own code, in its keys (step_cache.code).
+GATHER_CODE = ("jarvis.package_gather", "jarvis.evidence_readers", "jarvis.package_evidence",
+               "jarvis.session_transcript", "jarvis.evidence_types")
+LABELS = "gather-labels"
 
 
-# What lies in the evidence folder that the gather step did not make.
-NOT_GATHERED = (pe.SENDER_ANSWERS, "mark", pe.TIM_REJECTED)
+def _read_now(rows: list[Row]) -> str:
+    """What the program read, as a key names it: each row's type, stored
+    path, SHA-256 and how it resolved (never a source path, which names
+    the package's own folder)."""
+    return step_cache.digest([[r.type, r.stored, r.sha256, r.resolved, r.origin] for r in rows])
 
 
-def _gathered_files(place: pe.Place) -> list[str]:
-    tops = sorted(p.name for p in place.folder.iterdir()) if place.folder.is_dir() else []
-    return [rel for rel in step_cache.expand(place.folder, tops)
-            if not any(rel == n or rel.startswith(n + "/") for n in NOT_GATHERED)
-            and not rel.split("/")[-1].startswith(".")]
+def labels_unit(doc: dict, labels: list[tuple[int, dict]], read: str) -> step_cache.Unit:
+    """The labels' retrieval (one model call): the labels, the retrieval
+    role (its prompt, tier and engine choice) and its code, and everything
+    the program read before it (`read`), so a changed Work item, PR, CI
+    run, transcript or record of his asks retrieval again."""
+    return step_cache.Unit(LABELS, "", {
+        "labels": [[n, e.get("text") or ""] for n, e in labels], "read": read,
+        "tool": {"role": step_cache.role_tool("retrieval", requester=doc.get("engine")),
+                 "code": step_cache.code(*step_cache.MODEL_CODE, *GATHER_CODE,
+                                         "jarvis.role_lookups")}})
+
+
+def unit_of(doc: dict, rows: list[Row]) -> step_cache.Unit:
+    """The gather step's unit: the hash of everything it read (`_read_now`
+    over every row) and its code. Gather is always read again for a new
+    package (its inputs are live); its key says what was read."""
+    return step_cache.Unit(STEP, "", {"read": _read_now(rows),
+                                      "code": step_cache.code(*GATHER_CODE)})
 
 
 def gather(doc: dict) -> None:
     """The gather step of one run (package_jobs.PRODUCERS["gather"])."""
     place = pe.place_of(doc)
-    unit = unit_of(doc)
-    if pe.gathered(place) is not None:
-        # Gathered for this package: every run of it reuses it.
-        step_cache.note(doc, unit, step_cache.REUSED, 0.0, step_cache.lookup(unit))
+    held = pe.gathered(place)
+    if held is not None:
+        # Gathered for this package: every run of it reuses it (the design:
+        # the evidence is gathered once per package).
+        step_cache.note(doc, step_cache.Unit(STEP, "", {"held": held.get("gather_key")}),
+                        step_cache.REUSED, 0.0)
         pe.wait_indexed(place, STEP)
         return
     if place.folder.exists():               # a run that stopped part way: gathered again
         shutil.rmtree(place.folder)
     began = time.time()
-    entry = step_cache.lookup(unit)
-    if entry is not None:
-        # Gathered by a package asked with the same handoff: its evidence
-        # copied into this package's folder and indexed here.
-        step_cache.restore(entry, place.folder)
-        items = pe.wait_indexed(place, STEP)
-        pe.link(place, items, pe.read_manifest(place), unit.key)
-        step_cache.note(doc, unit, step_cache.REUSED, time.time() - began, entry)
-        return
     g = Gathering(doc)
     _handoff(g)
     labels = []
@@ -595,11 +613,20 @@ def gather(doc: dict) -> None:
             labels.append((n, entry))
         else:
             g.typed(entry, "handoff", n)
-    retrieve_labels(g, labels)
     gather_jarvis_material(g)
+    if labels:
+        unit = labels_unit(doc, labels, _read_now(g.rows))
+        kept = step_cache.reuse(unit, doc)
+        asked_at = time.time()
+        answered = retrieve_labels(g, labels, kept.value if kept is not None else None)
+        if kept is None:
+            step_cache.computed(unit, doc, asked_at, value=answered)
     for row in g.rows:
         row.knowledge_state = pe.knowledge_state(row)
     pe.write_manifest(place, g.rows)
     items = pe.wait_indexed(place, STEP)
+    unit = unit_of(doc, g.rows)
     pe.link(place, items, g.rows, unit.key)
-    step_cache.computed(unit, doc, began, folder=place.folder, files=_gathered_files(place))
+    # Read now, whatever was kept: noted as computed, never kept (a live
+    # read is never reused across packages).
+    step_cache.note(doc, unit, step_cache.COMPUTED, time.time() - began)

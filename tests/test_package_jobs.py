@@ -948,7 +948,7 @@ def test_tim_s_reject_of_a_delivered_package_starts_a_new_run(wired, marks, tmp_
     assert row.knowledge_state == pe.KNOWS
     assert row not in pe.gathered_rows(pe.read_manifest(place))
     assert pj.delivered_as(inbox) is None, "once: a later run has followed it"
-    assert package_gather.rejections_text(later["package"]).count("Lead with the cost.") == 1
+    assert package_gather.rejections_text(later).count("Lead with the cost.") == 1
 
 
 def test_an_approved_package_that_cannot_be_delivered_is_in_error(wired, marks, tmp_path,

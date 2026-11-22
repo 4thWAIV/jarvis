@@ -99,7 +99,9 @@ def deliver(doc: dict) -> Optional[str]:
         "deck": step_cache.file_sha(built), "name": built.name,
         "briefing": {k: step_cache.digest(v.decode("utf-8", "replace"))
                      for k, v in briefing.items()},
-        "message": message, "requested_by": doc.get("requested_by")})
+        "message": message, "requested_by": doc.get("requested_by"),
+        "code": step_cache.code("jarvis.package_deliver", "jarvis.package_signature",
+                                "jarvis.agent_keys")})
 
     def assemble() -> None:
         unsigned = folder / f"unsigned-{built.name}"

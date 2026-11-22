@@ -4,8 +4,10 @@ approved by Tim 2026-11-18: "3. I approve it.").
 Run after gather in JARVIS's own process (package_jobs.PRODUCERS), one
 file at a time as far as what it reads goes (step_cache.py, unit
 `mark-file`): each gathered file's key is its bytes, its knowledge state,
-the handoff's questions, the labels and, for a prose file, Tim's material
-it is marked with; a file whose key is kept is reused, and only the files
+the handoff's questions, the labels (each one's meaning, action and example
+as well as its name), the reading roles (their prompts, tiers and engine
+choice) and the code that reads and marks it, and, for a prose file, Tim's
+material it is marked with; a file whose key is kept is reused, and only the files
 whose inputs changed are read and marked, together. What was written into
 the evidence after it was gathered (the sender's answers, his Reject words)
 is not marked (package_evidence.gathered_rows). In order:
@@ -404,11 +406,22 @@ def _write_marks(place: pe.Place, marks: dict) -> None:
 # The one file a mark-file unit keeps: the file's marks, its item path left
 # out (each package's evidence has its own; put back as it is restored).
 KEPT = "marks.json"
-LABELS_KEY = step_cache.digest(list(briefing_labels.NAMES))
+# The code that types, reads, extracts, marks and classifies a file.
+MARK_CODE = ("jarvis.package_mark", "jarvis.evidence_structured", "jarvis.package_evidence")
+READING_ROLES = ("extraction", "marking", "classification")
+
+
+def tool_of(doc: dict) -> dict:
+    """What a file is marked with, as its key names it: the reading roles
+    (step_cache.role_tool), the labels whole (step_cache.labels_key) and
+    the code."""
+    return {"roles": step_cache.roles_tool(READING_ROLES, doc.get("engine"), author=None),
+            "labels": step_cache.labels_key(),
+            "code": step_cache.code(*step_cache.MODEL_CODE, *MARK_CODE)}
 
 
 def unit_of(doc: dict, place: pe.Place, f: FileMarks, rows: list[Row],
-            texts: dict[str, str]) -> step_cache.Unit:
+            texts: dict[str, str], tool: Optional[dict] = None) -> step_cache.Unit:
     """One gathered file's mark unit: its bytes, its row's type and
     knowledge state, the handoff's questions and the labels; for a prose
     file, Tim's material it is marked with (every other gathered file's
@@ -423,7 +436,7 @@ def unit_of(doc: dict, place: pe.Place, f: FileMarks, rows: list[Row],
         "sha": step_cache.file_sha(place.folder / f.stored), "type": f.row.type,
         "state": f.row.knowledge_state,
         "questions": [[q.id, q.asks] for q in questions_of(doc)],
-        "labels": LABELS_KEY, "tim": tim})
+        "tool": tool if tool is not None else tool_of(doc), "tim": tim})
 
 
 def marked(place: pe.Place) -> Optional[dict]:
@@ -454,7 +467,8 @@ def mark(doc: dict) -> None:
     names = {r.stored for r in gathered if r.stored}
     files = [f for f in type_files(place, rows) if f.stored in names]
     texts = {f.stored: f.text for f in files}
-    units = {f.stored: unit_of(doc, place, f, gathered, texts) for f in files}
+    tool = tool_of(doc)
+    units = {f.stored: unit_of(doc, place, f, gathered, texts, tool) for f in files}
     marks: dict[str, dict] = {}
     todo = []
     for f in files:
@@ -470,11 +484,18 @@ def mark(doc: dict) -> None:
         todo = grouped(todo)
         read_structured(todo)
         package_jobs.in_step(read_and_score(doc, todo, gathered, texts))
+        # The files are read and marked together, so each one's own time is
+        # its share of the batch, by its length.
+        took = time.time() - began
+        sizes = {f.stored: max(1, len(f.text or "")) for f in todo}
+        whole = sum(sizes.values())
         for f in todo:
             marks[f.stored] = f.json(place)
             _write_marks(place, marks[f.stored])
-            step_cache.computed(units[f.stored], doc, began, files_from={KEPT: json.dumps(
-                {**marks[f.stored], "item": ""}, indent=1, ensure_ascii=False).encode("utf-8")})
+            step_cache.computed(units[f.stored], doc, began, seconds=took * sizes[f.stored] / whole,
+                                files_from={KEPT: json.dumps(
+                                    {**marks[f.stored], "item": ""}, indent=1,
+                                    ensure_ascii=False).encode("utf-8")})
     _write_index(place, doc, [marks[f.stored] for f in files])
     pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))
     records.update(place.record, lambda d: {**(d or {}), "marked_at": time.time(),

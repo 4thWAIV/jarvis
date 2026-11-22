@@ -168,9 +168,10 @@ def step_entry(step: _Step, ended: float, outcome: str, resumed: bool,
 
 def cache_of(units: list[dict]) -> dict:
     """How many units were reused from the step cache and how many were
-    computed (step_cache.py); `recomputed`, a unit computed when its key was
-    already kept, is never expected."""
-    out = {"reused": 0, "computed": 0, "recomputed": 0}
+    computed (step_cache.py); `replaced`, one made again because its kept
+    output was rejected downstream; `recomputed`, a unit computed when its
+    key was already kept, is never expected."""
+    out = {"reused": 0, "computed": 0, "recomputed": 0, "replaced": 0}
     for u in units:
         if u.get("outcome") in out:
             out[u["outcome"]] += 1
@@ -183,7 +184,7 @@ def totals(steps: list[dict]) -> dict:
     out = {"seconds": 0.0, "calls": 0, "pages": 0, "retries": 0, "time_limits": 0,
            "rate_limited": 0, "app_server_starts": 0, "searches": 0, "search_seconds": 0.0,
            "tokens": {"in": 0, "cached": 0, "out": 0}, "too_slow": [],
-           "cache": {"reused": 0, "computed": 0, "recomputed": 0}}
+           "cache": {"reused": 0, "computed": 0, "recomputed": 0, "replaced": 0}}
     for s in steps:
         for key, n in cache_of(s.get("units") or []).items():
             out["cache"][key] += n
