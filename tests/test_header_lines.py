@@ -458,8 +458,16 @@ EXEMPT = {
         "it writes JARVIS's own material into the package's evidence files (jarvis/), read by the package's steps as material; never a brain header, never said"),
     "package_gather.retrieve_labels": (
         "it writes manifest rows for the labels retrieval resolved, in the package's evidence; never a brain header, never said"),
-    "package_mark._items": (
-        "it gives ClassificationSession a file's facts and marked parts as items, each with its stored path, position and field as its source; the session's material inside its tagged items, never a brain header, never said"),
+    "package_mark._fact_item": (
+        "it gives ClassificationSession one fact of a file as an item: the fact's id (the "
+        "program's own, f1, f2 ...), its value and its source (the stored path, position and "
+        "field), the session's material inside its tagged items; never a brain header, never "
+        "said"),
+    "package_mark.read_and_score": (
+        "it feeds the facts and marked parts of the package's evidence to ClassificationSession "
+        "and keeps each one's scores by its id (the program's own); the one text it builds is "
+        "fixed words and a count of files for the step's Error, no file's words; never a brain "
+        "header, never said"),
     "package_gather.tim_text": (
         "it writes Tim's record into the package's evidence file jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
     "package_gather._his_words": (
@@ -478,14 +486,15 @@ EXEMPT = {
         "it writes the summaries of what was looked up for a Work item into its research file, "
         "data/work/<id>/research/summaries.md, indexed as material, as markdown writes queries.md; "
         "never a brain header, never said"),
-    "working_set.prioritized": (
-        "it reads the mark step's own marks of the package's evidence (each sentence's id, "
-        "words, position and scores) into the working set a package role session is given as "
-        "its material, inside tagged items; never a brain header, never said"),
-    "working_set.shown": (
-        "it shows one marked sentence of the package's evidence, with its file, position and "
-        "scores, as a tagged item of a package role session's working set; never a brain "
-        "header, never said"),
+    "working_set._sentences": (
+        "it reads the mark step's own marks of one evidence file (each sentence's or fact's id, "
+        "words, position and scores) into the material a package role session is given, inside "
+        "its tagged items; never a brain header, never said"),
+    "working_set.build": (
+        "it builds what a package role session is given of the evidence: its files whole with "
+        "the program's short marks in place, or the working set of them, the contents and the "
+        "search hits, all inside tagged items of that session's material; never a brain header, "
+        "never said"),
     "role_search.run": (
         "the author's batch search on its own tool server: what the engine found is given back "
         "to that role session as its tool's answer, short, and kept in the run's search log; "
@@ -1492,6 +1501,10 @@ EXEMPT = {
         "server and name). They reach a log line, usage_store and the brain "
         "provider's events; the only text it composes for the model is the "
         "assistant delta, which is the model's own output"),
+    "codex_provider._usage_seen": (
+        "the app-server's own rate-limit status for JARVIS's OWN brain, recorded in usage_store "
+        "and carried on the brain provider's usage event; the one text it builds is a log line "
+        "naming the exception usage_store raised, never a header the brain reads or words said"),
     "codex_provider.call": (
         "a JSON-RPC call inside CodexUsage.read: the only value it prints is "
         "the method name, one of this module's own literals"),

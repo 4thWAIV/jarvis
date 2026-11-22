@@ -106,6 +106,20 @@ def _never_start_the_engine_s_process(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_report_as_the_session_running_the_suite(monkeypatch):
+    """An agent's commands read who they are and where JARVIS is from the
+    environment (env_names WIRING: JARVIS_ACCESS_KEY, JARVIS_AGENT_SESSION,
+    CLAUDE_CODE_SESSION_ID, JARVIS_URL). Run from an agent's own session the
+    suite inherits that agent's, so a report command under test sent its
+    real access key in place of failing for want of a key
+    (test_agent_keys's report commands test). Every test starts with none;
+    one that wants them sets them itself."""
+    for name in ("JARVIS_ACCESS_KEY", "JARVIS_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",
+                 "JARVIS_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _deck_fit_without_a_browser(monkeypatch, request):
     """The deck step measures each build in headless Chromium (deck_fit);
     outside the page tests it is told every slide fits."""

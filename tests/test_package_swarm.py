@@ -248,13 +248,15 @@ def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, p
     assert (question, None, ["turn"]) in plan.searched
     first = plan.sent["author"][0]
     # Its approved material: the sender's two answers, the questions, and
-    # its working set: the contents of the evidence, each file with Tim's
-    # knowledge state, the sentences prioritized for each question and the
-    # searches' short hits; never a file whole.
+    # the evidence: small enough here, every file whole with its marks in
+    # place, the contents of the evidence, each file with Tim's knowledge
+    # state, and the searches' short hits.
     assert "PR 171 moves the Work items." in first and question in first
     assert "<contents>" in first and '<file path="files/situation.md"' in first
+    assert '<document path="files/situation.md"' in first and "<left_out>" not in first
+    assert "[s2 q1 .5 evidence .8] The Work items moved into folders on the copy." in first
     assert 'state="probably_does_not_know"' in first and 'state="knows"' in first
-    assert "<left_out>" in first and "search_at_once" in first
+    assert "files whole" in first and "search_at_once" in first
     # What the searches found, short in the working set, and whole beside the run.
     assert f"Found for {question}." in first and "<hit " in first
     assert f"Found for {question}." in (folder / ps.SEARCHES_MD).read_text()
@@ -274,7 +276,7 @@ def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, p
     assert [t["stage"] for t in kept["times"]] == ["research-searches", "research"]
     assert plan.opened == [("author", None)], "only the author researches"
     assert plan.forms["author"] == [ps.TALK], "one turn: it calls back with its tools for more"
-    assert kept["given"]["author"]["working_set"]
+    assert kept["given"]["author"]["working_set"] is False, "small enough: the evidence whole"
     # Medium effort for the research turn alone.
     assert ("author", ps.RESEARCH_EFFORT) in plan.efforts
     assert dict(plan.efforts)["tims_reader"] == roles.role("tims_reader").effort

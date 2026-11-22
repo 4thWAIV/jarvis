@@ -15,15 +15,16 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
              each Work item's PRs and CI runs and its thread
              (work_research's searches, straight on the engine with the
              run's own patience). The author's ChatSession (tier 1) is given
-             its approved prompt and its working set (working_set.py,
+             its approved prompt and its material (working_set.py,
              construction-drafts.md "The author works from a prioritized
              working set and calls back for more", Tim 2026-11-21): the
-             sender's two answers, the handoff's questions, for each
-             question the sentences marking prioritized for it, highest
-             first, a table of contents of the evidence and the searches'
-             short hits, each with Tim's knowledge state, packed to the
-             model's window (never over half of it) lowest priority cut
-             first, saying what was left out. In ONE turn at medium effort
+             sender's two answers, the handoff's questions, a table of
+             contents of the evidence and the searches' short hits, each
+             with Tim's knowledge state, and every evidence file whole with
+             its marks short and in place while that fits the model's
+             window (never over half of it), else for each question the
+             sentences marking prioritized for it, highest first, lowest
+             priority cut first, saying what was left out. In ONE turn at medium effort
              it writes `research.md` and `prep.md` together; when it needs
              more it calls back during that turn through its own tool
              server (its file tools, knowledge_search under the evidence,
@@ -113,6 +114,10 @@ CONVERSATION = "conversation.md"
 EARLIER = "earlier"
 PROGRAM = sessions.PROGRAM
 AUTHOR, EDITOR = "author", "editor"
+# The author's approved prompt's placeholder for its material
+# (role_prompts.PROMPTS["author"].material).
+AUTHOR_MATERIAL = ("{the evidence: every file whole with its marks when it fits, else the "
+                   "working set; the table of contents and the search hits}")
 READER, CONTEXT, STRUCTURE = "tims_reader", "context_owner", "structure_owner"
 # The participants, in the order their parallel turns go into the
 # conversation.
@@ -275,9 +280,12 @@ def _tools_note(run: "Run", name: str) -> str:
 
 def material_set(run: Run, name: str, room_tokens: int,
                  states: Optional[tuple[str, ...]] = None) -> working_set.WorkingSet:
-    """A participant's working set of the evidence (working_set.build), its
-    share (`states`) of it, in `room_tokens`."""
-    return working_set.build(run.rows, run.texts, run.marked, question_ids(run.doc) + ["background"],
+    """A participant's material of the evidence (working_set.build), its
+    share (`states`) of it, in `room_tokens`: every file whole with its
+    marks in place when that fits, else the working set. Only the
+    handoff's own questions rank a sentence (never classification's
+    background)."""
+    return working_set.build(run.rows, run.texts, run.marked, question_ids(run.doc),
                              run.looked if name == AUTHOR else [], room_tokens,
                              reads=_tools_note(run, name), states=states)
 
@@ -374,11 +382,11 @@ def _read(path: Path) -> str:
 class _Firsts:
     """Each participant's first message, made when its first turn comes:
     its approved prompt's closing material with its share, and where the
-    evidence is for one that searches it. The author's material is its
-    working set; another's share is given whole while it fits its window
-    with what goes with it, else as the working set of that share
-    (construction-drafts.md "The author works from a prioritized working
-    set and calls back for more")."""
+    evidence is for one that searches it. Its share of the evidence is
+    every file whole with its marks in place while that fits its window
+    with what goes with it, else the working set of that share
+    (working_set.build; construction-drafts.md "The author works from a
+    prioritized working set and calls back for more")."""
 
     def __init__(self, run: Run, material: list[sessions.Known]):
         self.run = run
@@ -426,38 +434,41 @@ class _Firsts:
             values = {"{sender_answers: plainly, why_now}": _sender_answers(run.doc),
                       "{the handoff's questions, each with the sender's options where it "
                       "gives them}": _handoff_questions(run.doc), "{the prep}": prep}
-            key = ("{the working set: each question's prioritized sentences, the table of "
-                   "contents and the search hits}")
+            key = AUTHOR_MATERIAL
             fixed = pages.tokens(self._fill(name, {**values, key: ""}))
             ws = material_set(run, name, self._room(name) - fixed)
-            self.sizes[name] = {"working_set": True, "tokens": ws.tokens, "given": ws.given,
-                                "total": ws.total}
+            self.sizes[name] = self._size(ws)
             return self._fill(name, {**values, key: ws.text})
-        values = {**sessions.share_values(name, self.material), "{the prep}": prep}
+        # Its share's placeholders (sessions.share_values gives their names),
+        # each filled with its share whole and marked when that fits, else
+        # the working set of it (Tim's reader: knows and had access, each its
+        # own, kept apart as its share is).
+        values = {**sessions.share_values(name, []), "{the prep}": prep}
         values.setdefault("{the evidence, each item with its knowledge state}", "")
-        said = self._fill(name, values)
-        room = self._room(name)
-        if pages.tokens(said) <= room:
-            self.sizes[name] = {"working_set": False, "tokens": pages.tokens(said)}
-            return said
-        # Too large whole: the working set of its share, kept apart as its
-        # share is (Tim's reader: knows and had access, each its own).
-        if sessions.PROBABLY_NOT not in sessions.SHARES[name]:
-            empty = {**values, "{knows}": "", "{had_access}": ""}
-            left = room - pages.tokens(self._fill(name, empty))
-            knows = material_set(run, name, left // 2, (sessions.KNOWS,))
-            access = material_set(run, name, left - left // 2, (sessions.HAD_ACCESS,))
-            self.sizes[name] = {"working_set": True, "tokens": knows.tokens + access.tokens}
-            return self._fill(name, {**values, "{knows}": knows.text,
-                                     "{had_access}": access.text})
-        keys = [k for k in ("{the evidence, each item with its knowledge state}",
+        keys = [k for k in ("{knows}", "{had_access}",
+                            "{the evidence, each item with its knowledge state}",
                             "{the gathered and marked material, with its knowledge state}")
                 if k in values]
-        empty = {**values, **{k: "" for k in keys}}
-        ws = material_set(run, name, room - pages.tokens(self._fill(name, empty)))
-        self.sizes[name] = {"working_set": True, "tokens": ws.tokens, "given": ws.given,
-                            "total": ws.total}
+        left = self._room(name) - pages.tokens(self._fill(name, {**values,
+                                                                  **{k: "" for k in keys}}))
+        if sessions.PROBABLY_NOT not in sessions.SHARES[name]:
+            knows = material_set(run, name, left, (sessions.KNOWS,))
+            access = material_set(run, name, left, (sessions.HAD_ACCESS,))
+            if not (knows.whole and access.whole and knows.tokens + access.tokens <= left):
+                knows = material_set(run, name, left // 2, (sessions.KNOWS,))
+                access = material_set(run, name, left - left // 2, (sessions.HAD_ACCESS,))
+            self.sizes[name] = {"working_set": not (knows.whole and access.whole),
+                                "tokens": knows.tokens + access.tokens}
+            return self._fill(name, {**values, "{knows}": knows.text,
+                                     "{had_access}": access.text})
+        ws = material_set(run, name, left, sessions.SHARES[name])
+        self.sizes[name] = self._size(ws)
         return self._fill(name, {**values, **{k: ws.text for k in keys}})
+
+    @staticmethod
+    def _size(ws: working_set.WorkingSet) -> dict:
+        return {"working_set": not ws.whole, "tokens": ws.tokens, "given": ws.given,
+                "total": ws.total}
 
 
 def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
@@ -675,7 +686,8 @@ def research(doc: dict) -> None:
             given = (getattr(swarm._first, "sizes", None) or {}).get(AUTHOR)
             if given:
                 kept.setdefault("given", {})[AUTHOR] = given
-                _log(f"research: the author's working set, {given['tokens']:,} tokens: "
+                what = "a working set" if given["working_set"] else "the evidence whole"
+                _log(f"research: the author's material, {what}, {given['tokens']:,} tokens: "
                      f"{given['given']} of {given['total']}")
         finally:
             _keep(run, swarm, kept)

@@ -57,17 +57,18 @@ def test_the_working_set_never_exceeds_its_budget_on_a_large_evidence():
         looked = [{"tool": "knowledge_search", "query": "q", "hits": [
             {"path": f"/x/{n}.md", "score": 0.5, "text": "hit " * 400} for n in range(50)]}]
         ws = working_set.build(rows, texts, marked, ["q1"], looked, room, reads="its tools.")
-        assert ws.tokens <= room
+        assert ws.tokens <= room and not ws.whole
         assert ws.cut and ws.given["sentences"] < ws.total["sentences"]
         assert ws.given["contents"] == len(rows), "every file named"
         assert "were left out" in ws.text and "its tools." in ws.text
 
 
-def test_the_prioritized_sentences_come_first_highest_first():
+def _small():
     rows = [Row("files/a.md"), Row("files/b.md", "knows")]
-    texts = {"files/a.md": "# A plan\nLow one. High one. Not asked.",
+    texts = {"files/a.md": "# A plan\nLow one. High one. Not asked.\n" + "Unmarked words. " * 200,
              "files/b.md": "Known thing here. More."}
-    marked = {"files": [
+    marked = {"questions": [{"id": "q1", "asks": "Build it?"},
+                            {"id": "background", "asks": "background"}], "files": [
         {"file": "files/a.md", "marks": {"parts": [
             {"id": "s1", "segment": "Low one.", "position": {"start": 9, "end": 17},
              "scores": {"evidence": 0.9}},
@@ -77,30 +78,69 @@ def test_the_prioritized_sentences_come_first_highest_first():
              "scores": {"filler": 0.9}}],
             "questions": [{"item": "s1", "scores": {"q1": 0.6}},
                           {"item": "s2", "scores": {"q1": 0.9, "background": 0.8}},
-                          {"item": "s3", "scores": {"q1": 0.4}}], "facts": []}},
+                          {"item": "s3", "scores": {"q1": 0.4, "background": 0.9}}],
+            "facts": []}},
         {"file": "files/b.md", "marks": {"parts": [
             {"id": "s1", "segment": "Known thing here.", "position": {"start": 0, "end": 17},
              "scores": {"known-to-him": 0.8}}],
             "questions": [{"item": "s1", "scores": {"q1": 0.6}}], "facts": []}}]}
-    found = working_set.prioritized(marked, rows, ["q1", "background"])
+    return rows, texts, marked
+
+
+def test_only_the_handoff_s_questions_rank_a_sentence():
+    """Classification's background score is no question: a sentence that
+    bears only on background is never prioritized (measured on
+    package-870e45145b2d, 2,300 of 2,468 sentences got in through it)."""
+    rows, texts, marked = _small()
+    found = working_set.prioritized(marked, rows, ["q1"])
     assert [(s.file, s.id) for s in found] == [
         ("files/a.md", "s2"), ("files/a.md", "s1"), ("files/b.md", "s1")], \
-        "by question score, then label score; under 0.5 never"
-    ws = working_set.build(rows, texts, marked, ["q1", "background"], [], 10_000, reads="x")
+        "by question score, then label score; under 0.5 never, background never"
+    assert all("background" not in s.questions for s in found)
+
+
+def test_the_files_come_whole_with_short_marks_in_place_when_they_fit():
+    rows, texts, marked = _small()
+    ws = working_set.build(rows, texts, marked, ["q1"], [], 10_000, reads="its tools.")
+    assert ws.whole and not ws.cut
+    assert "[s2 q1 .9 background .7] High one." in ws.text, "a short mark, in place"
+    assert "[s3 filler .9] Not asked." in ws.text, "every marked sentence, whole files"
+    assert "# A plan\n[s1 q1 .6 evidence .9] Low one." in ws.text
+    assert ws.text.count('path="files/a.md"') == 2, "named once whole, once in the contents"
+    assert "start=" not in ws.text and "end=" not in ws.text, "no position repeated"
+    assert "q1: Build it?" in ws.text, "the legend names the questions"
+    assert ws.text.index("<contents>") < ws.text.index("<document")
+    assert "its tools." in ws.text
+    # Every mark taken out gives each file back exactly.
+    import re
+    for path, text in texts.items():
+        body = ws.text.split(f'<document path="{path}"')[1].split(">", 1)[1].split("</document>")[0]
+        assert re.sub(r"\[s\d+ [^\]]*\] ", "", body).strip("\n") == text
+
+
+def test_the_working_set_only_when_the_files_do_not_fit():
+    rows, texts, marked = _small()
+    whole = working_set.build(rows, texts, marked, ["q1"], [], 10_000, reads="x")
+    ws = working_set.build(rows, texts, marked, ["q1"], [], whole.tokens - 1, reads="x")
+    assert not ws.whole
     assert ws.text.index("<contents>") < ws.text.index("<prioritized")
     assert ws.text.count("High one.") == 1, "its words once, under the question it bears on most"
-    assert 'questions="q1 .90 background .80"' in ws.text
-    assert '<file path="files/a.md"' in ws.text and ">A plan</file>" in ws.text
-    assert 'state="knows"' in ws.text and "Not asked." not in ws.text
-    # Cut to a room that holds only the contents and the first sentence:
-    # the lowest go first.
+    assert "[s2 q1 .9 background .7] High one." in ws.text
+    assert ws.text.count('<from file="files/a.md">') == 1, "a file named once a question"
+    assert "Not asked." not in ws.text
+    # Cut to a room that holds only the legend, contents and the first
+    # sentence: the lowest go first.
+    names = working_set.numbered(["q1"])
+    head = working_set.legend(names, {"q1": "Build it?"})
     toc = sum(pages.tokens(line) + 1 for line in working_set.contents(rows, texts))
-    small = toc + pages.tokens(found[0].shown()) + 1 + working_set.NOTE_TOKENS
+    found = working_set.prioritized(marked, rows, ["q1"])
+    small = (pages.tokens(head) + 1 + toc + pages.tokens(found[0].line(names)) + 1
+             + pages.tokens('<from file="files/a.md">\n\n</from>') + 1 + working_set.NOTE_TOKENS)
     cut = working_set.build(rows, texts, marked, ["q1"], [], small, reads="x")
-    assert "High one.</sentence>" in cut.text and "Low one." not in cut.text
-    assert "Known thing here.</sentence>" not in cut.text
+    assert "High one." in cut.text and "Low one." not in cut.text
+    assert "Known thing here." not in cut.text.split("<prioritized")[1]
     assert cut.given == {"contents": 2, "sentences": 1, "hits": 0}
-    assert "2 of 3 prioritized sentences" not in cut.text and "1 of 3" in cut.text
+    assert "1 of 3 prioritized sentences" in cut.text and "were left out" in cut.text
 
 
 def test_a_file_s_one_line_is_its_first_heading_else_its_first_sentence():

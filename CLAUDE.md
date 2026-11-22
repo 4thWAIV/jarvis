@@ -1804,23 +1804,34 @@ Settings' `run_timeout_sec`, never the brain's short search deadline;
 `SEARCH`). Then the author's first turn in its own long-lived ChatSession
 (tier 1, at medium effort for that turn alone, `RESEARCH_EFFORT`, through
 `build`'s `effort`), in the run's folder: its approved prompt
-(`package_swarm.system_of`) and its working set, never every file whole
-(`_Firsts`, `working_set.py`; construction-drafts.md "The author works
-from a prioritized working set and calls back for more", Tim 2026-11-21):
-the sender's two answers, the handoff's questions with the sender's
-options labelled, a table of contents of the evidence (each stored file,
-its type, size, Tim's knowledge state and its first heading or sentence,
-`working_set.contents`, no model call), the program's searches as short
-hits (`short_hits`; whole in `research-searches.md`,
-`work_research.markdown`), and for each question the sentences and facts
-marking found bearing on it at `working_set.BEARS` (0.5) or more, highest
-first, then by their label scores, each with its labels, file and
-position, its words once (`prioritized`); packed into the room the model's
-window leaves (`working_set.room` over `pages.Budget`: never over half the
-window, the answer's most and the margin inside it, less the system
-prompt, the brain's starting context and the turn's words), the
-lowest-priority sentences cut first, the set saying how much was left out
-and how to read it (`<left_out>`). Then the program's words saying where it
+(`package_swarm.system_of`) and its material (`_Firsts`,
+`working_set.build`; construction-drafts.md "The author works from a
+prioritized working set and calls back for more", Tim 2026-11-21): the
+sender's two answers, the handoff's questions with the sender's options
+labelled, a legend of the marks (`working_set.legend`: the handoff's
+questions as q1, q2 ...), a table of contents of the evidence (each stored
+file, its type, size, Tim's knowledge state and its first heading or
+sentence, `working_set.contents`, no model call), the program's searches
+as short hits (`short_hits`; whole in `research-searches.md`,
+`work_research.markdown`), and the evidence: every file whole, named once,
+each marked sentence's mark short and in place before it (`in_place`,
+`[s4 q1 .9 evidence .8]`: its id, each of the handoff's questions it bears
+on and each label at `working_set.BEARS` (0.5) or more; a fact's at the
+start of its line; no position repeated) while that fits the room the
+model's window leaves (`working_set.room` over `pages.Budget`: never over
+half the window, the answer's most and the margin inside it, less the
+system prompt, the brain's starting context and the turn's words); only
+when it does not, the working set: for each question the sentences and
+facts bearing on it at 0.5 or more (only the handoff's own questions
+count, never classification's `background`), highest first, then by their
+label scores, under the file each is in, each with its mark and its words
+once (`prioritized`), the lowest priority cut first, the set saying how
+much was left out and how to read it (`<left_out>`). Measured on
+package-870e45145b2d's evidence (253 KB whole): the working set had come
+to 296 KB with background counted as a question and each sentence's
+positions and scores as attributes; whole with marks it is 330 KB (110,586
+tokens, past the 100,000 of room), so it gets the working set, 179 KB
+(59,610 tokens) holding all 1,204 sentences that bear on its question. Then the program's words saying where it
 starts from (`research_note`: the Work item's research folder, the marked
 evidence, the evidence path, an earlier run's research copied into
 `earlier/` by `_carry_earlier`, its tools) and that `research.md` and
@@ -1907,11 +1918,12 @@ of two slides, the whole script with each, every part at its slide and
 field, `package_script.units`; the 28
 labels, Tim's material by `package_mark.tim_known`). Each participant's
 first message is made at its first turn (`_Firsts`): its share of the
-evidence (`evidence`, `sessions.share_values`: Tim's reader what he knows
-and had access to, kept apart; everyone else everything, marked), given
-whole while it fits the participant's window with what goes with it, else
-as the working set of that share, as the author's is (`material_set`; Tim's
-reader's knows and had access each its own), the
+evidence (`sessions.SHARES`: Tim's reader what he knows and had access
+to, kept apart; everyone else everything, marked), given as the author's
+is (`material_set`): every file of the share whole with its marks in place
+while it fits the participant's window with what goes with it, else the
+working set of that share (Tim's reader's knows and had access each its
+own), the
 prep for the context and structure owners and the editor (`gets_prep`;
 again in a later turn when it changed, `_work_text`), the editor its share
 marked and the script marked part by part, and where the evidence is for one that searches it
@@ -3901,9 +3913,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   window with room for the answer, files grouped by type, folder and
   meaning, and the pages asked in parallel, one session a worker (marking,
   classification and the script's marking; see "A package's evidence")
-- `working_set.py` / `role_search.py` — The working set a swarm
-  participant is given in place of the whole evidence, packed to its
-  window, and the author's batch search (see "A package's evidence")
+- `working_set.py` / `role_search.py` — What a swarm participant is
+  given of the evidence (every file whole with short marks in place when
+  it fits its window, else the working set), and the author's batch search
+  (see "A package's evidence")
 - `package_swarm.py` / `research_log.py` — The research and swarm steps:
   the author's research turn, the cooperative swarm's outline, fill and
   fix passes, its sign-offs, questions to the sender and what is left,
