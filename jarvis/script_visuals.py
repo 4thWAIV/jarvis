@@ -25,8 +25,9 @@ always had. This module is the one place those pieces are read by program:
   author's layout and slots kept where they hold them (the author only
   arranges), and `unmatched` says any deck object that is not the script's.
 
-A diagram is not a form yet: presentation/1 has no diagram object, and the
-outline offers it once the language has one.
+A diagram's forms are presentation/1's diagram kinds (flow, cycle,
+hierarchy, timeline): the script gives its nodes, links and groups, and
+diagram_layout lays it out and says what breaks its kind's rules.
 """
 from __future__ import annotations
 
@@ -36,8 +37,9 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from jarvis import deck_capacity, layout_spec, presentation_data
-from jarvis.presentation_schema import ContentSlide, Dataset
+from jarvis import deck_capacity, diagram_layout, layout_spec, presentation_data
+from jarvis.presentation_schema import (DIAGRAM_KINDS, LINK_STYLES, NODE_SHAPES, TONES,
+                                        ContentSlide, Dataset)
 
 # ── what the outline and the script name ─────────────────────────────────
 
@@ -45,17 +47,21 @@ from jarvis.presentation_schema import ContentSlide, Dataset
 TEXT, STEPS, FIGURES, CALLOUT, COMPARISON, TABLE, PICTURE = (
     "text", "steps", "figures", "callout", "comparison", "table", "picture")
 CHARTS = {"bar_chart": "bar", "line_chart": "line", "scatter_chart": "scatter"}
-FORMS = (TEXT, STEPS, FIGURES, CALLOUT, COMPARISON, TABLE, *CHARTS, PICTURE)
+# A diagram's forms are presentation/1's diagram kinds, by their own words.
+DIAGRAMS = DIAGRAM_KINDS
+FORMS = (TEXT, STEPS, FIGURES, CALLOUT, COMPARISON, TABLE, *CHARTS, *DIAGRAMS, PICTURE)
 FORM_WORDS = ("text: words where the words are the point; steps: a sequence, numbered; "
               "figures: one to four key numbers, each with its source; callout: one warning, "
               "finding or bottom line set apart; comparison: two to four things side by side; "
               "table: words in rows and columns; bar_chart, line_chart, scatter_chart: numbers "
               "drawn from a dataset of the evidence's figures, each value with its source; "
+              "flow, cycle, hierarchy, timeline: a diagram JARVIS lays out (a process with its "
+              "choices, a loop, a structure, a schedule), its nodes and links; "
               "picture: a picture by path")
 
 # The script's typed visuals beside its text, his_words, picture and table.
-CHART = "chart"
-VISUAL_KINDS = (STEPS, FIGURES, CALLOUT, COMPARISON, CHART)
+CHART, DIAGRAM = "chart", "diagram"
+VISUAL_KINDS = (STEPS, FIGURES, CALLOUT, COMPARISON, CHART, DIAGRAM)
 # What the deck draws at most (presentation_schema).
 MAX_STEPS, MAX_FIGURES, MAX_SERIES, MAX_ROWS = 8, 4, 4, 50
 ID = r"^[a-z][a-z0-9-]{0,79}$"
@@ -135,7 +141,31 @@ PIECES = {
                                                                       "column always."}}),
                 "One value for each column.", least=1)}),
             f"The dataset's rows, at most {MAX_ROWS}.", least=1)}),
-}
+    DIAGRAM: _object({
+        "kind": _kind(DIAGRAM, "A diagram JARVIS lays out: its nodes, the links between them "
+                               "and any groups."),
+        "diagram": {"type": "string", "enum": list(DIAGRAM_KINDS),
+                    "description": "flow: steps and choices joined by links; cycle: a ring "
+                                   "through its nodes in order; hierarchy: a tree from one root; "
+                                   "timeline: its nodes in order along one line."},
+        "text": {**_WORDS, "description": "What the diagram shows, in words."},
+        "nodes": _array(_object({
+            "id": {"type": "string", "pattern": ID},
+            "label": _WORDS,
+            "shape": {"type": "string", "enum": list(NODE_SHAPES)},
+            "tone": {"type": "string", "enum": list(TONES)},
+            "when": {**_TEXT, "description": "A timeline's node: when; empty otherwise."}}),
+            "The nodes, two to 24.", least=2),
+        "links": _array(_object({
+            "from": _WORDS, "to": _WORDS,
+            "label": {**_TEXT, "description": "Words on the link, or empty."},
+            "style": {"type": "string", "enum": ["", *LINK_STYLES],
+                      "description": "Empty for the kind's own."}}),
+            "The links, from one node's id to another's."),
+        "groups": _array(_object({
+            "id": {"type": "string", "pattern": ID}, "label": _WORDS,
+            "nodes": _array(_WORDS, "The ids of its nodes.", least=1)}),
+            "Lanes or phases, or none.")}),}
 
 
 # ── reading numbers and positions ────────────────────────────────────────
@@ -275,6 +305,14 @@ def piece_problems(piece: dict, at: str) -> list[str]:
         out.append(f"{at}, a comparison, has {len(piece['columns'])} columns; at most 4.")
     elif kind == CHART:
         out += _chart_problems(piece, at)
+    elif kind == DIAGRAM:
+        ids = [n["id"] for n in piece["nodes"]]
+        if len(set(ids)) != len(ids):
+            out.append(f"{at}, a diagram: each node has its own id.")
+        for name, most in (("nodes", 24), ("links", 40), ("groups", 8)):
+            if len(piece[name]) > most:
+                out.append(f"{at}, a diagram, has {len(piece[name])} {name}; at most {most}: "
+                           f"split it across slides.")
     return out
 
 
@@ -379,6 +417,8 @@ def plan_problems(script: dict, outline: Optional[dict]) -> list[str]:
         shown = (bool(kinds & {TEXT, "his_words"}) if form == TEXT
                  else any(p.get("kind") == CHART and p.get("chart") == CHARTS[form]
                           for p in pieces) if form in CHARTS
+                 else any(p.get("kind") == DIAGRAM and p.get("diagram") == form
+                          for p in pieces) if form in DIAGRAMS
                  else form in kinds)
         if not shown:
             out.append(f"slide {slide['id']}: the outline shows its point as {form}; its "
@@ -520,6 +560,22 @@ class Built:
                 obj.update(kind=piece["chart"], data={"dataset": dataset["id"]},
                            x=names[piece["x"]], y=[names[y] for y in piece["y"]],
                            alt=piece["text"])
+            elif kind == DIAGRAM:
+                obj = self._add({"type": "diagram"})
+                ids = {n["id"]: f"{obj['id']}-{n['id']}" for n in piece["nodes"]}
+                obj.update(kind=piece["diagram"], nodes=[
+                    {"id": ids[n["id"]], "label": n["label"], "shape": n["shape"],
+                     "tone": n["tone"], **({"when": n["when"]} if str(n.get("when") or "").strip()
+                                          else {})} for n in piece["nodes"]],
+                    links=[{"id": f"{obj['id']}-l{k}", "from": ids.get(l["from"], l["from"]),
+                            "to": ids.get(l["to"], l["to"]),
+                            **({"label": l["label"]} if str(l.get("label") or "").strip() else {}),
+                            **({"style": l["style"]} if l.get("style") else {})}
+                           for k, l in enumerate(piece["links"], 1)],
+                    groups=[{"id": f"{obj['id']}-{g['id']}", "label": g["label"],
+                             "nodes": [ids.get(n, n) for n in g["nodes"]]}
+                            for g in piece["groups"]],
+                    alt=piece["text"])
         flush()
 
     @property
@@ -591,6 +647,10 @@ def _fits(built: Built, slide: dict) -> list[str]:
                 presentation_data.resolve_chart(obj, datasets, _language())
             elif obj.type == "table":
                 presentation_data.expand_table(obj, datasets, _language())
+        broken = [message for obj in model.objects if obj.type == "diagram"
+                  for _, message in diagram_layout.structure(obj)]
+        if broken:
+            return broken
     except (ValueError, presentation_data.DataProblem) as error:
         return [str(error).splitlines()[0]]
     return [message for _, message in deck_capacity.problems(model)]

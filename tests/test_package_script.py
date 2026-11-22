@@ -59,7 +59,7 @@ def test_the_schema_is_the_answer_format_of_both_brains():
     kinds = [k for form in slide["on_screen"]["items"]["anyOf"]
              for k in form["properties"]["kind"]["enum"]]
     assert kinds == ["text", "his_words", "picture", "table", "steps", "figures", "callout",
-                     "comparison", "chart"]
+                     "comparison", "chart", "diagram"]
 
 
 def test_a_script_checks_and_every_problem_is_named():

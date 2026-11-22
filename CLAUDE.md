@@ -2067,8 +2067,8 @@ in its answer, `outline.yaml`, outline/1, `package_script.OutlineFile`:
 each slide's id, title, one point, the question it answers or is
 background for, its evidence by source path, and its `visual`, the form
 that shows its point (`script_visuals.FORMS`: text, steps, figures,
-callout, comparison, table, bar, line or scatter chart, picture; a diagram
-once presentation/1 has one), with `why` that form carries it, both
+callout, comparison, table, bar, line or scatter chart, a flow, cycle,
+hierarchy or timeline diagram, picture), with `why` that form carries it, both
 required; the three owners work on
 it in parallel, `owners_turn` over `BrainSwarmSession.together`; the
 author settles conflicts, saying why; the owners sign the outline off);
@@ -2095,7 +2095,8 @@ screen (an ordered list of pieces: `text`, `his_words` with its source, a
 `script_visuals.PIECES`, the same types as presentation/1's objects:
 `steps`, `figures` each with its source and position, `callout`,
 `comparison`, `chart` with its columns and rows, every number with its
-source path and position), what JARVIS says over it (`narration`), the
+source path and position, `diagram` with its nodes, links and groups,
+checked by diagram_layout.structure), what JARVIS says over it (`narration`), the
 source path and position of every fact (`facts`), the questions it
 answers and the decision it asks if any. The script describes each slide
 and how it will look, with the information to fill it, for the deck to

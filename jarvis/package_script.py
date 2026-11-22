@@ -361,6 +361,14 @@ def _visual_units(sid: str, at: str, piece: dict) -> list[Unit]:
             out.append(Unit(sid, f"{at}.columns[{n}].title", column["title"]))
             out += [Unit(sid, f"{at}.columns[{n}].points[{p}]", point)
                     for p, point in enumerate(column["points"])]
+    elif kind == visuals.DIAGRAM:
+        out.append(Unit(sid, f"{at}.text", piece["text"]))
+        for n, node in enumerate(piece["nodes"]):
+            out += [Unit(sid, f"{at}.nodes[{n}].{k}", node[k]) for k in ("label", "when")]
+        out += [Unit(sid, f"{at}.links[{n}].label", link["label"])
+                for n, link in enumerate(piece["links"])]
+        out += [Unit(sid, f"{at}.groups[{n}].label", group["label"])
+                for n, group in enumerate(piece["groups"])]
     elif kind == visuals.CHART:
         out.append(Unit(sid, f"{at}.text", piece["text"]))
         out += [Unit(sid, f"{at}.columns[{n}].{k}", column[k])
@@ -518,7 +526,7 @@ def opening(script: dict) -> list[str]:
         elif kind == visuals.COMPARISON:
             lines += [": ".join([c.get("title", ""), "; ".join(c.get("points") or [])])
                       for c in piece.get("columns") or []]
-        elif kind == visuals.CHART and piece.get("text"):
+        elif kind in (visuals.CHART, visuals.DIAGRAM) and piece.get("text"):
             lines.append(piece["text"])
     return [line for line in lines if line.strip()]
 

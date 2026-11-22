@@ -255,3 +255,28 @@ def test_the_owners_see_the_visual_plan_and_the_structure_owner_owns_it(tmp_path
     given = ps._work_text(ps.STRUCTURE, run, held, [], {})
     assert "visual: bar_chart" in given and "Three costs side by side" in given
     assert role_prompts.AUTHOR_VISUALS in ps.fill_note(run)
+
+
+def test_a_script_diagram_is_a_presentation_diagram_laid_out_by_program():
+    script = a_script()
+    script["slides"][1]["on_screen"] = [{
+        "kind": "diagram", "diagram": "flow", "text": "How Friday's lunch is ordered",
+        "nodes": [{"id": n, "label": label, "shape": "rounded", "tone": "neutral", "when": ""}
+                  for n, label in (("order", "Order by Thursday"), ("cook", "Kitchen cooks"),
+                                   ("eat", "Lunch at noon"))],
+        "links": [{"from": "order", "to": "cook", "label": "", "style": ""},
+                  {"from": "cook", "to": "eat", "label": "", "style": ""}],
+        "groups": []}]
+    assert script_.problems(script, ["lunch"], outline={"slides": [
+        {"id": "how", "visual": "flow"}]}) == []
+    built = sv.built_slides(script)["slides"][1]
+    [diagram] = built["objects"]
+    assert diagram["type"] == "diagram" and diagram["kind"] == "flow"
+    assert [n["id"] for n in diagram["nodes"]] == ["how-v1-order", "how-v1-cook", "how-v1-eat"]
+    assert diagram["links"][0]["from"] == "how-v1-order"
+    assert ("how", "on_screen[0].nodes[1].label") in {(u.slide, u.field)
+                                                      for u in script_.units(script)}
+    broken = copy.deepcopy(script)
+    broken["slides"][1]["on_screen"][0]["links"][0]["to"] = "nowhere"
+    assert any("does not fit a slide" in p and "nowhere" in p
+               for p in script_.problems(broken, ["lunch"]))
