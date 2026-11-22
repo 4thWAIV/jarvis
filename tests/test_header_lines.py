@@ -351,6 +351,10 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "run_report.step": (
+        "it times a package run's step and writes its numbers into the run's timing.json; the one "
+        "text it builds is the name of the exception class that ended the step, and the job id it "
+        "reads is JARVIS's own and goes into that file, never into a line anyone reads"),
     "server._agent_or_explain": (
         "it reads only an agent's session id from the agent directory to build the "
         "`agent:<session id>` its caller records; what it says is fixed words and a count, never "
@@ -2491,6 +2495,30 @@ DRIVERS["server.tool_rename_agent"] = _drive_rename_agent
 DRIVERS["server.tool_list_agents"] = _drive_list_agents_by_row
 DRIVERS["server.tool_set_agent_active"] = _drive_set_agent_active
 DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
+
+
+def _drive_package_run_reports(server, session, monkeypatch):
+    """The brain's `package_run_reports`: what the swarm left in a pass
+    (each item's words) and his Reject words are other
+    people's words, every foreign value of the session put in each; the
+    rest (ids, step names, counts, the job's state) is JARVIS's own."""
+    said = " ".join(" ".join(map(str, v)) if isinstance(v, list) else str(v)
+                    for v in (getattr(session, f) for f in FOREIGN_FIELDS))
+    run = {"run": "run-1", "job": "job-1", "state": "done",
+           "timing": {"steps": [{"step": "swarm", "seconds": 12.0, "calls": [],
+                                 "tokens": {"in": 1, "cached": 0, "out": 1}}]},
+           "quality": {"result": "passed", "passes_to_done": 1,
+                       "verdict": {"answer": "reject", "labels": ["thin"], "words": said},
+                       "passes": [{"stage": "fix-1", "items": [
+                           {"concern": "context", "then": "fixed", "labels": ["thin"],
+                            "what": said, "fix": said}]}]}}
+    found = {"packages": [{"package": "package-1", "runs": [run],
+                           "summed": {"timing": {"seconds": 12.0, "calls": 0}}}]}
+    return [server.package_run_reports_text(found),
+            server.package_run_reports_text(found["packages"][0])]
+
+
+DRIVERS["server.package_run_reports_text"] = _drive_package_run_reports
 
 
 # --- THE OTHER FOREIGN RECORD: a run row ---------------------------------
