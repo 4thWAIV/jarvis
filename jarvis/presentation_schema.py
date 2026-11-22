@@ -254,8 +254,64 @@ class StepsObject(ObjectBase):
 
 COMPONENTS = (CalloutObject, FiguresObject, StepsObject)
 
+
+# -- diagrams: nodes and links JARVIS lays out -------------------------------------------
+# deck/0.1's diagrams, shapes, groups and connectors (construction-drafts.md
+# "deck/0.1 families"): the author names a kind and fills its nodes, links
+# and groups with words and choices; JARVIS lays every one out by program
+# (diagram_layout), never from the author's coordinates, sizes or colours.
+# The script's visual forms name the kinds by these words (script_visuals).
+DIAGRAM_KINDS = ("flow", "cycle", "hierarchy", "timeline")
+NODE_SHAPES = ("box", "rounded", "pill", "ellipse", "diamond", "cylinder", "document")
+TONES = ("neutral", "accent", "good", "warn", "bad", "muted")
+LINK_STYLES = ("arrow", "line", "dashed", "both")
+
+
+class DiagramNode(Model):
+    """One node: its words, and how it looks chosen from JARVIS's lists. A
+    timeline's node also says `when`."""
+    id: Id
+    label: Text
+    shape: Literal["box", "rounded", "pill", "ellipse", "diamond", "cylinder", "document"] = "box"
+    tone: Literal["neutral", "accent", "good", "warn", "bad", "muted"] = "neutral"
+    when: Text | None = None
+
+
+class DiagramLink(Model):
+    """A connector from one node to another, with optional words on it."""
+    model_config = ConfigDict(extra="forbid", strict=True, serialize_by_alias=True,
+                              validate_by_name=False)
+    id: Id
+    source: Id = Field(alias="from")
+    to: Id
+    label: Text | None = None
+    style: Literal["arrow", "line", "dashed", "both"] | None = None     # else the kind's own
+
+
+class DiagramGroup(Model):
+    """Nodes drawn together under a label: a flow's lane, a timeline's phase."""
+    id: Id
+    label: Text
+    nodes: Annotated[list[Id], Field(min_length=1)]
+
+
+class DiagramObject(ObjectBase):
+    """A diagram of one `kind`: a flow (steps and choices joined by links,
+    in lanes when it has groups), a cycle (a ring through its nodes in their
+    order), a hierarchy (a tree from one root) or a timeline (its nodes in
+    order along one line, in phases when it has groups). Every node, link
+    and group is a target narration can light."""
+    type: Literal["diagram"]
+    kind: Literal["flow", "cycle", "hierarchy", "timeline"]
+    nodes: Annotated[list[DiagramNode], Field(min_length=2, max_length=24)]
+    links: Annotated[list[DiagramLink], Field(max_length=40)] = []
+    groups: Annotated[list[DiagramGroup], Field(max_length=8)] = []
+    alt: Text
+    _drawn: dict | None = PrivateAttr(default=None)     # diagram_layout.layout, as shares of its slot
+
 VisibleObject = Annotated[Union[TextObject, ImageObject, VectorObject, BarObject, TableObject,
-                                ChartObject, CalloutObject, FiguresObject, StepsObject],
+                                ChartObject, CalloutObject, FiguresObject, StepsObject,
+                                DiagramObject],
                           Field(discriminator="type")]
 
 
@@ -338,4 +394,24 @@ def words(obj) -> list[str]:
         return [" ".join(w for w in (item.title, item.says) if w) for item in obj.items]
     if isinstance(obj, ChartObject) and obj._drawn:
         return obj._drawn["words"]
+    if isinstance(obj, DiagramObject):
+        return diagram_words(obj)
     return [obj.alt]
+
+
+def link_words(obj: DiagramObject, link: DiagramLink) -> str:
+    """A connector named by its ends and its words: "Order to Pay: approved"."""
+    labels = {node.id: node.label for node in obj.nodes}
+    said = f"{labels.get(link.source, link.source)} to {labels.get(link.to, link.to)}"
+    return f"{said}: {link.label}" if link.label else said
+
+
+def node_words(node: DiagramNode) -> str:
+    return f"{node.when}: {node.label}" if node.when else node.label
+
+
+def diagram_words(obj: DiagramObject) -> list[str]:
+    """A diagram's words in reading order: its groups' labels, its nodes
+    (a timeline's with when), its connectors by their ends and words."""
+    return ([group.label for group in obj.groups] + [node_words(n) for n in obj.nodes]
+            + [link_words(obj, link) for link in obj.links])

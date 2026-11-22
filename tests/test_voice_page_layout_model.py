@@ -8,7 +8,10 @@ from data, in Spanish) is built as make_package builds it and drawn in
 headless Chromium at frames across the whole range, and the size the browser
 draws each picture is the size the proof computed, within MODEL_PX; every
 object the capacity model (deck_capacity) says fits its slot is drawn
-within it, nothing cut off, and every chart keeps its least plot. A change
+within it, nothing cut off, and every chart keeps its least plot; every
+diagram's nodes and groups (the diagram deck's four kinds, and the hard
+deck's flow) are drawn where diagram_layout put them, within MODEL_PX, with
+no word cut off. A change
 to the CSS or the renderer that the models do not follow fails here, in CI,
 on this fixture deck: no package is drawn in a browser on its way.
 
@@ -146,5 +149,78 @@ def test_every_object_within_capacity_is_drawn_within_its_slot(built):
                                        f"{seen['plot']:.0f} px, under {plot_min}")
         finally:
             browser.close()
-    assert {"text", "table", "callout", "figures", "steps", "chart"} <= kinds, kinds
+    assert {"text", "table", "callout", "figures", "steps", "chart", "diagram"} <= kinds, kinds
+    assert not off, "\n".join(off)
+
+
+# Each diagram on the current slide: its own box, and each node's and
+# group's box inside it, and whether any of its words is cut off.
+DIAGRAM_BOXES = """() => [...document.querySelectorAll('.slide.current .presentation-diagram')].map(d => {
+  const at = d.getBoundingClientRect();
+  const of = e => { const r = e.getBoundingClientRect(); return [r.left - at.left, r.top - at.top, r.width, r.height]; };
+  return {id: d.parentElement.dataset.object, size: [at.width, at.height],
+    boxes: Object.fromEntries([...d.querySelectorAll('.presentation-diagram-node, .presentation-diagram-group')]
+      .map(e => [e.dataset.member, of(e)])),
+    cut: [...d.querySelectorAll('.presentation-diagram-text, .presentation-diagram-label, .presentation-diagram-when, .presentation-diagram-group-label')]
+      .filter(e => e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)};
+})"""
+
+
+@pytest.fixture(scope="module")
+def diagrams(tmp_path_factory):
+    from tests.deck_fixtures import diagram_deck
+    folder = tmp_path_factory.mktemp("diagrams")
+    mp.make_presentation(diagram_deck(folder / "source"), folder / "out")
+    package = folder / "out" / "compiled" / "diagramas"
+    return package, read_source(package / "source.yaml", built=True, language="es")
+
+
+def test_the_browser_draws_every_diagram_where_its_layout_put_it(diagrams, built):
+    """diagram_layout places every node and group as a share of its slot;
+    the browser draws each there within MODEL_PX at every frame, and every
+    word of it within its place (the hard deck's flow beside words too)."""
+    from playwright.sync_api import sync_playwright
+    from jarvis.presentation_schema import DiagramObject
+    off, checked = [], 0
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.route("**/api/packages/story.js", lambda route: route.fulfill(
+                body="", content_type="application/javascript"))
+            for package, source in (diagrams, built):
+                drawn = {o.id: o for s in source.document.slides if isinstance(s, ContentSlide)
+                         for o in s.objects if isinstance(o, DiagramObject)}
+                for frame in FRAMES:
+                    page.set_viewport_size({"width": int(frame[0]), "height": int(frame[1])})
+                    page.goto((package / "index.html").as_uri())
+                    page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
+                    for n, slide in enumerate(source.document.slides):
+                        if not isinstance(slide, ContentSlide) or not any(
+                                isinstance(o, DiagramObject) for o in slide.objects):
+                            continue
+                        page.evaluate(f"document.getElementById('go-{n + 1}').click()")
+                        page.wait_for_function(f"document.querySelector('.slide.current')?.id === "
+                                               f"'presentation-slide-{slide.id}'")
+                        page.wait_for_timeout(50)
+                        boxes = layout_spec.boxes(slide.layout, {o.slot for o in slide.objects})
+                        for seen in page.evaluate(DIAGRAM_BOXES):
+                            obj = drawn[seen["id"]]
+                            w, h = layout_spec.frame_box(boxes[obj.slot], frame)
+                            where = f"{frame[0]}x{frame[1]} {obj.id}"
+                            if abs(seen["size"][0] - w) > MODEL_PX or abs(seen["size"][1] - h) > MODEL_PX:
+                                off.append(f"{where}: drawn {seen['size']}, slot {w:.2f} x {h:.2f}")
+                            for item in [*obj._drawn["nodes"], *obj._drawn["groups"]]:
+                                x, y, bw, bh = item["box"]
+                                model = [x * w, y * h, bw * w, bh * h]
+                                got = seen["boxes"][item["id"]]
+                                checked += 1
+                                if any(abs(a - b) > MODEL_PX for a, b in zip(got, model)):
+                                    off.append(f"{where}/{item['id']}: drawn {[round(v, 2) for v in got]}, "
+                                               f"model {[round(v, 2) for v in model]}")
+                            if seen["cut"]:
+                                off.append(f"{where}: words cut off: {seen['cut']}")
+        finally:
+            browser.close()
+    assert checked > len(FRAMES) * 20, checked
     assert not off, "\n".join(off)

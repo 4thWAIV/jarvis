@@ -11,6 +11,10 @@ what can be computed is proven here:
 - Story targets. Every target the story points at (its beats' targets and
   actions, each waiting slide's question) is in the target index or one of
   the shared deck's own selectors.
+- Diagrams. Every diagram as diagram_layout laid it out, at every frame
+  layout_spec.frames gives: each node's words within its box, each
+  connector's, group's and when's words within their places, at that
+  frame's sizes (`prove_diagrams`).
 - Words' size. Every text style a deck draws in (layout_spec styles) is
   at least the text floor at the smallest and the largest frame, at the
   least the slide's fit may scale it to.
@@ -46,10 +50,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import data_paths, deck_capacity, layout_spec, picture_proof
+from jarvis import data_paths, deck_capacity, diagram_layout, layout_spec, picture_proof
 from jarvis.presentation_schema import (BarObject, CalloutObject, ChartObject, ContentSlide,
-                                        FiguresObject, ImageObject, StepsObject, TableObject,
-                                        TextObject, VectorObject)
+                                        DiagramObject, FiguresObject, ImageObject, StepsObject,
+                                        TableObject, TextObject, VectorObject)
 
 PROOF_FILE = ".jarvis/layout-proof.json"
 VERSION = "presentation-proof/2"
@@ -112,6 +116,30 @@ def prove_pictures(source, pictures: dict[str, picture_proof.Picture]) -> list[F
                 if problem:
                     seen.add(obj.id)
                     failures.append(Failure(obj.id, frame, f"Picture {obj.id}: {problem}."))
+    return failures
+
+
+def prove_diagrams(source) -> list[Failure]:
+    """Every diagram's words in their places at every frame, as its layout
+    (diagram_layout, read with the source) placed them; one failure a
+    diagram is enough to act on."""
+    failures: list[Failure] = []
+    for slide in source.document.slides:
+        if not isinstance(slide, ContentSlide):
+            continue
+        boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
+        for obj in slide.objects:
+            if not isinstance(obj, DiagramObject):
+                continue
+            drawn = deck_capacity.drawn_diagram(obj, boxes[obj.slot])
+            if drawn["problems"]:
+                failures.append(Failure(obj.id, None, f"Diagram {obj.id}: {drawn['problems'][0]}."))
+                continue
+            for frame in layout_spec.frames():
+                problems = diagram_layout.frame_problems(drawn, boxes[obj.slot], frame)
+                if problems:
+                    failures.append(Failure(obj.id, frame, f"Diagram {obj.id}: {problems[0]}."))
+                    break
     return failures
 
 
@@ -213,9 +241,46 @@ def _object_layout(obj, box, pictures: dict) -> dict:
                    categories=drawn.get("categories"),
                    series=[{"label": s["label"], "points": [p["name"] for p in s["points"]]}
                            for s in drawn.get("series") or []])
+    elif isinstance(obj, DiagramObject):
+        out.update(alt=obj.alt, **_diagram_layout(obj, box))
     room = deck_capacity.object_capacity(obj, box)
     if room is not None:
         out["capacity"] = room
+    return out
+
+
+def _diagram_layout(obj, box) -> dict:
+    """A diagram as JARVIS laid it out: its kind and orientation, its words'
+    sizes at both sizes (drawn at the deck size, never grown by the fit),
+    every node, connector and group with its place as a share of the slot
+    (`at`, [x, y, width, height]; a connector's `points`) and in px at both
+    sizes, a timeline's axis, and what its slot holds."""
+    drawn = deck_capacity.drawn_diagram(obj, box)
+    d = diagram_layout.spec()
+    frames = sizes()
+    slot = {name: layout_spec.frame_box(box, frame) for name, frame in frames.items()}
+
+    def px(share):
+        return {name: [round(share[0] * w, 1), round(share[1] * h, 1), round(share[2] * w, 1),
+                       round(share[3] * h, 1)] for name, (w, h) in slot.items()}
+
+    out = {"kind": obj.kind, "orientation": drawn.get("orientation"), "room": drawn["room"],
+           "holds": drawn["holds"],
+           "text_px": {style: {name: round(layout_spec.style_px(d[style], layout_spec.unit(frame)), 1)
+                               for name, frame in frames.items()} for style in ("node", "link")}}
+    out["nodes"] = [{**{k: n[k] for k in ("id", "label", "shape", "tone", "when")},
+                     "at": n["box"], "box_px": px(n["box"]),
+                     **({"when_at": n["when_box"]} if n.get("when_box") else {})}
+                    for n in drawn.get("nodes") or []]
+    out["connectors"] = [{**{k: link[k] for k in ("id", "from", "to", "style", "label", "points")},
+                          **({"label_at": link["label_box"], "label_px": px(link["label_box"])}
+                             if link.get("label_box") else {})}
+                         for link in drawn.get("links") or []]
+    out["groups"] = [{"id": g["id"], "label": g["label"], "nodes": g["nodes"], "at": g["box"],
+                      "box_px": px(g["box"]), "label_at": g["label_box"]}
+                     for g in drawn.get("groups") or []]
+    if drawn.get("axis"):
+        out["axis"] = drawn["axis"]
     return out
 
 
@@ -324,6 +389,6 @@ def reprove(folder: Path) -> list[str]:
         return [f"Its layout proof cannot be made again: {error}"]
     if recorded.get("source_sha256") != source.digest:
         return ["Its layout proof is for another source than the one it carries."]
-    failures = prove_pictures(source, source.pictures) + prove_text()
+    failures = prove_pictures(source, source.pictures) + prove_text() + prove_diagrams(source)
     failures += prove_targets(story, targets, deck) + prove_templates(folder)
     return [failure.message for failure in failures]

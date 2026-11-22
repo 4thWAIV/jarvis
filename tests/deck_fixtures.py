@@ -217,8 +217,8 @@ def with_data(data: dict) -> None:
 
 
 # The hard fixture deck, in Spanish: long words, bullets, a literal table and
-# one from data, two pictures, four columns, the components, two charts and a
-# decision with pictured options. The CI page test draws it at frames across
+# one from data, two pictures, four columns, the components, two charts, a
+# flow beside words and a decision with pictured options. The CI page test draws it at frames across
 # the range and holds the browser to the proof's model; the release check
 # builds it with the rest of the corpus.
 PICTURE = ('<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">'
@@ -346,6 +346,20 @@ def hard_deck(folder: Path) -> Path:
             _slide("imagen", "Una imagen y palabras", "picture-and-words",
                    _text("imagen-texto", "words", long, ("bullet", "Una viñeta junto a la imagen.")),
                    _image("imagen-dibujo", "picture", "ancho")),
+            _slide("proceso", "El proceso junto a palabras", "picture-and-words",
+                   _text("proceso-texto", "words", "Cada manzana pasa por tres pasos.",
+                         ("bullet", "Si la medición falla, se vuelve a medir.")),
+                   {"id": "proceso-flujo", "type": "diagram", "slot": "picture", "kind": "flow",
+                    "source": {"reference": "evidence"}, "alt": "Los pasos de cada manzana",
+                    "nodes": [{"id": "p-medir", "label": "Medir la escorrentía"},
+                              {"id": "p-plantar", "label": "Plantar", "shape": "rounded",
+                               "tone": "good"},
+                              {"id": "p-comparar", "label": "¿Retiene más?", "shape": "diamond",
+                               "tone": "warn"}],
+                    "links": [{"id": "p-1", "from": "p-medir", "to": "p-plantar"},
+                              {"id": "p-2", "from": "p-plantar", "to": "p-comparar"},
+                              {"id": "p-3", "from": "p-comparar", "to": "p-medir",
+                               "label": "no"}]}),
             {"id": "decidir", "type": "decision", "decision": "elegir-ruta"},
         ],
         "decisions": [{
@@ -356,6 +370,111 @@ def hard_deck(folder: Path) -> Path:
                          "picture": "opcion-b"}],
             "recommended": "plantada", "reason": "Retiene más lluvia."}],
     }
+    source = folder / "presentation.yaml"
+    source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return source
+
+
+# The diagram deck, in Spanish: every kind of diagram JARVIS lays out (a flow
+# in lanes with words on its links, a link that skips a rank and one that
+# runs back; a hierarchy; a cycle; a timeline in phases across and one down),
+# every shape and tone, and node words at the most lines a node allows. The
+# release check builds it with the rest of the corpus and the CI page test
+# draws it and holds every node and group to the proof's model.
+def _node(ident: str, label: str, **chosen) -> dict:
+    return {"id": ident, "label": label, **chosen}
+
+
+def _link(ident: str, start: str, end: str, **more) -> dict:
+    return {"id": ident, "from": start, "to": end, **more}
+
+
+def _diagram(ident: str, slot: str, kind: str, nodes: list, links: list = (), groups: list = (),
+             alt: str = "Un diagrama") -> dict:
+    return {"id": ident, "type": "diagram", "slot": slot, "source": {"reference": "evidence"},
+            "kind": kind, "nodes": list(nodes), "links": list(links), "groups": list(groups),
+            "alt": alt}
+
+
+DIAGRAM_FLOW = _diagram(
+    "flujo-pedido", "body", "flow",
+    [_node("pedido", "Pedido recibido", shape="pill", tone="accent"),
+     _node("stock", "¿Hay?", shape="diamond", tone="warn"),
+     _node("almacen", "Almacén del puerto"),
+     _node("factura", "Factura", shape="document", tone="muted"),
+     _node("envio", "Envío", shape="cylinder", tone="good"),
+     _node("devolucion", "Devolver", shape="ellipse", tone="bad")],
+    [_link("l-pedido-stock", "pedido", "stock"),
+     _link("l-stock-almacen", "stock", "almacen", label="sí"),
+     _link("l-stock-devolucion", "stock", "devolucion", label="no", style="dashed"),
+     _link("l-almacen-factura", "almacen", "factura"),
+     _link("l-almacen-envio", "almacen", "envio", style="both"),
+     _link("l-pedido-factura", "pedido", "factura", style="line"),
+     _link("l-devolucion-pedido", "devolucion", "pedido", label="otra vez")],
+    [{"id": "carril-tienda", "label": "Tienda", "nodes": ["pedido", "stock", "devolucion"]},
+     {"id": "carril-almacen", "label": "Almacén", "nodes": ["almacen", "factura", "envio"]}],
+    alt="Cómo pasa un pedido de la tienda al almacén")
+
+DIAGRAM_SLIDES = [
+    _slide("flujo", "Cómo pasa un pedido", "title-and-body", DIAGRAM_FLOW),
+    _slide("jerarquia", "Quién responde a quién", "picture-and-words",
+           _text("jerarquia-texto", "words", "Cada equipo responde a una sola persona."),
+           _diagram("organigrama", "picture", "hierarchy",
+                    [_node("direccion", "Dirección", tone="accent"),
+                     _node("obras", "Obras"), _node("parques", "Parques y jardines"),
+                     _node("cuadrilla", "Cuadrilla de la internacionalización", shape="rounded"),
+                     _node("vivero", "Vivero", shape="rounded")],
+                    [_link("j1", "direccion", "obras"), _link("j2", "direccion", "parques"),
+                     _link("j3", "obras", "cuadrilla"), _link("j4", "parques", "vivero",
+                                                               label="riega")],
+                    alt="El organigrama")),
+    _slide("ciclo-y-fechas", "Un ciclo y un calendario", "two-pictures",
+           _diagram("ciclo", "first", "cycle",
+                    [_node("planear", "Planear"), _node("hacer", "Hacer", tone="accent"),
+                     _node("medir", "Medir"), _node("ajustar", "Ajustar", tone="good")],
+                    [_link("c1", "planear", "hacer"), _link("c2", "hacer", "medir", label="un mes"),
+                     _link("c3", "medir", "ajustar"), _link("c4", "ajustar", "planear")],
+                    alt="El ciclo de la prueba"),
+           _diagram("fechas-abajo", "second", "timeline",
+                    [_node("t1", "Medir", when="enero"), _node("t2", "Plantar", when="marzo"),
+                     _node("t3", "Comparar", when="junio")],
+                    groups=[{"id": "fase-prueba", "label": "Prueba", "nodes": ["t1", "t2"]}],
+                    alt="Las fechas, de arriba abajo")),
+    _slide("calendario", "El calendario de la prueba", "title-and-body",
+           _diagram("fechas", "body", "timeline",
+                    [_node("f1", "Arranque", when="ene"),
+                     _node("f2", "Diseño aprobado por el ayuntamiento", when="12 feb"),
+                     _node("f3", "Primera manzana plantada", when="mar"),
+                     _node("f4", "Medición", when="abr"),
+                     _node("f5", "Informe", when="jun 2027", tone="good")],
+                    groups=[{"id": "fase-plan", "label": "Planificación", "nodes": ["f1", "f2"]},
+                            {"id": "fase-obra", "label": "Obra", "nodes": ["f3", "f4", "f5"]}],
+                    alt="El calendario")),
+]
+
+
+def diagram_deck(folder: Path) -> Path:
+    """The diagram deck as presentation.yaml in `folder`."""
+    folder.mkdir(parents=True, exist_ok=True)
+    deck = {
+        "version": "presentation/1", "id": "diagramas", "title": "Cuatro diagramas",
+        "purpose": "Comprobar que JARVIS dibuja cada clase de diagrama.",
+        "conclusion": "Cada diagrama cabe en su sitio en cada marco.",
+        "language": "es", "requires": ["presentation-core/1"], "assets": [],
+        "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
+                        "revision": "1", "description": "Datos inventados para la prueba."}],
+        "slides": [_slide("inicio", "Cuatro diagramas", "opening",
+                          _text("inicio-texto", "words", "Un flujo, una jerarquía, un ciclo y un calendario.")),
+                   *json.loads(json.dumps(DIAGRAM_SLIDES))],
+        "decisions": [],
+    }
+    for slide in deck["slides"]:
+        diagrams = [o for o in slide["objects"] if o["type"] == "diagram"]
+        if diagrams:
+            first = diagrams[0]
+            focus = [first["nodes"][0]["id"]] + ([first["links"][0]["id"]] if first["links"] else []) \
+                + ([first["groups"][0]["id"]] if first["groups"] else [])
+            slide["narration"][0]["focus"] = focus
     source = folder / "presentation.yaml"
     source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return source

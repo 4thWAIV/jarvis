@@ -1408,25 +1408,51 @@ deck's `datasets` are records frozen in its source, a table's or a
 place (`presentation_data.py`: a data table into rows of words in the
 deck's language; a bar, line or scatter chart into its ticks, labels and
 points as shares of the plot that presentation.js only places; every bar,
-point and named cell a target). The author turns dry text into these
+point and named cell a target). And diagrams (deck/0.1's families,
+construction-drafts.md "deck/0.1 families: diagrams, shapes, groups,
+connectors"): a `diagram` of one kind (`presentation_schema.DIAGRAM_KINDS`:
+flow, cycle, hierarchy, timeline, the words the script's visual forms
+use), its `nodes` (words, a `shape` and `tone` chosen from JARVIS's lists,
+a timeline's `when`), `links` (connectors, `from`, `to`, words, a style)
+and `groups` (a flow's lanes, a timeline's phases), each kind's rules
+checked (`diagram_layout.structure`: a tree, a ring, lanes, phases) and an
+authored position, size, colour or font refused
+(`presentation_source.DIAGRAM_DRAWN`); JARVIS lays it out by program
+(`diagram_layout.py`, pure, the one layout the proof checks and the page
+draws: a layered flow with square connectors and links back or skipping a
+rank routed round the outside, a tidy tree, a ring on an ellipse, an axis
+with alternating sides; across a wide slot, down a tall one) where its slot
+holds least for its words across the frame range (`room`), every node,
+label, group and connector point a share of its slot that presentation.js
+places, its words at the deck size never grown by the slide's fit; every
+node, connector and group a target (`node`, `connector` "A to B: words",
+`group`). Left for later, with reasons, in the same entry: themes and
+masters, builds and motion, media, connectors between separate slide
+objects, nested groups of any objects. The author turns dry text into these
 (the system never waits for the evidence to supply a picture): a sequence
 as steps, numbers as a chart or key figures from the evidence's figures, a
-comparison as a comparison or table, a warning or finding as a callout,
-never long paragraphs (`make_package --example visuals`,
+comparison as a comparison or table, a warning or finding as a callout, a
+process, loop, structure or schedule as a diagram, never long paragraphs (`make_package --example visuals`,
 `make_package.VISUALS_EXAMPLE`). Sizing is the language's, never a browser
 measurement of a package: each layout slot's capacity is worked out by
 program from layout-spec.json at the smallest frame (662 x 489) with every
 word at its floor, for every object type (`deck_capacity.py`: a character
 taken as `capacity.char_em`, 0.6 of its size; text by its paragraphs, a
 table by its rows, the components by their parts, a chart by its legend,
-labels and least plot), and `presentation_source` refuses as the source
+labels and least plot, a diagram by its layout: ranks, nodes side by side,
+leaves, levels, nodes round a ring or along an axis over what its slot
+holds, `diagram_layout.holds`, worked out from the spec, or a node's words
+over `label_lines_max`), and `presentation_source` refuses as the source
 is read (never a built deck arriving) a slot over its capacity, naming the
 slot, the lines needed and held and how much over, a title over its place,
 and a slide of only prose over one paragraph
 (`capacity.prose_paragraph_lines` lines of its widest text slot); each
-object's capacity is in the layout data. The release check
+object's capacity is in the layout data, and a diagram's every node,
+connector and group with its place, and `presentation_proof.prove_diagrams`
+holds every word of it in its place at every frame. The release check
 (`tests/test_presentation_corpus.py`) builds and proves every shipped and
-fixture deck and proves it again from its built bytes.
+fixture deck (the diagram deck, `tests/deck_fixtures.diagram_deck`, among
+them) and proves it again from its built bytes.
 `presentation.compile_deck` lays it out onto the shared deck
 (`new_deck.py`, `decision_package.py` checking it as before) in JARVIS's
 named layouts from one spec (`presentation_assets/layout-spec.json`,
@@ -1487,10 +1513,12 @@ by click and by decide.py, the story waiting at every question, Stop within
 Previous and count over every slide (`test_voice_page_decision_package.py`),
 and `test_voice_page_layout_model.py` draws a hard fixture deck (long
 words, a table, two pictures, four columns, the components, two charts and
-a table from data, pictured options, Spanish; `tests/deck_fixtures.hard_deck`)
-across the frame range and holds every picture's drawn size to the proof's
-model within 0.5 px and every object the capacity model lets through to
-its slot, nothing cut off, every chart keeping its least plot. A page JARVIS did not lay out (a hand-made page, an
+a table from data, a flow beside words, pictured options, Spanish;
+`tests/deck_fixtures.hard_deck`) and the diagram deck across the frame
+range and holds every picture's drawn size to the proof's model within
+0.5 px, every object the capacity model lets through to its slot, nothing
+cut off, every chart keeping its least plot, and every diagram's nodes and
+groups where its layout put them within 0.5 px, no word cut off. A page JARVIS did not lay out (a hand-made page, an
 architecture package's) says "Layout not checked" in its border
 (`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
 says the same).
@@ -4091,7 +4119,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `deck_capacity.py` — How much each layout slot holds at 662 x 489 with
   every word at its floor, for every object type, and what a deck over it
   is refused for (see "Work packages"); `presentation_data.py` — datasets,
-  their views, and tables and charts drawn from them
+  their views, and tables and charts drawn from them; `diagram_layout.py` —
+  a diagram's kind rules, its layout by program, what a slot holds of each
+  kind and its words checked in place at a frame
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

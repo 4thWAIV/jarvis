@@ -11,8 +11,13 @@ Every object type has its height worked out the way presentation.css and
 the generated CSS lay it out (`needs`): text by its paragraphs, a table by
 its rows, a callout, figures and steps by their parts, a bar object by its
 bars, and a chart by its legend, its labels and the least plot it keeps
-(its labels must fit their places too). Pictures and vectors hold no words
-and are proven by picture_proof.
+(its labels must fit their places too). A diagram is laid out by program
+(diagram_layout) where its slot holds least for its words across the
+frame range, and what does not fit is said by its layout: more ranks,
+nodes side by side, levels, leaves or nodes round a ring or along an axis
+than its slot holds (`holds`, each worked out from the spec), or words over
+the lines a node or a link allows. Pictures and vectors hold no words and
+are proven by picture_proof.
 
 `problems` is what presentation_source refuses as a deck is written:
 an object over its slot's capacity, naming the slot and how much over; a
@@ -29,12 +34,14 @@ from dataclasses import dataclass
 
 from jarvis import layout_spec
 from jarvis.presentation_schema import (BarObject, CalloutObject, ChartObject, ContentSlide,
-                                        FiguresObject, StepsObject, TableObject, TextObject, words)
+                                        DiagramObject, FiguresObject, StepsObject, TableObject,
+                                        TextObject, words)
 
 # What to do instead, said with every refusal.
 SHOW_IT = ("show what can be shown: a sequence as numbered steps, numbers as a chart from a "
            "dataset or as key figures, a comparison as a comparison or a table, a warning or a "
-           "finding as a callout")
+           "finding as a callout, a process, a loop, a structure or a schedule as a diagram (a "
+           "flow, a cycle, a hierarchy or a timeline)")
 
 
 def frame() -> tuple[float, float]:
@@ -192,9 +199,37 @@ NEEDS = {TextObject: _text, TableObject: _table, CalloutObject: _callout,
          FiguresObject: _figures, StepsObject: _steps, BarObject: _bars, ChartObject: _chart}
 
 
+def drawn_diagram(obj: DiagramObject, box) -> dict:
+    """A diagram as diagram_layout lays it out in `box`: the one read as the
+    source was (presentation_source), else laid out now."""
+    from jarvis import diagram_layout
+    if obj._drawn is None:
+        obj._drawn = diagram_layout.layout(obj, box)
+    return obj._drawn
+
+
+def _diagram(obj: DiagramObject, box) -> Need:
+    """A diagram's height: what its layout uses of its slot, at the
+    smallest frame. What does not fit (too many nodes for its slot, words
+    over their lines) is said by its layout, in the author's terms, and its
+    height is then the slot's."""
+    drawn = drawn_diagram(obj, box)
+    _, held = holds(box)
+    if drawn["problems"]:
+        return Need(held, tuple(drawn["problems"]))
+    boxes = [n["box"] for n in drawn["nodes"]] + [g["box"] for g in drawn["groups"]] + \
+        [link["label_box"] for link in drawn["links"] if link.get("label_box")] + \
+        [n["when_box"] for n in drawn["nodes"] if n.get("when_box")]
+    top = min(b[1] for b in boxes)
+    bottom = max(b[1] + b[3] for b in boxes)
+    return Need((bottom - top) * held)
+
+
 def needs(obj, box) -> Need | None:
     """`obj`'s height in its slot `box` (deck units) at the smallest frame
     with its words at their floor; None for a picture or a vector."""
+    if isinstance(obj, DiagramObject):
+        return _diagram(obj, box)
     work = NEEDS.get(type(obj))
     if work is None:
         return None
@@ -288,5 +323,10 @@ def object_capacity(obj, box) -> dict | None:
     if need is None:
         return None
     _, held = holds(box)
-    return {"holds_lines": int(as_lines(held)), "needs_lines": math.ceil(as_lines(need.px)),
-            "fits": need.px <= held + 0.5 and not need.problems}
+    out = {"holds_lines": int(as_lines(held)), "needs_lines": math.ceil(as_lines(need.px)),
+           "fits": need.px <= held + 0.5 and not need.problems}
+    if isinstance(obj, DiagramObject):
+        # What its slot holds of a diagram of its kind (diagram_layout.holds),
+        # beside the nodes it has.
+        out.update(kind=obj.kind, nodes=len(obj.nodes), holds=drawn_diagram(obj, box)["holds"])
+    return out

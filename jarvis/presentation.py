@@ -8,11 +8,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import (decision_package as dp, package_story, package_understanding, presentation_data,
-                    presentation_proof)
+from jarvis import (decision_package as dp, diagram_layout, package_story, package_understanding,
+                    presentation_data, presentation_proof)
 from jarvis.presentation_schema import (COMPONENTS, BarObject, ChartObject, ContentSlide,
-                                        FiguresObject, ImageObject, SourceRef, StepsObject,
-                                        TableObject, TextObject, VectorObject, words)
+                                        DiagramObject, FiguresObject, ImageObject, SourceRef,
+                                        StepsObject, TableObject, TextObject, VectorObject,
+                                        link_words, node_words, words)
 from jarvis.presentation_source import DeckCompileError, DeckDiagnostic, Source, read_source
 
 ASSETS = Path(__file__).with_name("presentation_assets")
@@ -76,6 +77,14 @@ def _targets(source: Source) -> list[dict]:
                         for n, cell in enumerate(ids):
                             head = f"{obj.head[n]}: " if obj.head else ""
                             add(cell,"cell",head + row.cells[n],obj.source)
+                elif isinstance(obj, DiagramObject):
+                    # Every group, node and connector a target narration can light.
+                    for group in obj.groups:
+                        add(group.id,"group",group.label,obj.source)
+                    for node in obj.nodes:
+                        add(node.id,"node",node_words(node),obj.source)
+                    for link in obj.links:
+                        add(link.id,"connector",link_words(obj,link),obj.source)
                 elif isinstance(obj, ChartObject):
                     for series in obj._drawn["series"]:
                         for point in series["points"]:
@@ -99,7 +108,7 @@ def _deck(source: Source, targets: list[dict]) -> dict:
                 blocks.extend({"p":"".join(run.text for run in p.runs)} for p in obj.paragraphs)
             elif isinstance(obj,ImageObject):
                 blocks.append({"picture":assets[obj.asset].path,"alt":obj.alt})
-            elif isinstance(obj,(BarObject,ChartObject,*COMPONENTS)):
+            elif isinstance(obj,(BarObject,ChartObject,DiagramObject,*COMPONENTS)):
                 blocks.extend({"p":said} for said in words(obj))
             elif isinstance(obj,TableObject):
                 blocks.append({"table":{**({"head":obj.head} if obj.head else {}),"rows":[r.cells for r in obj.rows],
@@ -133,6 +142,7 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
     .jarvis/layout-proof.json, or DeckCompileError naming each failure."""
     failures = presentation_proof.prove_pictures(parsed, parsed.pictures)
     failures += presentation_proof.prove_text()
+    failures += presentation_proof.prove_diagrams(parsed)
     failures += presentation_proof.prove_targets(story, targets, deck)
     failures += presentation_proof.prove_templates(folder)
     if failures:
@@ -184,7 +194,9 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
                     frozen[reference.id] = {"path": relative, "sha256": hashlib.sha256(evidence).hexdigest()}
             charts={obj.id:obj._drawn for slide in parsed.document.slides for obj in getattr(slide,"objects",[])
                     if isinstance(obj,ChartObject)}
-            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
+            diagrams={obj.id:obj._drawn for slide in parsed.document.slides for obj in getattr(slide,"objects",[])
+                      if isinstance(obj,DiagramObject)}
+            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"diagrams":diagrams,"diagram_arrow":diagram_layout.spec()["arrow"],"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
             (folder/"presentation-data.js").write_text("window.PRESENTATION = "+json.dumps(model,ensure_ascii=False)+";\n",encoding="utf-8")
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

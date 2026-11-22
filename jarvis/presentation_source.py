@@ -10,8 +10,8 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from jarvis import deck_capacity, layout_spec, picture_proof, presentation_data
-from jarvis.presentation_schema import (BarObject, ChartObject, ContentSlide, Ellipse,
+from jarvis import deck_capacity, diagram_layout, layout_spec, picture_proof, presentation_data
+from jarvis.presentation_schema import (BarObject, ChartObject, ContentSlide, DiagramObject, Ellipse,
                                        FiguresObject, ImageObject, Presentation, Rectangle,
                                        ShapePath, StepsObject, TableObject, TextObject,
                                        VectorObject)
@@ -188,6 +188,28 @@ def _no_authored_layout(source: Source, data) -> None:
             if isinstance(obj, dict) and "region" in obj:
                 source.fail("layout", NO_LAYOUT.format(layouts=named, what="a `region`: give it a `slot`"),
                             ("slides", n, "objects", m, "region"))
+            if isinstance(obj, dict) and obj.get("type") == "diagram":
+                _no_drawn_diagram(source, obj, ("slides", n, "objects", m))
+
+
+# What JARVIS works out for a diagram and an author never gives
+# (diagram_layout lays it out; tones and shapes are chosen from its lists).
+DIAGRAM_DRAWN = ("x", "y", "width", "height", "bounds", "box", "position", "points", "route",
+                 "fill", "stroke", "color", "colour", "font", "size", "rect", "viewBox")
+DIAGRAM_NO_LAYOUT = ("JARVIS lays out every diagram from its kind, nodes, links and groups: an author "
+                     "never gives {what}. Choose a node's `shape` ({shapes}) and `tone` ({tones}).")
+
+
+def _no_drawn_diagram(source: Source, obj: dict, at: tuple) -> None:
+    from jarvis.presentation_schema import NODE_SHAPES, TONES
+    parts = [((), obj)] + [((field, k), item) for field in ("nodes", "links", "groups")
+                           for k, item in enumerate(obj.get(field) or []) if isinstance(item, dict)]
+    for where, item in parts:
+        for key in DIAGRAM_DRAWN:
+            if key in item:
+                source.fail("layout", DIAGRAM_NO_LAYOUT.format(
+                    what=f"`{key}`", shapes=", ".join(NODE_SHAPES), tones=", ".join(TONES)),
+                    at + where + (key,))
 
 
 def _semantics(source: Source, data: dict, built: bool = False) -> None:
@@ -300,6 +322,11 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
                         _drawn_id(source, point["id"], obj.id, visible)
             elif isinstance(obj, (FiguresObject, StepsObject)):
                 visible.update(item.id for item in obj.items)
+            elif isinstance(obj, DiagramObject):
+                for member, message in diagram_layout.structure(obj):
+                    source.fail("diagram", message, member=member if member in source.nodes else obj.id)
+                visible.update(item.id for item in (*obj.nodes, *obj.links, *obj.groups))
+                obj._drawn = diagram_layout.layout(obj, boxes[obj.slot])
             elif isinstance(obj, BarObject):
                 if obj.domain[0] != 0 or obj.domain[1] <= 0:
                     source.fail("schema", "The bar domain starts at zero and ends above zero.", member=obj.id)

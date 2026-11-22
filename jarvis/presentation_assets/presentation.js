@@ -122,7 +122,57 @@
     else drawn.x_ticks.forEach(t=>{const label=block("span",t.label);label.style.left=pct(t.at);x.append(label);});
     box.append(legend,y,plot,x);parent.append(box);
   }
-  const renderers={chart,callout,figures,steps,text:textObject,vector:vectorObject,bar:barObject,table:tableObject,image:(object,parent)=>{
+  // A diagram: diagram_layout placed every node, label, group and
+  // connector point as a share of the slot; this draws them there. Groups
+  // under the connectors (one SVG, drawn again in px whenever its box
+  // changes), nodes and words over them; every one a target.
+  const placeAt=(e,box)=>{e.style.left=pct(box[0]);e.style.top=pct(box[1]);e.style.width=pct(box[2]);e.style.height=pct(box[3]);return e;};
+  const SHAPES={diamond:()=>svgNode("polygon",{points:"50,0 100,50 50,100 0,50"}),
+    cylinder:()=>svgNode("path",{d:"M0,12 A50,12 0 0 1 100,12 L100,88 A50,12 0 0 1 0,88 Z M0,12 A50,12 0 0 0 100,12"}),
+    document:()=>svgNode("path",{d:"M0,0 H100 V88 C75,76 50,100 25,94 C12,91 5,88 0,90 Z"})};
+  function diagram(object,parent){
+    const drawn=model.diagrams[object.id],box=block("div",undefined,"presentation-diagram");
+    box.dataset.kind=drawn.kind;box.dataset.orientation=drawn.orientation;
+    box.setAttribute("role","figure");box.setAttribute("aria-label",object.alt);
+    drawn.groups.forEach(g=>{
+      box.append(placeAt(identify(block("div",undefined,"presentation-diagram-group"),g.id),g.box));
+      const words=placeAt(block("div",g.label,"presentation-diagram-group-label"),g.label_box);words.dataset.labelOf=g.id;box.append(words);});
+    const svg=svgNode("svg",{"aria-hidden":"true"});svg.classList.add("presentation-diagram-links");
+    const head=`presentation-arrow-${object.id}`,defs=svgNode("defs",{});
+    const marker=svgNode("marker",{id:head,viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:layoutArrow,markerHeight:layoutArrow,orient:"auto-start-reverse",markerUnits:"strokeWidth"});
+    const tip=svgNode("path",{d:"M0,0 L10,5 L0,10 Z"});tip.classList.add("presentation-diagram-arrowhead");marker.append(tip);defs.append(marker);svg.append(defs);
+    const paths=[];
+    if(drawn.axis){const axis=svgNode("line",{});axis.classList.add("presentation-diagram-axis");svg.append(axis);paths.push([axis,[drawn.axis.from,drawn.axis.to]]);}
+    drawn.links.forEach(link=>{
+      const g=identify(svgNode("g",{}),link.id);g.classList.add("presentation-diagram-connector");g.dataset.style=link.style;
+      g.setAttribute("role","img");g.setAttribute("aria-label",model.targets.find(t=>t.member===link.id).accessible_name);
+      const path=svgNode("path",{});
+      if(link.style==="arrow"||link.style==="dashed"||link.style==="both")path.setAttribute("marker-end",`url(#${head})`);
+      if(link.style==="both")path.setAttribute("marker-start",`url(#${head})`);
+      g.append(path);svg.append(g);paths.push([path,link.points]);});
+    box.append(svg);
+    if(drawn.axis)drawn.axis.markers.forEach(p=>{const dot=block("span",undefined,"presentation-diagram-marker");dot.style.left=pct(p[0]);dot.style.top=pct(p[1]);dot.setAttribute("aria-hidden","true");box.append(dot);});
+    drawn.nodes.forEach(n=>{
+      const shown=placeAt(identify(block("div",undefined,"presentation-diagram-node"),n.id),n.box);
+      shown.dataset.shape=n.shape;shown.dataset.tone=n.tone;shown.setAttribute("role","img");
+      shown.setAttribute("aria-label",model.targets.find(t=>t.member===n.id).accessible_name);
+      if(SHAPES[n.shape]){const outline=svgNode("svg",{viewBox:"0 0 100 100",preserveAspectRatio:"none","aria-hidden":"true"});
+        outline.classList.add("presentation-diagram-shape");outline.append(SHAPES[n.shape]());shown.append(outline);}
+      shown.append(block("div",n.label,"presentation-diagram-text"));box.append(shown);
+      if(n.when_box){const when=placeAt(block("div",n.when,"presentation-diagram-when"),n.when_box);when.dataset.labelOf=n.id;box.append(when);}
+    });
+    drawn.links.forEach(link=>{if(!link.label_box)return;
+      const words=placeAt(block("div",link.label,"presentation-diagram-label"),link.label_box);words.dataset.labelOf=link.id;box.append(words);});
+    // The connectors in px: the slot's shares times the diagram's own size now.
+    function draw(){const w=box.clientWidth,h=box.clientHeight;if(!w||!h)return;
+      paths.forEach(([e,points])=>{const xy=points.map(p=>[p[0]*w,p[1]*h]);
+        if(e.tagName==="line"){e.setAttribute("x1",xy[0][0]);e.setAttribute("y1",xy[0][1]);e.setAttribute("x2",xy[1][0]);e.setAttribute("y2",xy[1][1]);}
+        else e.setAttribute("d","M"+xy.map(p=>p[0].toFixed(2)+","+p[1].toFixed(2)).join(" L"));});}
+    if(window.ResizeObserver)new ResizeObserver(draw).observe(box);
+    requestAnimationFrame(draw);parent.append(box);
+  }
+  const layoutArrow=model.diagram_arrow||5;
+  const renderers={chart,callout,figures,steps,diagram,text:textObject,vector:vectorObject,bar:barObject,table:tableObject,image:(object,parent)=>{
     const asset=assets.get(object.asset),image=node("img");image.src=asset.path;image.alt=object.alt;image.dataset.asset=asset.id;
     image.style.setProperty("--natural-width",String(asset.width));image.style.setProperty("--natural-height",String(asset.height));parent.append(image);
   }};
@@ -162,6 +212,9 @@
         rects.push(...range.getClientRects());
       }
     } else rects=[...element.getClientRects()];
+    // A connector or a group is lit with its words.
+    if(["connector","group","node"].includes(target.kind))
+      document.querySelectorAll(`[data-label-of="${CSS.escape(id)}"]`).forEach(e=>rects.push(...e.getClientRects()));
     return rects.filter(r=>r.width>0&&r.height>0).map(r=>r.toJSON());
   }
   // The semantic traversal is separate from ordinary Tab navigation.

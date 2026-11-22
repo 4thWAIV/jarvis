@@ -2,13 +2,13 @@
 and proven as an author's would be (its slots within their capacity,
 deck_capacity), and proven again from its built bytes as Tim's JARVIS proves
 a deck on arrival; every example package still reads as a package. A change
-to the layout spec, the compiler, the components, the charts or the
-capacity model that leaves any of them behind fails here, in CI, before a
+to the layout spec, the compiler, the components, the charts, the diagrams
+or the capacity model that leaves any of them behind fails here, in CI, before a
 release.
 
 The corpus: examples/presentations/*/presentation.yaml, the three decks
-`make_package --example` prints, the hard fixture deck (tests/deck_fixtures,
-also drawn in the CI page test), the street example with the components and
+`make_package --example` prints, the hard fixture deck and the diagram deck
+(tests/deck_fixtures, both also drawn in the CI page test), the street example with the components and
 with data, and the test decks' own (deck_fixtures.PRESENTATION); and every
 folder under examples/packages."""
 from __future__ import annotations
@@ -55,6 +55,7 @@ CORPUS = {
     "make-package-example-presentation": lambda into: _write(into, make_package.PRESENTATION_EXAMPLE),
     "make-package-example-visuals": lambda into: _write(into, make_package.VISUALS_EXAMPLE),
     "hard-deck": lambda into: (into.mkdir(), deck_fixtures.hard_deck(into))[1],
+    "diagram-deck": deck_fixtures.diagram_deck,
     "street-with-components": lambda into: _street_with(
         into, lambda d: d["slides"].insert(2, json.loads(json.dumps(deck_fixtures.COMPONENTS_SLIDE)))),
     "street-with-data": lambda into: _street_with(into, deck_fixtures.with_data),

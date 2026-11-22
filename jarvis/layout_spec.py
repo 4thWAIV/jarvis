@@ -162,7 +162,7 @@ def generated_css() -> str:
                 for slot, box in boxes(layout, filled).items():
                     lines.append(_box(f'.presentation-slot[data-layout="{layout}"][data-columns="{count}"]'
                                       f'[data-slot="{slot}"]', box))
-    lines += _components_css() + _chart_css()
+    lines += _components_css() + _chart_css() + _diagram_css()
     lines.append(GENERATED_END)
     return "\n".join(lines) + "\n"
 
@@ -217,6 +217,43 @@ def _chart_css() -> list[str]:
         f".presentation-chart-x.ticks {{ height: calc(var(--deck-chart) * {style['line']:g}); }}",
         f".presentation-chart-dot {{ width: {c['dot']:g}em; height: {c['dot']:g}em; }}",
     ]
+
+
+def _fixed(style: str) -> str:
+    """A text style at the deck size, never grown by the slide's fit."""
+    s = spec()["styles"][style]
+    return f"clamp({s['min_px']}px, {_length(s['units'])}, {s['max_px']}px)"
+
+
+def _diagram_css() -> list[str]:
+    """A diagram (diagram_layout places every box as a share of its slot,
+    presentation.js draws it): its words' sizes, a node's border and
+    padding, the share of each shape's box that holds its words, the words
+    on links, groups and a timeline's when, and the tones an author
+    chooses among. Lengths are em of the node style; a label's padding is
+    the node style's em too, as the layout counts it."""
+    d = spec()["diagram"]
+    node, link = spec()["styles"][d["node"]], spec()["styles"][d["link"]]
+    lpad = f"calc(var(--deck-node) * {d['link_pad']:g})"
+    out = [
+        f".presentation-diagram {{ --deck-node: {_fixed(d['node'])}; --deck-link: {_fixed(d['link'])}; "
+        f"position: relative; width: 100%; height: 100%; font-size: var(--deck-node); "
+        f"line-height: {node['line']:g}; }}",
+        f".presentation-diagram-node {{ border: {d['stroke_px']:g}px solid var(--tone); }}",
+        f".presentation-diagram-text {{ padding: {d['pad'][1]:g}em {d['pad'][0]:g}em; }}",
+        f".presentation-diagram :is(.presentation-diagram-label, .presentation-diagram-when, "
+        f".presentation-diagram-group-label) {{ font-size: var(--deck-link); line-height: {link['line']:g}; "
+        f"padding: 0 {lpad}; }}",
+        f".presentation-diagram-marker {{ width: {d['marker']:g}em; height: {d['marker']:g}em; }}",
+        f".presentation-diagram-connector {{ stroke-width: {d['stroke_px']:g}px; }}",
+        f".presentation-diagram-axis {{ stroke-width: {d['axis_px']:g}px; }}",
+    ]
+    for shape, (fx, fy) in d["shapes"].items():
+        out.append(f'.presentation-diagram-node[data-shape="{shape}"] > .presentation-diagram-text '
+                   f'{{ inset: {100 * (1 - fy) / 2:.4f}% {100 * (1 - fx) / 2:.4f}%; }}')
+    for tone, colour in d["tones"].items():
+        out.append(f'.presentation-diagram [data-tone="{tone}"] {{ --tone: {colour}; }}')
+    return out
 
 
 def _with_generated(css: str) -> str:

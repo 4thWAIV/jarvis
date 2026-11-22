@@ -146,4 +146,6 @@ def test_the_layout_data_carries_each_object_s_capacity(tmp_path):
     rooms = {o["id"]: o["capacity"] for s in proof["slides"] for o in s.get("objects") or []}
     assert rooms["how-steps"] == {"holds_lines": 22, "needs_lines": rooms["how-steps"]["needs_lines"],
                                   "fits": True}
-    assert set(rooms) == {"opening-callout", "how-steps", "cost-figures", "cost-chart", "vote-table"}
+    assert set(rooms) == {"opening-callout", "how-steps", "cost-figures", "cost-chart", "vote-table",
+                          "order-flow", "who-words", "who-tree", "week-cycle", "week-days"}
+    assert rooms["order-flow"]["fits"] and rooms["order-flow"]["holds"]["ranks"] >= 4

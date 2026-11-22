@@ -8,6 +8,10 @@
   --deck-cell-line: 1.35;
   --deck-figure: clamp(16px, calc(30 * var(--u) * var(--fit, 1)), 64px);
   --deck-figure-line: 1.15;
+  --deck-node: clamp(13px, calc(16 * var(--u) * var(--fit, 1)), 40px);
+  --deck-node-line: 1.25;
+  --deck-link: clamp(13px, calc(14 * var(--u) * var(--fit, 1)), 34px);
+  --deck-link-line: 1.2;
 }
 .presentation-canvas { position: absolute; inset: 0; }
 .presentation-slot { padding: calc(4 * var(--u)); }
@@ -49,6 +53,26 @@
 .presentation-chart-x.categories { display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); text-align: center; }
 .presentation-chart-x.ticks { height: calc(var(--deck-chart) * 1.35); }
 .presentation-chart-dot { width: 0.6em; height: 0.6em; }
+.presentation-diagram { --deck-node: clamp(13px, calc(16 * var(--u)), 40px); --deck-link: clamp(13px, calc(14 * var(--u)), 34px); position: relative; width: 100%; height: 100%; font-size: var(--deck-node); line-height: 1.25; }
+.presentation-diagram-node { border: 1.5px solid var(--tone); }
+.presentation-diagram-text { padding: 0.35em 0.6em; }
+.presentation-diagram :is(.presentation-diagram-label, .presentation-diagram-when, .presentation-diagram-group-label) { font-size: var(--deck-link); line-height: 1.2; padding: 0 calc(var(--deck-node) * 0.2); }
+.presentation-diagram-marker { width: 0.8em; height: 0.8em; }
+.presentation-diagram-connector { stroke-width: 1.5px; }
+.presentation-diagram-axis { stroke-width: 3px; }
+.presentation-diagram-node[data-shape="box"] > .presentation-diagram-text { inset: 0.0000% 0.0000%; }
+.presentation-diagram-node[data-shape="rounded"] > .presentation-diagram-text { inset: 0.0000% 0.0000%; }
+.presentation-diagram-node[data-shape="pill"] > .presentation-diagram-text { inset: 0.0000% 8.0000%; }
+.presentation-diagram-node[data-shape="ellipse"] > .presentation-diagram-text { inset: 13.0000% 14.0000%; }
+.presentation-diagram-node[data-shape="diamond"] > .presentation-diagram-text { inset: 24.0000% 18.0000%; }
+.presentation-diagram-node[data-shape="cylinder"] > .presentation-diagram-text { inset: 15.0000% 0.0000%; }
+.presentation-diagram-node[data-shape="document"] > .presentation-diagram-text { inset: 9.0000% 0.0000%; }
+.presentation-diagram [data-tone="neutral"] { --tone: var(--text); }
+.presentation-diagram [data-tone="accent"] { --tone: var(--accent); }
+.presentation-diagram [data-tone="good"] { --tone: #22c55e; }
+.presentation-diagram [data-tone="warn"] { --tone: #f59e0b; }
+.presentation-diagram [data-tone="bad"] { --tone: #ef4444; }
+.presentation-diagram [data-tone="muted"] { --tone: #7d8a99; }
 /* layout-spec: end */
 :root { --top:0px; --bottom:0px; --mic-clear:0px; }
 #stage { width:100%; height:100%; }
@@ -105,6 +129,33 @@ html { --series-1:var(--accent); --series-2:#f97316; --series-3:#22c55e; --serie
 /* The end ticks sit at the plot's edges: aligned inside it, never past the slot. */
 .presentation-chart-x.ticks > span:first-child { transform:none; }
 .presentation-chart-x.ticks > span:last-child { transform:translateX(-100%); }
+/* Diagrams: diagram_layout places every box as a share of the slot and
+   presentation.js draws them; lengths generated from the layout spec above. */
+.presentation-diagram > * { position:absolute; box-sizing:border-box; }
+.presentation-diagram-links { inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.presentation-diagram-connector path { fill:none; stroke:var(--text); stroke-opacity:.75; stroke-linejoin:round; }
+.presentation-diagram-connector[data-style="dashed"] path { stroke-dasharray:5 4; }
+.presentation-diagram-arrowhead { fill:var(--text); fill-opacity:.75; }
+.presentation-diagram-axis { stroke:var(--edge); }
+.presentation-diagram-node { --tone:var(--text); color:var(--text); background:color-mix(in srgb, var(--tone) 16%, var(--surface)); }
+.presentation-diagram-node[data-shape="rounded"] { border-radius:.5em; }
+.presentation-diagram-node[data-shape="pill"] { border-radius:999px; }
+.presentation-diagram-node[data-shape="ellipse"] { border-radius:50%; }
+.presentation-diagram-node:is([data-shape="diamond"],[data-shape="cylinder"],[data-shape="document"]) { border-color:transparent; background:none; }
+.presentation-diagram-node[data-tone="muted"] { color:var(--muted); }
+.presentation-diagram-shape { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+.presentation-diagram-shape > * { fill:color-mix(in srgb, var(--tone) 16%, var(--surface)); stroke:var(--tone); stroke-width:1.5px; vector-effect:non-scaling-stroke; }
+.presentation-diagram-text, .presentation-diagram-label, .presentation-diagram-when,
+.presentation-diagram-group-label { display:flex; align-items:center; justify-content:center; text-align:center; overflow-wrap:break-word; }
+.presentation-diagram-text { position:absolute; box-sizing:border-box; overflow:hidden; }
+.presentation-diagram-label { color:var(--muted); background:var(--ground); border-radius:.3em; }
+.presentation-diagram-when { font-weight:700; color:var(--accent); }
+.presentation-diagram[data-orientation="down"] .presentation-diagram-when { justify-content:flex-start; text-align:left; }
+.presentation-diagram-group { border:1px dashed var(--edge); border-radius:.5em; background:color-mix(in srgb, var(--text) 4%, transparent); }
+.presentation-diagram-group-label { font-weight:700; color:var(--muted); justify-content:flex-start; text-align:left; }
+.presentation-diagram[data-kind="timeline"] .presentation-diagram-group { border:none; border-radius:999px; background:color-mix(in srgb, var(--accent) 28%, var(--surface)); }
+.presentation-diagram[data-kind="timeline"] .presentation-diagram-group-label { color:var(--text); justify-content:center; text-align:center; }
+.presentation-diagram-marker { border-radius:50%; background:var(--accent); border:2px solid var(--surface); transform:translate(-50%, -50%); }
 .presentation-slot [data-member]:focus { outline:3px solid var(--accent); outline-offset:3px; }
 .presentation-inspector { position:fixed; inset:1em; z-index:100; background:var(--surface); border:1px solid var(--edge); padding:1em; overflow:auto; }
 .presentation-inspector[hidden] { display:none; }
@@ -114,6 +165,8 @@ html { --series-1:var(--accent); --series-2:#f97316; --series-3:#22c55e; --serie
 .presentation-linear :is(.presentation-slot,.presentation-title) { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; min-height:2em; overflow:visible; }
 .presentation-linear .presentation-slot img { height:auto; max-height:55vh; }
 .presentation-linear .presentation-slot svg { height:auto; aspect-ratio:var(--vector-aspect); max-height:55vh; }
+.presentation-linear .presentation-slot .presentation-diagram { height:min(70vh, 30em); }
+.presentation-linear .presentation-slot .presentation-diagram svg { height:100%; max-height:none; aspect-ratio:auto; }
 .presentation-linear .presentation-slot + .presentation-slot { margin-top:1em; }
 .presentation-linear .slide:not(.presentation-slide) { overflow:auto; }
 .presentation-linear .options { display:flex; flex-direction:column; }
