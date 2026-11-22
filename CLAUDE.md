@@ -1776,22 +1776,36 @@ Settings' `run_timeout_sec`, never the brain's short search deadline;
 `SEARCH`). Then the author's first turn in its own long-lived ChatSession
 (tier 1, at medium effort for that turn alone, `RESEARCH_EFFORT`, through
 `build`'s `effort`), in the run's folder: its approved prompt
-(`package_swarm.system_of`) and its material (`_Firsts`: the sender's two
-answers, the handoff's questions with the sender's options labelled, and
-every stored file whole with what the mark step read in it,
-`author_material`, each with Tim's knowledge state), what the searches
-found (`research-searches.md`, `work_research.markdown`), and the
-program's words saying where it starts from (`research_note`: the Work
-item's research folder, the marked evidence, the evidence path, an earlier
-run's research copied into `earlier/` by `_carry_earlier`) and that
-`research.md` and `prep.md` are written together in that turn. When it
-needs more it names the searches in its answer (`more_searches`, each its
-words and a path or none: run as the key searches there, else everywhere
-the first ones looked); the program runs them at once and gives it one more
-turn (`more_note`). A turn that leaves either file unwritten is the
-step's Error. Each part is timed in `swarm.json`'s `times`
-(`research-searches`, `research`, `research-more-searches`,
-`research-more`), each search by `at_once` (its `seconds`), and the step as
+(`package_swarm.system_of`) and its working set, never every file whole
+(`_Firsts`, `working_set.py`; construction-drafts.md "The author works
+from a prioritized working set and calls back for more", Tim 2026-11-21):
+the sender's two answers, the handoff's questions with the sender's
+options labelled, a table of contents of the evidence (each stored file,
+its type, size, Tim's knowledge state and its first heading or sentence,
+`working_set.contents`, no model call), the program's searches as short
+hits (`short_hits`; whole in `research-searches.md`,
+`work_research.markdown`), and for each question the sentences and facts
+marking found bearing on it at `working_set.BEARS` (0.5) or more, highest
+first, then by their label scores, each with its labels, file and
+position, its words once (`prioritized`); packed into the room the model's
+window leaves (`working_set.room` over `pages.Budget`: never over half the
+window, the answer's most and the margin inside it, less the system
+prompt, the brain's starting context and the turn's words), the
+lowest-priority sentences cut first, the set saying how much was left out
+and how to read it (`<left_out>`). Then the program's words saying where it
+starts from (`research_note`: the Work item's research folder, the marked
+evidence, the evidence path, an earlier run's research copied into
+`earlier/` by `_carry_earlier`, its tools) and that `research.md` and
+`prep.md` are written together in that turn. When it needs more it calls
+back during that turn through its own tool server: `read_package_file`
+and `search_package_files`, `knowledge_search` under the evidence, the
+research tools and `search_at_once` (`role_search.py`, `roles.BATCH_SEARCH`:
+at most 12 searches at once, `work_research.at_once` over
+`engine_search` with the run's patience, each hit short). What it was
+given is kept in `swarm.json`'s `given` and logged. A turn that leaves
+either file unwritten is the step's Error. Each part is timed in
+`swarm.json`'s `times` (`research-searches`, `research`), each search by
+`at_once` (its `seconds`), and the step as
 a whole in the run's `timing.json` with its searches (`run_report.step`),
 where over five minutes it is `too_slow`, a failure of the step with its
 numbers (construction-drafts.md "Every step five minutes at most"). The
@@ -1866,7 +1880,10 @@ field, `package_script.units`; the 28
 labels, Tim's material by `package_mark.tim_known`). Each participant's
 first message is made at its first turn (`_Firsts`): its share of the
 evidence (`evidence`, `sessions.share_values`: Tim's reader what he knows
-and had access to, kept apart; everyone else everything, marked), the
+and had access to, kept apart; everyone else everything, marked), given
+whole while it fits the participant's window with what goes with it, else
+as the working set of that share, as the author's is (`material_set`; Tim's
+reader's knows and had access each its own), the
 prep for the context and structure owners and the editor (`gets_prep`;
 again in a later turn when it changed, `_work_text`), the editor its share
 marked and the script marked part by part, and where the evidence is for one that searches it
@@ -3726,8 +3743,8 @@ server, through folder_readers (no link followed, every page and window
 bounded), inside its run folder and the folders it reads (`Launch.reads`,
 given to the server as `--read`), hidden, credential and key files never
 shown. The author has the research tools (`roles.RESEARCH_TOOLS`, the
-research right's with `search_history` and `read_history`), the file tools
-and Write and Edit; the editor the evidence search (`knowledge_search`) and
+research right's with `search_history` and `read_history`), the file tools,
+the batch search (`search_at_once`) and Write and Edit; the editor the evidence search (`knowledge_search`) and
 the file tools; the context owner and the structure and decision owner
 the research tools and the file tools; Tim's reader nothing (its material,
 only what Tim knows and had access to, is in its prompt); retrieval its read tools for Work items, packages,
@@ -3838,6 +3855,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   window with room for the answer, files grouped by type, folder and
   meaning, and the pages asked in parallel, one session a worker (marking,
   classification and the script's marking; see "A package's evidence")
+- `working_set.py` / `role_search.py` — The working set a swarm
+  participant is given in place of the whole evidence, packed to its
+  window, and the author's batch search (see "A package's evidence")
 - `package_swarm.py` / `research_log.py` — The research and swarm steps:
   the author's research turn, the cooperative swarm's outline, fill and
   fix passes, its sign-offs, questions to the sender and what is left,

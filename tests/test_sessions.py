@@ -132,7 +132,8 @@ def test_the_roles_have_his_tiers_efforts_and_tools():
     research = set(roles.RESEARCH_TOOLS)
     assert {"search_history", "read_history"} <= research
     files = set(roles.FILE_READ_TOOLS)
-    assert set(by["author"].tools) == research | files and by["author"].release.writes
+    assert (set(by["author"].tools) == research | files | set(roles.BATCH_SEARCH)
+            and by["author"].release.writes)
     assert by["author"].release.builtins == ("Write", "Edit"), "it reads with its file tools"
     assert (set(by["context_owner"].tools) == research | files
             == set(by["structure_owner"].tools))
@@ -149,8 +150,9 @@ def test_the_roles_have_his_tiers_efforts_and_tools():
 def test_no_role_has_a_sending_command_or_a_tool_the_brain_lacks():
     from jarvis import agent_mcp
     sending = {c.name for c in agent_mcp.COMMANDS} | {s["name"] for s in agent_mcp.PACKAGE_SPECS}
+    from jarvis import role_search
     known = ({s["name"] for s in jarvis_mcp.TOOL_SPECS} | set(role_lookups.NAMES)
-             | set(role_files.NAMES))
+             | set(role_files.NAMES) | set(role_search.NAMES))
     for role in roles.ROLES.values():
         assert not set(role.tools) & sending, role.name
         assert set(role.tools) <= known, (role.name, set(role.tools) - known)

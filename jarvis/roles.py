@@ -53,6 +53,12 @@ FILE_READ_TOOLS: tuple[str, ...] = ("list_package_files", "read_package_file", "
 # (Tim, 2026-11-20; role_lookups.py).
 RETRIEVAL_LOOKUPS: tuple[str, ...] = role_lookups.NAMES
 
+# The author's batch search: several searches at once, each hit short, on
+# its own tool server (role_search.py; construction-drafts.md "The author
+# works from a prioritized working set and calls back for more", Tim
+# 2026-11-21). Spelled here, since role_search imports the engine's search.
+BATCH_SEARCH: tuple[str, ...] = ("search_at_once",)
+
 
 @dataclass(frozen=True)
 class Release:
@@ -101,7 +107,8 @@ ROLES: dict[str, Role] = {r.name: r for r in (
     # 2026-11-21): the author, the editor and three owners. The owners take
     # the judges' tier and effort, Tim's reader the Theory of Mind reader's.
     Role("author", 1, "high", "package_author", LONG_LIVED,
-         Release(builtins=WRITE_TOOLS, tools=RESEARCH_TOOLS + FILE_READ_TOOLS, writes=True)),
+         Release(builtins=WRITE_TOOLS, tools=RESEARCH_TOOLS + FILE_READ_TOOLS + BATCH_SEARCH,
+                 writes=True)),
     Role("editor", 1, "medium", "editor", LONG_LIVED,
          Release(tools=EVIDENCE_SEARCH + FILE_READ_TOOLS)),
     # Given only what Tim knows and had access to, in the prompt, and no

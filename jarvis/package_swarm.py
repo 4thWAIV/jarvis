@@ -15,13 +15,20 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
              each Work item's PRs and CI runs and its thread
              (work_research's searches, straight on the engine with the
              run's own patience). The author's ChatSession (tier 1) is given
-             its approved prompt, its material (the sender's two answers,
-             the handoff's questions, everything gathered and marked, each
-             item with Tim's knowledge state) and what the searches found,
-             in ONE turn at medium effort, and writes `research.md` and
-             `prep.md` together. When it needs more it names the searches
-             in its answer; the program runs them at once and gives it one
-             more turn. What was looked up is `research-searches.md`, and
+             its approved prompt and its working set (working_set.py,
+             construction-drafts.md "The author works from a prioritized
+             working set and calls back for more", Tim 2026-11-21): the
+             sender's two answers, the handoff's questions, for each
+             question the sentences marking prioritized for it, highest
+             first, a table of contents of the evidence and the searches'
+             short hits, each with Tim's knowledge state, packed to the
+             model's window (never over half of it) lowest priority cut
+             first, saying what was left out. In ONE turn at medium effort
+             it writes `research.md` and `prep.md` together; when it needs
+             more it calls back during that turn through its own tool
+             server (its file tools, knowledge_search under the evidence,
+             the research tools and search_at_once, several searches at
+             once). What was looked up is `research-searches.md`, and
              every search is in the run's search log (research_log.py,
              `research-log.jsonl`), the program's as `jarvis`. Research is
              done once a run, never again each pass: the author researches
@@ -58,7 +65,9 @@ run's folder (data/work/<id>/packages/<package id>/runs/<run id>/):
 
 Each participant is given exactly its share of what Tim knows (tim_knowledge
 who_gets_what, sessions.SHARES): Tim's reader only what he knows and had
-access to, kept apart; everyone else everything, each item marked.
+access to, kept apart; everyone else everything, each item marked. A share
+that would not fit the participant's window whole is given as the working
+set of that share instead, as the author's is, read further with its tools.
 
 Asking the sender (swarm ask_sender): what the participants ask in their
 turns since the sender was last asked, every one of them, is grouped by
@@ -91,8 +100,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from jarvis import (briefing_labels, model_tiers, package_evidence as pe, package_jobs,
-                    package_mark, package_script, records, research_log, role_prompts, roles,
-                    sessions, work_research)
+                    package_mark, package_script, pages, records, research_log, role_prompts,
+                    roles, sessions, work_research, working_set)
 
 RESEARCH, SWARM = "research", "swarm"
 RESEARCH_MD, PREP_MD = "research.md", "prep.md"
@@ -166,6 +175,11 @@ class Run:
     rows: list[pe.Row]
     marked: dict
     texts: dict[str, str] = field(default_factory=dict)
+    # The program's research searches (`first_searches`), given to the
+    # author short in its working set, and the words of the turn its first
+    # message goes with (`research_note`), counted in its window.
+    looked: list[dict] = field(default_factory=list)
+    turn: str = ""
 
     @property
     def folder(self) -> Path:
@@ -242,46 +256,30 @@ def evidence(run: Run) -> list[sessions.Known]:
             for r in run.rows if r.stored in run.texts]
 
 
-def annotated(text: str, marks: dict) -> str:
-    """A file's text once, each sentence the mark step labelled preceded by
-    one short tag naming its labels and the questions it bears on, with
-    their scores: `[s12 background .8 known-to-him .7 | q remaining-fixes .9]`.
-    The sentence's words are never repeated and an unlabelled sentence has
-    no tag, so the author reads the file at about its own size."""
-    bears = {e.get("item"): e.get("scores") or {} for e in marks.get("questions") or []}
-    tags = []
-    for part in marks.get("parts") or []:
-        pos = part.get("position") or {}
-        scores, questions = part.get("scores") or {}, bears.get(part.get("id")) or {}
-        if pos.get("start") is None or not (scores or questions):
-            continue
-        said = " ".join(f"{k} {v:.1f}".replace("0.", ".") for k, v in scores.items())
-        asked = " ".join(f"{k} {v:.1f}".replace("0.", ".") for k, v in questions.items())
-        tags.append((pos["start"], f"[{part['id']} {said}" + (f" | q {asked}" if asked else "") + "] "))
-    out, at = [], 0
-    for start, tag in sorted(tags):
-        out.append(text[at:start]); out.append(tag); at = start
-    out.append(text[at:])
-    facts = marks.get("facts") or []
-    if facts:
-        out.append("\n\nFacts read by the program: " + json.dumps(facts, ensure_ascii=False))
-    return "".join(out)
+def _tools_note(run: "Run", name: str) -> str:
+    """How a participant reads what its working set leaves out."""
+    tools = set(roles.role(name).tools)
+    if not tools:
+        return "you have no tools; work from what is here."
+    said = []
+    if tools & set(roles.FILE_READ_TOOLS):
+        said.append(f"read_package_file and search_package_files in {run.place.folder}")
+    if "knowledge_search" in tools:
+        said.append(f"knowledge_search under {run.place.path}")
+    if tools & set(roles.BATCH_SEARCH):
+        said.append("search_at_once to run several searches at once")
+    if tools & set(roles.RESEARCH_TOOLS) - {"knowledge_search"}:
+        said.append("your research tools")
+    return ", ".join(said) + "."
 
 
-def author_material(run: Run) -> list[sessions.Known]:
-    """The gathered and marked material: each stored file once, with what
-    the mark step read in it shown in place (`annotated`), with the file's
-    knowledge state."""
-    marks = {e["file"]: e for e in run.marked.get("files") or []}
-    out = []
-    for r in run.rows:
-        if r.stored not in run.texts:
-            continue
-        entry = marks.get(r.stored)
-        text = run.texts[r.stored]
-        out.append(sessions.Known(annotated(text, entry["marks"]) if entry is not None else text,
-                                  r.knowledge_state, run.place.item(r.stored)))
-    return out
+def material_set(run: Run, name: str, room_tokens: int,
+                 states: Optional[tuple[str, ...]] = None) -> working_set.WorkingSet:
+    """A participant's working set of the evidence (working_set.build), its
+    share (`states`) of it, in `room_tokens`."""
+    return working_set.build(run.rows, run.texts, run.marked, question_ids(run.doc) + ["background"],
+                             run.looked if name == AUTHOR else [], room_tokens,
+                             reads=_tools_note(run, name), states=states)
 
 
 def _labels(*kinds: str) -> str:
@@ -376,34 +374,90 @@ def _read(path: Path) -> str:
 class _Firsts:
     """Each participant's first message, made when its first turn comes:
     its approved prompt's closing material with its share, and where the
-    evidence is for one that searches it."""
+    evidence is for one that searches it. The author's material is its
+    working set; another's share is given whole while it fits its window
+    with what goes with it, else as the working set of that share
+    (construction-drafts.md "The author works from a prioritized working
+    set and calls back for more")."""
 
     def __init__(self, run: Run, material: list[sessions.Known]):
         self.run = run
         self.material = material
+        self.participants: dict[str, sessions.ChatSession] = {}
+        self.swarm: Optional[sessions.BrainSwarmSession] = None
+        self.sizes: dict[str, dict] = {}        # what each was given, for the run's log
 
-    def __call__(self, name: str) -> str:
-        run = self.run
-        values = sessions.share_values(name, self.material)
+    def _room(self, name: str) -> int:
+        """The tokens its first message may take: the room its window
+        leaves (working_set.room), less its system prompt, the brain's
+        starting context and what goes with the first message in its turn."""
+        chat = self.participants.get(name)
+        pick = getattr(chat, "pick", None)
+        if pick is None:
+            return 1 << 62
+        given = (pages.tokens(getattr(chat, "prompt", "") or system_of(name))
+                 + pages.starting_context(pick.engine))
         if name == AUTHOR:
-            values = {"{sender_answers: plainly, why_now}": _sender_answers(run.doc),
-                      "{the handoff's questions, each with the sender's options where it "
-                      "gives them}": _handoff_questions(run.doc),
-                      "{the gathered and marked material, with its knowledge state}":
-                          sessions._material(sessions.share(AUTHOR, author_material(run)),
-                                             marked=True)}
-        values["{the prep}"] = sessions._tag("prep", _read(run.prep), file=PREP_MD)
+            given += pages.tokens(self.run.turn)
+        else:
+            given += pages.tokens(_read(self.run.outline)) + 2 * pages.tokens(_read(self.run.script))
+            if self.swarm is not None:
+                given += sum(pages.tokens(m["text"]) for m in self.swarm.conversation
+                             if m["from"] != name)
+        return working_set.room(pages.budget(pick, name)) - given
+
+    def _fill(self, name: str, values: dict[str, str]) -> str:
         said = material_of(name, values)
         if name == EDITOR:
             # The editor's approved prompt closes on no material: it is
             # given its share of the evidence, each item marked, and the
             # prep it names ("You are given the script, ..., the prep"),
             # here.
-            said = "\n".join([sessions._material(sessions.share(EDITOR, self.material),
-                                                 marked=True), values["{the prep}"]])
+            said = "\n".join([values["{the evidence, each item with its knowledge state}"],
+                              values["{the prep}"]])
         if roles.role(name).release.tools:
-            said = f"{said}\n\n{evidence_note(run)}" if said else evidence_note(run)
+            said = f"{said}\n\n{evidence_note(self.run)}" if said else evidence_note(self.run)
         return said
+
+    def __call__(self, name: str) -> str:
+        run = self.run
+        prep = sessions._tag("prep", _read(run.prep), file=PREP_MD)
+        if name == AUTHOR:
+            values = {"{sender_answers: plainly, why_now}": _sender_answers(run.doc),
+                      "{the handoff's questions, each with the sender's options where it "
+                      "gives them}": _handoff_questions(run.doc), "{the prep}": prep}
+            key = ("{the working set: each question's prioritized sentences, the table of "
+                   "contents and the search hits}")
+            fixed = pages.tokens(self._fill(name, {**values, key: ""}))
+            ws = material_set(run, name, self._room(name) - fixed)
+            self.sizes[name] = {"working_set": True, "tokens": ws.tokens, "given": ws.given,
+                                "total": ws.total}
+            return self._fill(name, {**values, key: ws.text})
+        values = {**sessions.share_values(name, self.material), "{the prep}": prep}
+        values.setdefault("{the evidence, each item with its knowledge state}", "")
+        said = self._fill(name, values)
+        room = self._room(name)
+        if pages.tokens(said) <= room:
+            self.sizes[name] = {"working_set": False, "tokens": pages.tokens(said)}
+            return said
+        # Too large whole: the working set of its share, kept apart as its
+        # share is (Tim's reader: knows and had access, each its own).
+        if sessions.PROBABLY_NOT not in sessions.SHARES[name]:
+            empty = {**values, "{knows}": "", "{had_access}": ""}
+            left = room - pages.tokens(self._fill(name, empty))
+            knows = material_set(run, name, left // 2, (sessions.KNOWS,))
+            access = material_set(run, name, left - left // 2, (sessions.HAD_ACCESS,))
+            self.sizes[name] = {"working_set": True, "tokens": knows.tokens + access.tokens}
+            return self._fill(name, {**values, "{knows}": knows.text,
+                                     "{had_access}": access.text})
+        keys = [k for k in ("{the evidence, each item with its knowledge state}",
+                            "{the gathered and marked material, with its knowledge state}")
+                if k in values]
+        empty = {**values, **{k: "" for k in keys}}
+        ws = material_set(run, name, room - pages.tokens(self._fill(name, empty)))
+        self.sizes[name] = {"working_set": True, "tokens": ws.tokens, "given": ws.given,
+                            "total": ws.total}
+        return self._fill(name, {**values, **{k: ws.text for k in keys}})
 
 
 def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
@@ -435,8 +489,11 @@ def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
         if name == AUTHOR:
             author_engine = pick.engine
         participants[name] = chat
+    firsts = _Firsts(run, material)
+    firsts.participants = participants
     swarm = sessions.BrainSwarmSession(participants, concerns() + list(more), author=AUTHOR,
-                                       material=material, first=_Firsts(run, material))
+                                       material=material, first=firsts)
+    firsts.swarm = swarm
     if kept.get("swarm"):
         swarm.restore(kept["swarm"])
     return swarm
@@ -506,15 +563,6 @@ RESEARCH_EFFORT = "medium"
 # The program's searches, in the research log, as the program's own.
 SEARCHER = PROGRAM
 
-MORE_SEARCHES = sessions._array(sessions._object({
-    "words": {"type": "string", "description": "What to search for."},
-    "under": {"type": "string",
-              "description": "The path in JARVIS's knowledge to search under, or empty to "
-                             "search everywhere JARVIS searched."},
-    "why": {"type": "string", "description": "What a question still lacks that it finds."}}))
-RESEARCH_FORM = sessions._object({**TALK["properties"], "more_searches": MORE_SEARCHES})
-
-
 def _patience() -> float:
     """How long a research search is waited for: the run's own wall clock
     (Settings' run_timeout_sec, run_executor.bounds), as its role calls are."""
@@ -565,36 +613,22 @@ def first_searches(run: Run, search: work_research.Search) -> list[dict]:
     return _looked_up(run, calls)
 
 
-def more_searches(run: Run, search: work_research.Search, named: list[dict]) -> list[dict]:
-    """The searches the author named, at once: each its words, run as the
-    key searches under the path it gave, else everywhere the first ones
-    looked."""
-    calls = []
-    for want in named:
-        words = (want.get("words") or "").strip()
-        if words:
-            under = (want.get("under") or "").strip() or None
-            calls += work_research.key_searches(words, search,
-                                                [under] if under else _unders(run))
-    return _looked_up(run, calls)
+def _write_searched(run: Run, looked: list[dict], heading: str) -> None:
+    """What was looked up, written beside the run whole (SEARCHES_MD); the
+    author is given it short in its working set."""
+    with open(run.folder / SEARCHES_MD, "w", encoding="utf-8") as out:
+        out.write(work_research.markdown(heading, looked) + "\n")
 
 
-def _searched_text(run: Run, looked: list[dict], heading: str, first: bool) -> str:
-    """What was looked up, written beside the run (SEARCHES_MD: the first
-    searches, then the author's added to it) and as the author is given it."""
-    text = work_research.markdown(heading, looked)
-    with open(run.folder / SEARCHES_MD, "w" if first else "a", encoding="utf-8") as out:
-        out.write(text + "\n")
-    return sessions._tag("searched", text, file=SEARCHES_MD)
-
-
-def research_note(run: Run, earlier: Optional[Path], searched: str) -> str:
+def research_note(run: Run, earlier: Optional[Path]) -> str:
     """The program's words to the author for its research: what JARVIS
-    looked up for it, where what it starts from is, and where research.md
-    and prep.md go (construction-drafts.md "Research and prep reorganized";
-    workflow.yaml research start_from_work_item and output)."""
-    lines = [f"JARVIS ran every research search at once for each of your questions; "
-             f"what each found is below ({run.folder / SEARCHES_MD})."]
+    looked up for it, where what it starts from is, how it reads more, and
+    where research.md and prep.md go (construction-drafts.md "Research and
+    prep reorganized" and "The author works from a prioritized working set
+    and calls back for more"; workflow.yaml research start_from_work_item
+    and output)."""
+    lines = [f"JARVIS ran every research search at once for each of your questions; their "
+             f"hits are in your working set, short, and whole in {run.folder / SEARCHES_MD}."]
     if run.work_research is not None and run.work_research.is_dir():
         lines.append(f"The Work item's research is in {run.work_research}: what was looked up "
                      f"for it, each query with its hits ({work_research.QUERIES_MD}), and the "
@@ -607,24 +641,18 @@ def research_note(run: Run, earlier: Optional[Path], searched: str) -> str:
     if earlier is not None:
         lines.append(f"An earlier run's research is in {earlier}: its {RESEARCH_MD} and its "
                      f"search log ({research_log.NAME}).")
+    lines.append("When a question needs more than your working set holds, get it now, in "
+                 "this turn, with your tools: " + _tools_note(run, AUTHOR))
     lines.append(f"Write your research in {run.research}: each finding with its source path, "
                  f"for each question. Write the prep in {run.prep}. Write both in this turn.")
-    lines.append("If a question still lacks something, name the searches that would find it "
-                 "in `more_searches`: JARVIS runs them all at once and gives you what they "
-                 "found, once, to finish both files. Otherwise leave it empty.")
-    return "\n".join(lines) + "\n\n" + searched
-
-
-def more_note(run: Run, searched: str) -> str:
-    return (f"JARVIS ran the searches you named, at once; what each found is below. Finish "
-            f"your research in {run.research} and the prep in {run.prep} now.\n\n" + searched)
+    return "\n".join(lines)
 
 
 def research(doc: dict) -> None:
     """The research step of one run (package_jobs.PRODUCERS["research"]):
-    the program's searches, all at once; the author's one turn writing the
-    research and the prep at medium effort; and when it names more, those
-    searches at once and one more turn."""
+    the program's searches, all at once; then the author's one turn, from
+    its working set, writing the research and the prep at medium effort and
+    calling back through its tools for anything more it needs."""
     run = _run(doc, RESEARCH)
     kept = _kept(run)
     if kept.get("researched") and run.research.is_file() and run.prep.is_file():
@@ -633,8 +661,9 @@ def research(doc: dict) -> None:
     clock = Clock(kept)
     search = SEARCH()
     with clock("research-searches"):
-        searched = _searched_text(run, first_searches(run, search),
-                                  "What JARVIS looked up for the handoff's questions", True)
+        run.looked = first_searches(run, search)
+        _write_searched(run, run.looked, "What JARVIS looked up for the handoff's questions")
+    run.turn = research_note(run, earlier)
 
     async def go():
         swarm = build(run, kept, effort={AUTHOR: RESEARCH_EFFORT})
@@ -642,28 +671,24 @@ def research(doc: dict) -> None:
         try:
             await author.open()
             with clock(RESEARCH):
-                answer = await swarm.answer(AUTHOR, TIMEOUT,
-                                            research_note(run, earlier, searched), RESEARCH_FORM)
-            named = [w for w in answer.get("more_searches") or [] if (w.get("words") or "").strip()]
-            if named:
-                with clock("research-more-searches"):
-                    more = await asyncio.to_thread(more_searches, run, search, named)
-                    more_text = _searched_text(run, more, "What JARVIS looked up for the "
-                                                          "searches the author named", False)
-                with clock("research-more"):
-                    await swarm.answer(AUTHOR, TIMEOUT, more_note(run, more_text), TALK)
+                await swarm.answer(AUTHOR, TIMEOUT, run.turn, TALK)
+            given = (getattr(swarm._first, "sizes", None) or {}).get(AUTHOR)
+            if given:
+                kept.setdefault("given", {})[AUTHOR] = given
+                _log(f"research: the author's working set, {given['tokens']:,} tokens: "
+                     f"{given['given']} of {given['total']}")
         finally:
             _keep(run, swarm, kept)
             await author.close()
     package_jobs.asked(RESEARCH, "the author",
-                       "JARVIS asked the author to write the research and the prep from what "
-                       "its searches found.", go())
+                       "JARVIS asked the author to write the research and the prep from its "
+                       "working set and what its searches found.", go())
     missing = [p.name for p in (run.research, run.prep) if not p.is_file()]
     if missing:
         raise package_jobs.Blocked(RESEARCH, f"The author wrote no {' and no '.join(missing)}.",
-                                   "JARVIS gave the author what its searches found and asked for "
-                                   "its research, each finding with its source path, for each "
-                                   "question, and the prep.",
+                                   "JARVIS gave the author its working set and what its "
+                                   "searches found, and asked for its research, each finding "
+                                   "with its source path, for each question, and the prep.",
                                    "Read the run's conversation and log for why; a new run.")
     kept["researched"] = True
     _save(run, kept)

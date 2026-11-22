@@ -478,6 +478,18 @@ EXEMPT = {
         "it writes the summaries of what was looked up for a Work item into its research file, "
         "data/work/<id>/research/summaries.md, indexed as material, as markdown writes queries.md; "
         "never a brain header, never said"),
+    "working_set.prioritized": (
+        "it reads the mark step's own marks of the package's evidence (each sentence's id, "
+        "words, position and scores) into the working set a package role session is given as "
+        "its material, inside tagged items; never a brain header, never said"),
+    "working_set.shown": (
+        "it shows one marked sentence of the package's evidence, with its file, position and "
+        "scores, as a tagged item of a package role session's working set; never a brain "
+        "header, never said"),
+    "role_search.run": (
+        "the author's batch search on its own tool server: what the engine found is given back "
+        "to that role session as its tool's answer, short, and kept in the run's search log; "
+        "never a brain header, never said"),
     "claude_provider.role_command": (
         "it builds a package role's `claude -p` argument list; the only field it reads is the "
         "session id JARVIS made for that role's own session (`--session-id`), and the role's "

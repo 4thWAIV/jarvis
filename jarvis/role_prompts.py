@@ -16,8 +16,10 @@ wording of the smart passes (Tim 2026-11-21: each sentence, or item, at
 most its top three at 0.5 or more; first-round prompt changes
 pre-approved), recorded in role-prompts.md; so are the author's lines on
 researching, the first-round wording of research and prep reorganized (Tim
-2026-11-21: JARVIS runs every search at once, the author names any more
-it needs, and writes the research and the prep together). A role with no closing
+2026-11-21: JARVIS runs every search at once and the author writes the
+research and the prep together) and of the prioritized working set (Tim
+2026-11-21: the author works from a working set and calls back with its
+tools for more). A role with no closing
 material (the editor) is given its material turn by turn.
 """
 from __future__ import annotations
@@ -72,8 +74,8 @@ PROMPTS: dict[str, Prompt] = {
             'Order: the most relevant information first, not buried. Context and anything he already approved, then what happened and why, then the exact change and what it does, then the decision. Follow-up questions last.\n'
             '\n'
             'Before you write:\n'
-            "1. Read what JARVIS's searches found for each question, what the Work item's research already holds, the marked evidence and the scores against the questions.\n"
-            '2. Where a question still lacks something, name in your answer the searches that would find it: JARVIS runs them all at once and gives you what they found. Name only what each question still lacks, not a sweep.\n'
+            "1. Read your working set: for each question, the sentences marking found bearing on it, highest first, each with its labels, file and position; the table of contents of the evidence; and what JARVIS's searches found, as short hits. It is not everything: the table of contents names every file, and what was left out is said.\n"
+            '2. Where a question needs more, get it in this turn with your tools: read_package_file and search_package_files for a file, knowledge_search under the evidence, search_at_once to run several searches at once, and your research tools. Start from what the Work item\'s research already holds. Read a whole file only when you need it.\n'
             '3. Never state anything about material you have not opened.\n'
             '\n'
             'Then write the research and the prep together, then the script.\n'
@@ -92,7 +94,7 @@ PROMPTS: dict[str, Prompt] = {
             "Before the script, write the outline: for each slide, its title, its one point, the question it answers (one of the handoff's questions, or background for one), and the evidence it rests on, by source path. The owners work on the outline and you settle any conflict between them, saying why. Write the script only from the agreed outline.\n"
             '\n'
             'After each pass, the program gives you one list of what is left, merged from every owner and the editor, each item with who raised it and the fix they suggest. Work through the list; for each item, change the script or say why not.'),
-        material="The sender's two answers (the sender's, not Tim's):\n{sender_answers: plainly, why_now}\n\nYour questions: {the handoff's questions, each with the sender's options where it gives them}\n\nThe material, each item marked knows, had access or probably does not know:\n{the gathered and marked material, with its knowledge state}"),
+        material="The sender's two answers (the sender's, not Tim's):\n{sender_answers: plainly, why_now}\n\nYour questions: {the handoff's questions, each with the sender's options where it gives them}\n\nYour working set, each item marked knows, had access or probably does not know (read the rest with your tools):\n{the working set: each question's prioritized sentences, the table of contents and the search hits}"),
     'editor': Prompt(
         system=(
             'You are the editor of a briefing for Tim, in one conversation with its author and three owners. You own the language: plain words Tim would say out loud, every term defined where it first appears, one word for one thing (never one word for two parties or two things), no filler, disclaimers, repetition or formulaic AI phrasing.\n'

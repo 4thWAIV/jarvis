@@ -4,8 +4,9 @@
 Built on the brain's own server (jarvis_mcp.py) and offering only the
 role's tools (`roles.Role.tools`), never a sending command. A GitHub lookup
 of retrieval's (`role_lookups.py`) runs here, one fixed `gh` call, and so
-does a file tool (`role_files.py`), read only inside the folders given with
-`--read` (the run folder first); every
+do a file tool (`role_files.py`), read only inside the folders given with
+`--read` (the run folder first), and the author's batch search
+(`role_search.py`, several searches at once on the engine); every
 other call goes over JARVIS's own tool channel (`POST /internal/tool`, the tool token: the
 role acts as JARVIS) naming the role, and the server answers it only for a
 tool that role has, as a call that is not his turn: no acting tool, no
@@ -26,7 +27,8 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis import jarvis_mcp, research_log, role_files, role_lookups, roles  # noqa: E402
+from jarvis import (jarvis_mcp, research_log, role_files, role_lookups, role_search,  # noqa: E402
+                    roles)
 
 ROLE = ""
 LOG: Path | None = None
@@ -38,7 +40,8 @@ def tool_specs(role: str) -> list[dict]:
     wanted = set(roles.role(role).tools)
     return ([s for s in jarvis_mcp.TOOL_SPECS if s["name"] in wanted]
             + [l.spec for name, l in role_lookups.LOOKUPS.items() if name in wanted]
-            + [s for s in role_files.SPECS if s["name"] in wanted])
+            + [s for s in role_files.SPECS if s["name"] in wanted]
+            + [s for s in role_search.SPECS if s["name"] in wanted])
 
 
 def _answer(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
@@ -49,6 +52,9 @@ def _answer(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
         return ok, text, None
     if tool in role_files.NAMES:
         ok, text = role_files.call(FILES, tool, arguments)
+        return ok, text, None
+    if tool in role_search.NAMES:
+        ok, text = role_search.call(arguments)
         return ok, text, None
     return jarvis_mcp._forward(tool, arguments, role=ROLE)
 

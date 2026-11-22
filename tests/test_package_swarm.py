@@ -97,7 +97,6 @@ class Plan:
         self.forms: dict[str, list[dict]] = {}
         self.opened: list[tuple[str, str | None]] = []
         self.efforts: list[tuple[str, str]] = []
-        self.more: list[dict] = []              # the searches the author names
         self.script = script_of("PR 171 moves every Work item.", "files/situation.md")
         self.outline = outline_of()
         self.prep = "Does Tim care: yes."
@@ -139,13 +138,12 @@ class Plan:
                     "signoff": [{"concern": c, "state": state,
                                  "reason": f"{name}: {c} is fine" if state == "resolved"
                                  else "", "left": left} for c in concerns]}
-        if "more_searches" in props:
-            assert name == "author" and "Write your research in" in text
+        assert set(props) == {"message"}
+        if "Write your research in" in text:
+            assert name == "author"
             (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")
             if self.prep is not None:
                 (self.folder / ps.PREP_MD).write_text(self.prep)
-            return {"message": f"{name} speaks", "more_searches": self.more}
-        assert set(props) == {"message"}
         return {"message": f"{name} speaks"}
 
 
@@ -250,12 +248,15 @@ def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, p
     assert (question, None, ["turn"]) in plan.searched
     first = plan.sent["author"][0]
     # Its approved material: the sender's two answers, the questions, and
-    # everything gathered and marked, each item with Tim's knowledge state.
+    # its working set: the contents of the evidence, each file with Tim's
+    # knowledge state, the sentences prioritized for each question and the
+    # searches' short hits; never a file whole.
     assert "PR 171 moves the Work items." in first and question in first
+    assert "<contents>" in first and '<file path="files/situation.md"' in first
     assert 'state="probably_does_not_know"' in first and 'state="knows"' in first
-    assert "mark/files/situation.md.json" not in first, "the marks in place in the file, never a second copy"
-    # What the searches found, in the same turn, and kept beside the run.
-    assert f"Found for {question}." in first and '<searched file="research-searches.md">' in first
+    assert "<left_out>" in first and "search_at_once" in first
+    # What the searches found, short in the working set, and whole beside the run.
+    assert f"Found for {question}." in first and "<hit " in first
     assert f"Found for {question}." in (folder / ps.SEARCHES_MD).read_text()
     # Where it starts from, and the one evidence path every search names.
     assert "knowledge_search under that path" in first and place.path in first
@@ -272,30 +273,11 @@ def test_research_is_the_program_s_searches_then_the_author_s_one_turn(marked, p
     assert kept["swarm"]["conversation"] == [{"from": "author", "text": "author speaks"}]
     assert [t["stage"] for t in kept["times"]] == ["research-searches", "research"]
     assert plan.opened == [("author", None)], "only the author researches"
-    assert plan.forms["author"] == [ps.RESEARCH_FORM], "one turn when it names no more"
+    assert plan.forms["author"] == [ps.TALK], "one turn: it calls back with its tools for more"
+    assert kept["given"]["author"]["working_set"]
     # Medium effort for the research turn alone.
     assert ("author", ps.RESEARCH_EFFORT) in plan.efforts
     assert dict(plan.efforts)["tims_reader"] == roles.role("tims_reader").effort
-
-
-def test_the_searches_the_author_names_run_at_once_then_one_more_turn(marked, plan):
-    plan.more = [{"words": "the old folders", "under": "/work/x", "why": "how it was"},
-                 {"words": "the release", "under": "", "why": "when"},
-                 {"words": "  ", "under": "", "why": "nothing"}]
-    ps.research(pj.get(marked["id"]))
-    folder = Path(marked["folder"])
-    assert ("the old folders", "/work/x", None) in plan.searched
-    assert ("the old folders", None, None) not in plan.searched, "only under its path"
-    assert ("the release", pe.place_of(marked).path, None) in plan.searched
-    assert ("the release", None, None) in plan.searched
-    assert len(plan.forms["author"]) == 2 and plan.forms["author"][1] == ps.TALK
-    assert "Found for the old folders." in plan.sent["author"][1]
-    assert "JARVIS ran the searches you named" in plan.sent["author"][1]
-    searched = (folder / ps.SEARCHES_MD).read_text()
-    assert "Found for Merge PR 171?." in searched and "Found for the release." in searched
-    kept = json.loads((folder / ps.STATE).read_text())
-    assert [t["stage"] for t in kept["times"]] == [
-        "research-searches", "research", "research-more-searches", "research-more"]
 
 
 def test_research_without_its_prep_is_an_error(marked, plan):
@@ -398,6 +380,27 @@ def test_each_participant_is_given_exactly_its_share(marked, plan):
     # The script is marked with what Tim knows, never the words of what he does not.
     knowledge = Marking.calls[0][1]
     assert all(k.text == "" for k in knowledge if k.state == pe.PROBABLY_NOT)
+
+
+def test_a_share_too_large_whole_is_given_as_its_working_set(marked, plan, monkeypatch):
+    """construction-drafts.md "The author works from a prioritized working
+    set and calls back for more": an owner's share stays its share, but past
+    its window it comes as the working set of that share, read further with
+    its tools; Tim's reader's two kept apart."""
+    real = ps._Firsts._room
+    monkeypatch.setattr(ps._Firsts, "_room", lambda self, name: (
+        real(self, name) if name == "author" else 300 if name == "tims_reader" else 1_500))
+    _research_and_swarm(marked)
+    first = {name: sent[0] for name, sent in plan.sent.items()}
+    secret = "FAILED tests/test_x.py::test_move"
+    for name in ("context_owner", "structure_owner", "editor"):
+        assert "<left_out>" in first[name] and "This is a working set" in first[name], name
+        assert secret not in first[name], "no file whole"
+        assert "read_package_file" in first[name], name
+        assert "Does Tim care: yes." in first[name], "the prep still given"
+    assert "<left_out>" in first["tims_reader"] and "you have no tools" in first["tims_reader"]
+    assert secret not in first["tims_reader"] and "probably_does_not_know" not in \
+        first["tims_reader"], "still only what he knows and had access to"
 
 
 LEFT = [{"what": "The decision slide does not say what each choice does.",
@@ -522,15 +525,3 @@ def test_only_rounds_of_questions_count_toward_five(marked):
     assert pj.question_rounds(pj.get(marked["id"])) == pj.MAX_ROUNDS
 
 
-def test_the_author_reads_each_file_once_with_its_marks_in_place():
-    """The marks are tags before the sentences they label, never a second
-    copy of the text: the author's material stays near the files' size."""
-    from jarvis.package_swarm import annotated
-    text = "First sentence. Second one. Third."
-    marks = {"parts": [
-        {"id": "s1", "position": {"start": 0, "end": 15}, "scores": {"background": 0.8}},
-        {"id": "s2", "position": {"start": 16, "end": 27}, "scores": {}},
-        {"id": "s3", "position": {"start": 28, "end": 34}, "scores": {"evidence": 0.9}}],
-        "questions": [{"item": "s3", "scores": {"q1": 0.7}}], "facts": []}
-    out = annotated(text, marks)
-    assert out == "[s1 background .8] First sentence. Second one. [s3 evidence .9 | q q1 .7] Third."
