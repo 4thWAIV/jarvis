@@ -1,9 +1,14 @@
 """The mark step: what gather collected, read and marked (workflow.yaml mark,
 approved by Tim 2026-11-18: "3. I approve it.").
 
-Run after gather in JARVIS's own process (package_jobs.PRODUCERS), once per
-package like the evidence it reads: a later run of the same package reuses
-what is marked and only waits for it to be indexed. In order:
+Run after gather in JARVIS's own process (package_jobs.PRODUCERS), one
+file at a time as far as what it reads goes (step_cache.py, unit
+`mark-file`): each gathered file's key is its bytes, its knowledge state,
+the handoff's questions, the labels and, for a prose file, Tim's material
+it is marked with; a file whose key is kept is reused, and only the files
+whose inputs changed are read and marked, together. What was written into
+the evidence after it was gathered (the sender's answers, his Reject words)
+is not marked (package_evidence.gathered_rows). In order:
 
   type_files          each stored file given a type from its content and name
                       (evidence_structured.type_of), written into its
@@ -58,14 +63,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
 from jarvis import (briefing_labels, evidence_structured as es, package_evidence as pe,
-                    records)
+                    records, step_cache)
 from jarvis.package_evidence import HAD_ACCESS, KNOWS, PROBABLY_NOT, Row
 
 STEP = "mark"
@@ -264,12 +268,13 @@ def _placed(f: FileMarks, part: dict) -> dict:
 
 
 async def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row],
-                     on_page: Optional[Callable[[list[tuple[FileMarks, dict]]], None]] = None
-                     ) -> None:
+                     on_page: Optional[Callable[[list[tuple[FileMarks, dict]]], None]] = None,
+                     texts: Optional[dict[str, str]] = None) -> None:
     """Every prose file, in full, to MarkingSession at once, each sentence
     given at most its top 3 of the 28 labels at 0.5 or more; each
     sentence's position read back into the file. `on_page`: called with
-    each page's parts, each with its file, as the page is marked."""
+    each page's parts, each with its file, as the page is marked. `texts`:
+    every gathered file's text, for Tim's material (else the files')."""
     from jarvis import package_jobs, sessions
     prose = [f for f in files if f.view.text and f.prose_file]
     if not prose:
@@ -284,7 +289,8 @@ async def mark_prose(doc: dict, files: list[FileMarks], rows: list[Row],
         STEP, "marking", f"JARVIS asked marking to mark {len(prose)} prose file(s).",
         session.mark_files([sessions.Text(f.stored, f.view.text, f.row.file_type or "")
                             for f in prose], briefing_labels.for_marking(),
-                           tim_known(rows, {f.stored: f.text for f in files}), None,
+                           tim_known(rows, texts if texts is not None
+                                     else {f.stored: f.text for f in files}), None,
                            on_page=page_marked if on_page is not None else None))
     for f in prose:
         f.parts += [_placed(f, part) for part in marked[f.stored]]
@@ -325,7 +331,8 @@ async def _cancelling(*works) -> list:
         raise
 
 
-async def read_and_score(doc: dict, files: list[FileMarks], rows: list[Row]) -> None:
+async def read_and_score(doc: dict, files: list[FileMarks], rows: list[Row],
+                         texts: Optional[dict[str, str]] = None) -> None:
     """extract_prose, mark_prose and relate_to_questions as one pipeline:
     every fact and marked sentence to ClassificationSession as soon as it
     is had (the program's facts at once, extraction's when it answers, a
@@ -347,7 +354,7 @@ async def read_and_score(doc: dict, files: list[FileMarks], rows: list[Row]) -> 
 
     async def marking() -> None:
         await mark_prose(doc, files, rows, on_page=lambda parts: groups.put_nowait(
-            [_part_item(f, p) for f, p in parts]))
+            [_part_item(f, p) for f, p in parts]), texts=texts)
 
     async def read() -> None:
         try:
@@ -370,20 +377,53 @@ async def read_and_score(doc: dict, files: list[FileMarks], rows: list[Row]) -> 
 
 # ── the step ──────────────────────────────────────────────────────────────
 
-def _write(place: pe.Place, doc: dict, files: list[FileMarks]) -> None:
-    for f in files:
-        place.write(f"{MARK}/{f.stored}.json",
-                    json.dumps(f.json(place), indent=2, ensure_ascii=False).encode("utf-8"))
+def _marks_path(stored: str) -> str:
+    return f"{MARK}/{stored}.json"
+
+
+def _write_index(place: pe.Place, doc: dict, marks: list[dict]) -> None:
+    """`mark/marked.json`: the labels, the questions and each file's marks
+    (`marks`: each file's mark JSON, in the order marked)."""
     from jarvis import sessions
     index = {"labels": list(briefing_labels.NAMES),
              "questions": [{"id": q.id, "asks": q.asks} for q in questions_of(doc)]
              + [{"id": sessions.BACKGROUND, "asks": sessions.BACKGROUND}],
-             "files": [{"file": f.stored, "type": f.row.file_type,
-                        "prose_file": f.prose_file, "marks": f"{MARK}/{f.stored}.json",
-                        "facts": len(f.facts), "parts": len(f.parts),
-                        **({"extraction": f.extraction} if f.extraction else {})}
-                       for f in files]}
+             "files": [{"file": m["file"], "type": m.get("type"),
+                        "prose_file": m.get("prose_file"), "marks": _marks_path(m["file"]),
+                        "facts": len(m.get("facts") or []), "parts": len(m.get("parts") or []),
+                        **({"extraction": m["extraction"]} if m.get("extraction") else {})}
+                       for m in marks]}
     place.write(INDEX, json.dumps(index, indent=2, ensure_ascii=False).encode("utf-8"))
+
+
+def _write_marks(place: pe.Place, marks: dict) -> None:
+    place.write(_marks_path(marks["file"]),
+                json.dumps(marks, indent=2, ensure_ascii=False).encode("utf-8"))
+
+
+# The one file a mark-file unit keeps: the file's marks, its item path left
+# out (each package's evidence has its own; put back as it is restored).
+KEPT = "marks.json"
+LABELS_KEY = step_cache.digest(list(briefing_labels.NAMES))
+
+
+def unit_of(doc: dict, place: pe.Place, f: FileMarks, rows: list[Row],
+            texts: dict[str, str]) -> step_cache.Unit:
+    """One gathered file's mark unit: its bytes, its row's type and
+    knowledge state, the handoff's questions and the labels; for a prose
+    file, Tim's material it is marked with (every other gathered file's
+    state, and the text of each he knows or had access to)."""
+    tim = None
+    if f.prose_file:
+        tim = step_cache.digest([[r.stored, r.knowledge_state,
+                                  step_cache.digest(texts.get(r.stored, ""))
+                                  if r.knowledge_state in (KNOWS, HAD_ACCESS) else None]
+                                 for r in rows if r.stored and r.stored != f.stored])
+    return step_cache.Unit("mark-file", f.stored, {
+        "sha": step_cache.file_sha(place.folder / f.stored), "type": f.row.type,
+        "state": f.row.knowledge_state,
+        "questions": [[q.id, q.asks] for q in questions_of(doc)],
+        "labels": LABELS_KEY, "tim": tim})
 
 
 def marked(place: pe.Place) -> Optional[dict]:
@@ -399,28 +439,52 @@ def marked(place: pe.Place) -> Optional[dict]:
 
 
 def mark(doc: dict) -> None:
-    """The mark step of one run (package_jobs.PRODUCERS["mark"])."""
+    """The mark step of one run (package_jobs.PRODUCERS["mark"]): each
+    gathered file's marks reused from the step cache when its inputs are
+    kept, the rest read and marked together."""
     from jarvis import package_jobs
     from jarvis.package_jobs import Blocked
     place = pe.place_of(doc)
-    record = pe.gathered(place)
-    if record is None:
+    if pe.gathered(place) is None:
         raise Blocked(STEP, "The package's evidence was not gathered.",
                       "JARVIS reached the mark step.",
                       "A new run, which gathers the evidence first.")
-    if record.get("marked_at"):
-        pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))        # marked once: every run reuses it
-        return
-    folder = place.folder / MARK
-    if folder.exists():                     # a run that stopped part way: marked again
-        shutil.rmtree(folder)
     rows = pe.read_manifest(place)
-    files = grouped(type_files(place, rows))
-    read_structured(files)
-    package_jobs.in_step(read_and_score(doc, files, rows))
-    _write(place, doc, files)
+    gathered = pe.gathered_rows(rows)
+    names = {r.stored for r in gathered if r.stored}
+    files = [f for f in type_files(place, rows) if f.stored in names]
+    texts = {f.stored: f.text for f in files}
+    units = {f.stored: unit_of(doc, place, f, gathered, texts) for f in files}
+    marks: dict[str, dict] = {}
+    todo = []
+    for f in files:
+        entry = step_cache.reuse(units[f.stored], doc)
+        if entry is None:
+            todo.append(f)
+            continue
+        kept = json.loads(entry.text(KEPT))
+        marks[f.stored] = {**kept, "item": place.item(f.stored)}
+        _write_marks(place, marks[f.stored])
+    if todo:
+        began = time.time()
+        todo = grouped(todo)
+        read_structured(todo)
+        package_jobs.in_step(read_and_score(doc, todo, gathered, texts))
+        for f in todo:
+            marks[f.stored] = f.json(place)
+            _write_marks(place, marks[f.stored])
+            step_cache.computed(units[f.stored], doc, began, files_from={KEPT: json.dumps(
+                {**marks[f.stored], "item": ""}, indent=1, ensure_ascii=False).encode("utf-8")})
+    _write_index(place, doc, [marks[f.stored] for f in files])
     pe.wait_indexed(place, STEP, text_only=(f"/{MARK}/",))
     records.update(place.record, lambda d: {**(d or {}), "marked_at": time.time(),
                                             "marked": INDEX},
                    by=records.JARVIS, change="evidence marked",
-                   summary=f"{len(files)} file(s) read and marked")
+                   summary=f"{len(files)} file(s) read and marked, {len(todo)} of them now")
+
+
+def marks_digest(place: pe.Place) -> str:
+    """What the mark step read, as the steps after it name it: each file's
+    marks, its item path left out."""
+    index = marked(place) or {}
+    return step_cache.digest([{**e["marks"], "item": ""} for e in index.get("files") or []])

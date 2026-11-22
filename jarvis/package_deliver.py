@@ -28,7 +28,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from jarvis import package_jobs, package_script, package_signature, package_swarm as ps
+from jarvis import (package_jobs, package_script, package_signature, package_swarm as ps,
+                    step_cache)
 
 DELIVER = "deliver"
 FOLDER = "package"                       # the signed package, in the run's folder
@@ -81,8 +82,10 @@ def message_of(script: dict, request: dict) -> str:
 
 def deliver(doc: dict) -> Optional[str]:
     """The deliver step of one run (package_jobs.PRODUCERS["deliver"]): the
-    package assembled, its message written, signed with JARVIS's own key
-    and sent to its sender to check; WAITING on that check."""
+    package assembled, its message written and signed with JARVIS's own key
+    (reused from the step cache when its inputs, the built deck, the
+    briefing, the message and who asked, are kept), then sent to its sender
+    to check; WAITING on that check."""
     run = ps._run(doc, DELIVER)
     noted = _deck_noted(doc)
     built = Path(noted["archive"])
@@ -90,13 +93,22 @@ def deliver(doc: dict) -> Optional[str]:
     if folder.exists():
         shutil.rmtree(folder)
     folder.mkdir(parents=True)
-    unsigned = folder / f"unsigned-{built.name}"
-    shutil.copyfile(built, unsigned)
-    package_signature.add_files(unsigned, briefing_files(run, Path(noted["review"])))
-    signed = folder / built.name
-    package_jobs.sign(doc, unsigned, signed)
-    unsigned.unlink()
+    briefing = briefing_files(run, Path(noted["review"]))
     message = message_of(package_script.read(run.script) or {}, doc.get("request") or {})
+    unit = step_cache.Unit(DELIVER, "", {
+        "deck": step_cache.file_sha(built), "name": built.name,
+        "briefing": {k: step_cache.digest(v.decode("utf-8", "replace"))
+                     for k, v in briefing.items()},
+        "message": message, "requested_by": doc.get("requested_by")})
+
+    def assemble() -> None:
+        unsigned = folder / f"unsigned-{built.name}"
+        shutil.copyfile(built, unsigned)
+        package_signature.add_files(unsigned, briefing)
+        package_jobs.sign(doc, unsigned, folder / built.name)
+        unsigned.unlink()
+    step_cache.run(unit, doc, assemble, folder=folder, files=[built.name])
+    signed = folder / built.name
     package_jobs.noted(doc["id"], DELIVER, {"archive": str(signed), "message": message})
     package_jobs.ask_check(doc["id"], {"archive": str(signed), "folder": noted["folder"],
                                        "message": message})

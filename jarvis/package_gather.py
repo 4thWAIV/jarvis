@@ -5,7 +5,11 @@ JARVIS knows from its own records (workflow.yaml gather, decided
 Run as the first step of a package's run (package_jobs.PRODUCERS), in
 JARVIS's own process, once per package: a later run of the same package
 reuses the evidence already gathered (package_evidence.gathered) and only
-waits for it to be indexed. In order:
+waits for it to be indexed. Its key (step_cache.py, `unit_of`) is the
+handoff, the Work items it is about, the sending session and its engine:
+a package asked again with the same handoff (a new request) reuses the
+evidence any run gathered from it, copied into its own evidence folder and
+indexed there. In order:
 
   copy_files             each file entry copied into `files/`, its name kept
                          and its hash recorded; not there, not_found
@@ -36,10 +40,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from jarvis import evidence_readers, package_evidence as pe, session_transcript
+from jarvis import evidence_readers, package_evidence as pe, session_transcript, step_cache
 from jarvis.package_evidence import OK, NOT_FOUND, Row
 
 STEP = "gather"
@@ -415,16 +420,23 @@ def tim_record(doc: dict) -> tuple[str, str]:
 
 
 def refresh_tim(doc: dict) -> Row:
-    """Tim's record in the package's evidence made again (`jarvis/tim.md`,
-    gather_jarvis_material's), now holding his Reject words on its earlier
-    runs (workflow.yaml gather: "his Reject words -> evidence/jarvis/tim.md"),
-    so the next run reads them: its manifest row's hash and size made new,
-    and indexed as it is written. The row."""
+    """His Reject words on the package's earlier runs written into its
+    evidence (`jarvis/tim-rejected.md`, workflow.yaml gather: "his Reject
+    words -> evidence"), so the next run reads them: a row of its own in the
+    manifest, written after the evidence was gathered as the sender's
+    answers are (package_evidence.gathered_rows), indexed as it is written.
+    Tim's record as gathered (`jarvis/tim.md`) stays as it was, so what
+    read it is reused (step_cache.py); his words reach the next run as the
+    revision they are. The row."""
+    from jarvis import package_jobs
     g = Gathering(doc)
-    text, source = tim_record(doc)
-    rows = [r for r in pe.read_manifest(g.place) if r.stored != pe.TIM_RECORD]
-    sha, size = g.place.write(pe.TIM_RECORD, text.encode("utf-8"))
-    row = Row("tim", pe.JARVIS_TYPE, source, pe.TIM_RECORD, sha, size, origin="jarvis")
+    said = package_jobs.rejections(doc["package"])
+    text = "\n".join(["# His Reject of this package's earlier runs", ""]
+                     + [f"- {r['run']}: {r['words']}" for r in said] + [""])
+    rows = [r for r in pe.read_manifest(g.place) if r.stored != pe.TIM_REJECTED]
+    sha, size = g.place.write(pe.TIM_REJECTED, text.encode("utf-8"))
+    row = Row("tim-rejected", pe.JARVIS_TYPE, package_jobs.path_of(doc), pe.TIM_REJECTED, sha,
+              size, origin="jarvis")
     row.knowledge_state = pe.knowledge_state(row)
     pe.write_manifest(g.place, rows + [row])
     try:
@@ -527,14 +539,49 @@ def _handoff(g: Gathering) -> None:
                origin="jarvis", record=package_jobs.path_of(g.doc)))
 
 
+def unit_of(doc: dict) -> step_cache.Unit:
+    """The gather step's unit: its inputs are the handoff (as submitted and
+    as checked), the Work items it is about, the sending session and its
+    engine."""
+    submitted = doc.get("submitted")
+    return step_cache.Unit(STEP, "", {
+        "handoff": submitted if submitted is not None else doc.get("request"),
+        "request": doc.get("request"), "work": _work_ids(doc),
+        "session": doc.get("session") or "", "engine": doc.get("engine") or ""})
+
+
+# What lies in the evidence folder that the gather step did not make.
+NOT_GATHERED = (pe.SENDER_ANSWERS, "mark", pe.TIM_REJECTED)
+
+
+def _gathered_files(place: pe.Place) -> list[str]:
+    tops = sorted(p.name for p in place.folder.iterdir()) if place.folder.is_dir() else []
+    return [rel for rel in step_cache.expand(place.folder, tops)
+            if not any(rel == n or rel.startswith(n + "/") for n in NOT_GATHERED)
+            and not rel.split("/")[-1].startswith(".")]
+
+
 def gather(doc: dict) -> None:
     """The gather step of one run (package_jobs.PRODUCERS["gather"])."""
     place = pe.place_of(doc)
+    unit = unit_of(doc)
     if pe.gathered(place) is not None:
-        pe.wait_indexed(place, STEP)        # gathered once: every run reuses it
+        # Gathered for this package: every run of it reuses it.
+        step_cache.note(doc, unit, step_cache.REUSED, 0.0, step_cache.lookup(unit))
+        pe.wait_indexed(place, STEP)
         return
     if place.folder.exists():               # a run that stopped part way: gathered again
         shutil.rmtree(place.folder)
+    began = time.time()
+    entry = step_cache.lookup(unit)
+    if entry is not None:
+        # Gathered by a package asked with the same handoff: its evidence
+        # copied into this package's folder and indexed here.
+        step_cache.restore(entry, place.folder)
+        items = pe.wait_indexed(place, STEP)
+        pe.link(place, items, pe.read_manifest(place), unit.key)
+        step_cache.note(doc, unit, step_cache.REUSED, time.time() - began, entry)
+        return
     g = Gathering(doc)
     _handoff(g)
     labels = []
@@ -554,4 +601,5 @@ def gather(doc: dict) -> None:
         row.knowledge_state = pe.knowledge_state(row)
     pe.write_manifest(place, g.rows)
     items = pe.wait_indexed(place, STEP)
-    pe.link(place, items, g.rows)
+    pe.link(place, items, g.rows, unit.key)
+    step_cache.computed(unit, doc, began, folder=place.folder, files=_gathered_files(place))

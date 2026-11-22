@@ -85,3 +85,8 @@ def test_what_cannot_fit_is_measured_and_said(tmp_path):
     [problem] = deck_fit.problems(fit)
     assert problem.startswith("Slide 3 (where) does not fit even after JARVIS's own fitting")
     assert "Split it into two slides" in problem
+    # One slide alone (the step cache keeps each slide's fit, and only a
+    # slide whose layout changed is measured again): the same measure.
+    alone = deck_fit.measure(folder, [(662, 489), (1600, 900)], only=["where"])
+    assert [s["id"] for s in alone["slides"]] == ["where"]
+    assert alone["slides"][0]["cut"] == where["cut"] and alone["slides"][0]["slide"] == 3

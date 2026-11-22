@@ -1,0 +1,277 @@
+"""The package steps' cache, keyed by their inputs (construction-drafts.md
+"Step cache keyed by inputs", approved by Tim 2026-11-22: "Yes, GO"; the
+standard design, as make and Bazel do it).
+
+Every package step is a function of named inputs. A unit of work (`Unit`:
+its kind, the name of what it makes within the kind, its inputs) has a key,
+the SHA-256 of its inputs in canonical JSON (`key`): content hashes of the
+files it reads, the outputs (by their digest) of the units it reads, and
+the words it is given. Its output (files, and a value) is kept under that
+key with how long it took (`keep`), in one folder a key under
+`data_paths.package_cache_dir()`, shared by every package and run. A run
+works out each unit's key and reuses the kept output when it exists
+(`reuse`): only units whose inputs changed, and those that read them, run.
+
+Model calls are not deterministic, so a key is of the inputs, never of the
+output; a unit that reads another names that unit's output digest
+(`Entry.digest`, worked out when the output was kept), so a unit made
+again with a different output changes every unit after it. Only work that
+finished is kept: a unit that failed or asked the sender and has not had
+its answers yet keeps nothing (a failed action is never cached).
+
+Each unit, reused or computed, is written into the run's timing.json
+(run_report.unit): its kind and name, its key, `reused` or `computed`, its
+seconds, and for a reused one the run that made it. A unit computed when
+its key was already kept is `recomputed`: by construction it never
+happens, and the tests fail any that does.
+
+The units (package_jobs.STEPS): `gather`; `mark-file` (one a file of the
+evidence); `research`; the swarm's stages `swarm-outline`, `swarm-fill`,
+`swarm-passes` and `swarm-revision` (one a revision), and `script-slide`
+(one a slide); `deck-header`, `deck-source`, `deck-fit` and `deck-review`
+(one a slide each), `deck-build` and `deck`; and `deliver`.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import shutil
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Iterable, Optional
+
+from jarvis import data_paths
+
+log = logging.getLogger("jarvis.step_cache")
+
+VERSION = "step-cache/1"
+REUSED, COMPUTED, RECOMPUTED = "reused", "computed", "recomputed"
+ENTRY = "entry.json"
+FILES = "files"
+# Each kind's own version: raised when what the kind computes changes, so
+# outputs kept by the code before are not reused.
+VERSIONS: dict[str, int] = {}
+
+
+def canonical(value: Any) -> str:
+    """A value as canonical JSON: keys sorted, no spaces, UTF-8."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+                      default=str)
+
+
+def digest(value: Any) -> str:
+    return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
+
+
+def file_sha(path: Path) -> Optional[str]:
+    """A file's SHA-256, or None when it is not there."""
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def files_sha(folder: Path, names: Iterable[str]) -> dict[str, Optional[str]]:
+    """Each named file's SHA-256 under `folder` (a folder's files, each)."""
+    return {rel: file_sha(Path(folder) / rel) for rel in expand(folder, names, missing=True)}
+
+
+@dataclass(frozen=True)
+class Unit:
+    """One unit of a package step's work: its kind, what it makes within
+    the kind ("" for one a run), and its inputs."""
+    kind: str
+    name: str = ""
+    inputs: dict = field(default_factory=dict, hash=False, compare=False)
+
+    @property
+    def key(self) -> str:
+        return digest({"cache": VERSION, "kind": self.kind, "version": VERSIONS.get(self.kind, 1),
+                       "name": self.name, "inputs": self.inputs})
+
+    @property
+    def label(self) -> str:
+        return f"{self.kind}:{self.name}" if self.name else self.kind
+
+
+@dataclass
+class Entry:
+    """A unit's kept output: its files (each with its SHA-256), its value,
+    its digest (of both), who made it and how long it took."""
+    kind: str
+    name: str
+    key: str
+    digest: str
+    files: dict[str, str]
+    value: Any
+    made: dict
+    seconds: float
+    path: Path
+
+    def file(self, rel: str) -> Path:
+        return self.path / FILES / rel
+
+    def text(self, rel: str) -> str:
+        return self.file(rel).read_text(encoding="utf-8")
+
+
+def root() -> Path:
+    return data_paths.package_cache_dir()
+
+
+def _dir(kind: str, key: str) -> Path:
+    return root() / kind / key[:2] / key
+
+
+def expand(folder: Path, names: Iterable[str], missing: bool = False) -> list[str]:
+    """The files the names hold under `folder`, relative to it: a file
+    itself, a folder every file under it (in order); a name not there is
+    left out (with `missing`, kept)."""
+    out: list[str] = []
+    folder = Path(folder)
+    for name in names:
+        there = folder / name
+        if there.is_dir():
+            out += sorted(str(p.relative_to(folder)) for p in there.rglob("*") if p.is_file())
+        elif there.is_file() or missing:
+            out.append(str(name))
+    return list(dict.fromkeys(out))
+
+
+def lookup(unit: Unit) -> Optional[Entry]:
+    """The unit's kept output, or None. One whose files are not all there
+    (a cache cleared part way) is not kept."""
+    path = _dir(unit.kind, unit.key)
+    try:
+        body = json.loads((path / ENTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if any(not (path / FILES / rel).is_file() for rel in body.get("files") or {}):
+        return None
+    return Entry(body["kind"], body.get("name") or "", body["key"], body["digest"],
+                 dict(body.get("files") or {}), body.get("value"), dict(body.get("made") or {}),
+                 float(body.get("seconds") or 0.0), path)
+
+
+def restore(entry: Entry, folder: Path) -> list[str]:
+    """The entry's files copied into `folder`, at the same relative paths;
+    a file already the same is left. The paths."""
+    folder = Path(folder)
+    for rel, sha in entry.files.items():
+        target = folder / rel
+        if file_sha(target) == sha:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(entry.file(rel), target)
+    return list(entry.files)
+
+
+def _made(doc: Optional[dict]) -> dict:
+    doc = doc or {}
+    return {"job": doc.get("id"), "run": doc.get("run"), "package": doc.get("package"),
+            "folder": doc.get("folder"), "at": time.time()}
+
+
+def note(doc: Optional[dict], unit: Unit, outcome: str, seconds: float,
+         entry: Optional[Entry] = None) -> None:
+    """The unit, reused or computed, into the run's timing.json."""
+    from jarvis import run_report
+    record = {"kind": unit.kind, "name": unit.name, "key": unit.key, "outcome": outcome,
+              "seconds": round(float(seconds), 3)}
+    if entry is not None:
+        record["digest"] = entry.digest
+        if outcome == REUSED:
+            record["made_by"] = {k: entry.made.get(k) for k in ("job", "run", "package")}
+    if outcome == RECOMPUTED:
+        log.error("step cache: %s recomputed with unchanged inputs (key %s)", unit.label,
+                  unit.key)
+    run_report.unit(record)
+
+
+def keep(unit: Unit, doc: Optional[dict], *, folder: Optional[Path] = None,
+         files: Iterable[str] = (), value: Any = None, seconds: float = 0.0,
+         files_from: Optional[dict[str, bytes]] = None) -> tuple[str, Entry]:
+    """The unit's output kept under its key: the named files of `folder`
+    (a folder's files, each), or `files_from` ({relative path: bytes}), and
+    a JSON value. (COMPUTED, the entry); (RECOMPUTED, the entry kept
+    before) when one was kept already."""
+    there = lookup(unit)
+    if there is not None:
+        return RECOMPUTED, there
+    final = _dir(unit.kind, unit.key)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{unit.key[:12]}-", dir=final.parent))
+    shas: dict[str, str] = {}
+    try:
+        for rel in expand(folder, files) if folder is not None else []:
+            target = tmp / FILES / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(Path(folder) / rel, target)
+            shas[rel] = file_sha(target) or ""
+        for rel, data in (files_from or {}).items():
+            target = tmp / FILES / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            shas[rel] = hashlib.sha256(data).hexdigest()
+        body = {"kind": unit.kind, "name": unit.name, "key": unit.key,
+                "digest": digest({"files": shas, "value": value}), "files": shas,
+                "value": value, "inputs": unit.inputs, "made": _made(doc),
+                "seconds": round(float(seconds), 3)}
+        (tmp / ENTRY).write_text(json.dumps(body, indent=1, ensure_ascii=False, default=str),
+                                 encoding="utf-8")
+        try:
+            os.replace(tmp, final)
+        except OSError:
+            # Another run kept it meanwhile: theirs stands.
+            shutil.rmtree(tmp, ignore_errors=True)
+            found = lookup(unit)
+            if found is not None:
+                return RECOMPUTED, found
+            raise
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    found = lookup(unit)
+    assert found is not None
+    return COMPUTED, found
+
+
+def reuse(unit: Unit, doc: Optional[dict], folder: Optional[Path] = None) -> Optional[Entry]:
+    """The unit's kept output, restored into `folder` when given and noted
+    as reused; None when nothing is kept under its key."""
+    began = time.time()
+    entry = lookup(unit)
+    if entry is None:
+        return None
+    if folder is not None:
+        restore(entry, folder)
+    note(doc, unit, REUSED, time.time() - began, entry)
+    return entry
+
+
+def computed(unit: Unit, doc: Optional[dict], began: float, **kept) -> Entry:
+    """The unit computed (since `began`): its output kept and noted."""
+    seconds = time.time() - began
+    outcome, entry = keep(unit, doc, seconds=seconds, **kept)
+    note(doc, unit, outcome, seconds, entry)
+    return entry
+
+
+def run(unit: Unit, doc: Optional[dict], compute: Callable[[], Any], *,
+        folder: Optional[Path] = None, files: Iterable[str] = (),
+        value: Optional[Callable[[Any], Any]] = None) -> tuple[str, Entry]:
+    """The unit's output: reused when kept (restored into `folder`), else
+    `compute()` run and its output kept (the named files of `folder`, and
+    `value(result)` when given). (REUSED or COMPUTED, the entry)."""
+    entry = reuse(unit, doc, folder)
+    if entry is not None:
+        return REUSED, entry
+    began = time.time()
+    result = compute()
+    entry = computed(unit, doc, began, folder=folder, files=files,
+                     value=value(result) if value else None)
+    return COMPUTED, entry

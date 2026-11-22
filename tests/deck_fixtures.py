@@ -135,7 +135,7 @@ def write_yaml(folder: Path, deck: dict, svg: str | None = None) -> Path:
     return source
 
 
-def fitting_every_frame(folder: Path) -> dict:
+def fitting_every_frame(folder: Path, only=None) -> dict:
     """A built deck's fit as deck_fit.measure gives it, every slide fitting
     every frame: the deck step's measure outside the page tests, which draw
     decks in Chromium themselves."""
@@ -146,6 +146,6 @@ def fitting_every_frame(folder: Path) -> dict:
                "drawn": [{"frame": f, "scale": 1.5, "reaches": 0.8,
                           "text_px": {"least": 18.0, "most": 26.0, "typical": 18.0}}
                          for f in ends]}
-              for s in proof.get("slides") or []]
+              for s in proof.get("slides") or [] if only is None or s["id"] in only]
     return {"version": deck_fit.VERSION, "frames": [list(f) for f in deck_fit.frames()],
             "fits": True, "slides": slides}

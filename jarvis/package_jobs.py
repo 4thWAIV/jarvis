@@ -35,17 +35,26 @@ The finished package goes back to the sender before delivery
 instructions (SENDER_CHECK): it answers `check` APPROVE, and JARVIS
 delivers it (server._deliver_package_run), or CHANGE with `what_is_wrong`,
 which ends the run `failed` and starts a new run revising it with its
-words (check_answer; `new_run`'s `revision`, package_resume.revise: the
-work kept, only what the words change done again). Every round asked of the sender (questions, findings, its
-check) is told to it once in a message to its session (`to_tell_sender`).
-Tim's Reject of a delivered package starts a new run too, a revision with
-his words (`delivered_as`, `rejected`; server._rejected_starts_new_run).
+words (check_answer; `new_run`'s `revision`). Every round asked of the
+sender (questions, findings, its check) is told to it once in a message to
+its session (`to_tell_sender`). Tim's Reject of a delivered package starts
+a new run too, a revision with his words (`delivered_as`, `rejected`;
+server._rejected_starts_new_run).
 At most MAX_ROUNDS rounds of questions are asked. A swarm that fails
 (`failed_swarm`) sends the sender its findings, through the same waiting:
 the server tells it once (`findings_to_tell`) and puts them on the Work
-item; its answer ends the run `failed` and a new run of the package goes
-on from the step that failed (server._answer_package_job, `new_run`'s
-`resume`, package_resume.carry). A sender
+item; its answer ends the run `failed` and a new run of the package
+follows with the answers (server._answer_package_job, `new_run`).
+
+Every run of a package goes through one mechanism, the step cache
+(step_cache.py, construction-drafts.md "Step cache keyed by inputs", Tim
+2026-11-22): each step, and each unit within it, is keyed by its inputs and
+reused when they are kept, so only what changed is done again. A new run
+carries the inputs of the run before (`inputs`: the revisions asked, each
+change at the check or Reject with its words, and the sender's answers to
+each stage's findings, with the stage they are for) and adds its own; a run
+asked again after an Error adds none, so it reuses everything up to the
+step that stopped. A sender
 that does not answer within
 SENDER_WAIT_SEC, a step that cannot go on (Blocked), a step that fails
 unexpectedly, and a run whose process ended without finishing it, each put
@@ -277,7 +286,8 @@ def accept(request: dict, *, session: str, work: str = "", general: bool = False
 
 def _record_run(package: str, run: str, request: dict, *, session: str, work: str,
                 general: bool, engine: str, project: str, workflow: str, source: str,
-                documents, submitted, change: str, after: Optional[dict] = None) -> dict:
+                documents, submitted, change: str, after: Optional[dict] = None,
+                inputs: Optional[dict] = None) -> dict:
     now = time.time()
     doc = {"id": _new_id("job"), "package": package, "run": run, "work": work or None,
            "general": bool(general), "requested_by": f"agent:{session}", "session": session,
@@ -287,6 +297,7 @@ def _record_run(package: str, run: str, request: dict, *, session: str, work: st
            "request": request, "submitted": submitted, "state": QUEUED, "step": None,
            "done": [], "rounds": [], "result": None, "error": None, "told": None,
            "after": (after or {}).get("id"), "pid": None, "queued_by": _this_server(),
+           "inputs": inputs or {"revisions": [], "findings": []},
            "created_at": now,
            "updated_at": now}
     doc["folder"] = str(folder_of(doc))
@@ -296,52 +307,51 @@ def _record_run(package: str, run: str, request: dict, *, session: str, work: st
     return doc
 
 
-def new_run(job_id: str, why: str, resume: bool = False,
-            revision: Optional[dict] = None) -> dict:
+def inputs_after(before: dict, revision: Optional[dict] = None) -> dict:
+    """What the next run of a package is asked beyond the request: the run
+    before's inputs, then the sender's answers to the findings it ended
+    with (the stage they are for), then a revision ({"words", "by":
+    "sender" or "tim"}: its check said what is wrong, or Tim rejected it)."""
+    had = before.get("inputs") or {}
+    out = {"revisions": list(had.get("revisions") or []),
+           "findings": list(had.get("findings") or [])}
+    last = (before.get("rounds") or [None])[-1]
+    if last and kind_of(last) == FINDINGS and last.get("answers"):
+        out["findings"].append({"run": before["run"], "stage": last.get("stage"),
+                                "questions": last.get("questions") or [],
+                                "answers": last["answers"]})
+    if revision is not None:
+        out["revisions"].append({"run": before["run"], "by": revision["by"],
+                                 "words": revision["words"]})
+    return out
+
+
+def new_run(job_id: str, why: str, revision: Optional[dict] = None) -> dict:
     """The next run of the same package (the sender answered a failed run's
     findings or asked for it again, said what is wrong at its check, or Tim
-    rejected it): the package keeps its id, a new job names the next run id,
-    asked as the first was. With `resume`, a run that failed at a step goes
-    on from that step, reusing what the run before kept
-    (package_resume.carry, Tim 2026-11-22: only what failed is run again).
-    With `revision` ({"words", "by": "sender" or "tim"}: its check said
-    what is wrong, or Tim rejected it), the run before's work is revised
-    with those words, never started over (package_resume.revise, Tim
-    2026-11-22: never throw away what worked); a run before with no passed
-    script to revise starts from research, and the job says why."""
+    rejected it): the package keeps its id, a new job names the next run
+    id, asked as the first was, with the run before's inputs and what this
+    run adds (`inputs_after`). It reuses every step and unit whose inputs
+    are unchanged from the step cache (step_cache.py), so only what the new
+    inputs change is done again."""
     before = get(job_id)
     runs = _jobs([["package", "=", before["package"]]])
     n = 1 + max(int(str(d["run"]).rsplit("-", 1)[-1]) for d in runs)
-    doc = _record_run(before["package"], f"run-{n}", before["request"],
-                      session=before["session"], work=before["work"] or "",
-                      general=before["general"], engine=before["engine"] or "",
-                      project=before["project"], workflow=before["workflow"],
-                      source=before["source"], documents=tuple(map(tuple, before["documents"])),
-                      submitted=before["submitted"], change=f"new run: {why}", after=before)
-    from jarvis import package_resume
-    if revision is not None:
-        if not package_resume.revisable(before):
-            return _change(doc["id"], "starts from research", lambda d: d.update(reused={
-                "from": before["id"], "run": before["run"], "step": "research",
-                "revision": {"by": revision["by"], "words": revision["words"]},
-                "steps": [], "files": [], "fresh_sessions": [],
-                "why": f"{before['run']} has no passed script to revise"}))
-        carried = package_resume.revise(before, doc, revision["words"], revision["by"])
-        return _change(doc["id"], f"revises {before['run']}", lambda d: d.update(carried))
-    step = package_resume.failed_at(before) if resume else None
-    if step is None:
-        return doc
-    carried = package_resume.carry(before, doc, step)
-    return _change(doc["id"], f"goes on from {before['run']} at the {step} step",
-                   lambda d: d.update(carried))
+    return _record_run(before["package"], f"run-{n}", before["request"],
+                       session=before["session"], work=before["work"] or "",
+                       general=before["general"], engine=before["engine"] or "",
+                       project=before["project"], workflow=before["workflow"],
+                       source=before["source"], documents=tuple(map(tuple, before["documents"])),
+                       submitted=before["submitted"], change=f"new run: {why}", after=before,
+                       inputs=inputs_after(before, revision))
 
 
 def rerun(job_id: str, session: str) -> dict:
     """The sender asks for its package again after a run that ended in
     Error, or failed (its swarm's or deck's findings, answered or not),
     without new answers (make_package --rerun, package_rerun): checked here;
-    the server starts the next run, which goes on from the step that failed
-    (`new_run` with `resume`). Refused while a later run of the package is
+    the server starts the next run, which reuses every step whose inputs
+    are unchanged (`new_run`, step_cache.py). Refused while a later run of the package is
     still going. A run waiting on its findings ends `failed`, unanswered."""
     doc = status(job_id, session)
     going = [d for d in runs_of(doc["package"]) if d["state"] in GOING + (WAITING,)
@@ -492,13 +502,16 @@ def ask(job_id: str, questions: list[dict]) -> bool:
     return asked["now"]
 
 
-def failed_swarm(job_id: str, questions: list[dict], findings: list[dict]) -> dict:
+def failed_swarm(job_id: str, questions: list[dict], findings: list[dict],
+                 stage: Optional[str] = None) -> dict:
     """The swarm failed (workflow.yaml swarm when_it_fails): its findings go
     to the sender, each failed question one to answer, {"id", "question"};
-    the job waits on its answer, which starts a new run. The server tells
-    the sender and the Work item once (`findings_to_tell`)."""
+    the job waits on its answer, which starts a new run, the answers an
+    input of `stage` (the step cache unit that failed, step_cache.py). The
+    server tells the sender and the Work item once (`findings_to_tell`)."""
     def write(d):
         d["rounds"] = d["rounds"] + [{"kind": FINDINGS, "questions": questions,
+                                      "stage": stage,
                                       "findings": findings, "asked_at": time.time(),
                                       "answers": None, "answered_at": None, "told": False}]
         d["state"], d["pid"] = WAITING, None
@@ -691,8 +704,7 @@ def rejections_on_work(work: str) -> list[dict]:
 
 def errored_work() -> set[str]:
     """The Work items with a package run in Error that no later run of its
-    package has followed (`new_run`, from it or from an earlier run that a
-    resumed run goes on from)."""
+    package has followed (`new_run`, from it or from an earlier run)."""
     return {d["work"] for d in _jobs([["state", "=", ERROR]])
             if d.get("work") and not any(_run_no(o) > _run_no(d)
                                          for o in runs_of(d["package"]))}

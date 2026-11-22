@@ -9,7 +9,9 @@ Two files beside each run (its folder, package_jobs.folder_of):
 
 - `timing.json` (`TIMING`): each step's start, end and seconds (a step run
   again after waiting on the sender is one more entry, `resumed`), and in
-  each step every one-off role call (marking, classification, extraction,
+  each step every unit of its work reused from the step cache or computed
+  (`units`, step_cache.py: its kind, name, key, `reused` or `computed`,
+  seconds, and the run that made a reused one; `cache` counts them), every one-off role call (marking, classification, extraction,
   summarization, retrieval, and every swarm turn) with its role, engine,
   model, tier, effort, seconds, tokens in, cached and out and how it ended
   (`answered`, `refused` by the brain's model list, `time_limit`,
@@ -74,6 +76,7 @@ class _Step:
         self.began = time.time()
         self.calls: list[dict] = []
         self.pages: list[dict] = []
+        self.units: list[dict] = []
         self.app_servers = 0
 
 
@@ -93,6 +96,14 @@ def pages(role: str, summary: dict) -> None:
     with _lock:
         if _current is not None:
             _current.pages.append({"role": role, **summary})
+
+
+def unit(record: dict) -> None:
+    """One unit of the step's work, reused from the step cache or computed
+    (step_cache.note), into the step under way."""
+    with _lock:
+        if _current is not None:
+            _current.units.append(dict(record))
 
 
 def app_server(engine: str) -> None:
@@ -151,7 +162,19 @@ def step_entry(step: _Step, ended: float, outcome: str, resumed: bool,
             "app_server_starts": step.app_servers,
             "searches": list(searches or []),
             "search_seconds": round(sum(float(x.get("seconds") or 0) for x in searches or []), 3),
+            "units": step.units, "cache": cache_of(step.units),
             "tokens": {"in": tin, "cached": cached, "out": out}}
+
+
+def cache_of(units: list[dict]) -> dict:
+    """How many units were reused from the step cache and how many were
+    computed (step_cache.py); `recomputed`, a unit computed when its key was
+    already kept, is never expected."""
+    out = {"reused": 0, "computed": 0, "recomputed": 0}
+    for u in units:
+        if u.get("outcome") in out:
+            out[u["outcome"]] += 1
+    return out
 
 
 def totals(steps: list[dict]) -> dict:
@@ -159,8 +182,11 @@ def totals(steps: list[dict]) -> dict:
     rate-limit hits, app servers, tokens; the steps too slow by name."""
     out = {"seconds": 0.0, "calls": 0, "pages": 0, "retries": 0, "time_limits": 0,
            "rate_limited": 0, "app_server_starts": 0, "searches": 0, "search_seconds": 0.0,
-           "tokens": {"in": 0, "cached": 0, "out": 0}, "too_slow": []}
+           "tokens": {"in": 0, "cached": 0, "out": 0}, "too_slow": [],
+           "cache": {"reused": 0, "computed": 0, "recomputed": 0}}
     for s in steps:
+        for key, n in cache_of(s.get("units") or []).items():
+            out["cache"][key] += n
         out["seconds"] = round(out["seconds"] + float(s.get("seconds") or 0), 1)
         out["calls"] += len(s.get("calls") or [])
         out["pages"] += int(s.get("pages_asked") or 0)

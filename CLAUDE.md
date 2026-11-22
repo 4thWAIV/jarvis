@@ -1534,49 +1534,62 @@ Inbox), with one update (`package_job`, `failed`); its answer ends the run
 goes on from where it failed; no answer within 2 hours is Error as any.
 A package's next run (`server._new_package_run`,
 `package_jobs.new_run`) keeps the package id and names the run before it
-(`after`). Only what failed is run again (Tim 2026-11-22,
-`package_resume.py`): the next run after a failed swarm or deck review
-(answered findings) or a run in Error starts at the step that failed
-(`package_resume.failed_at`) and, in the swarm or the deck, at the stage
-that failed (a stage of the fix passes starts them again, `pass` or
-`deck-pass`, the deck rebuilt and reviewed again, `review_again`; a stage
-that never finished is that stage again); every step before it is `done`,
-its outcome on the new job (`swarm`, `deck`, paths moved to the new
-folder); what the run kept (`package_resume.KEPT_FILES`: research, prep,
-search log, outline, script, conversation, `swarm.json` with each
-participant's session, and the deck's source folder) is copied into the new
-run's folder; the program says into the conversation where it goes on from,
-then the findings' answers as the sender's; a Codex participant's thread is
-resumed, a Claude one (its session found only in its own folder) starts
-anew with the whole conversation; the job records `reused` (from, run,
-step, stage, steps, files, fresh sessions). Gather and mark are once a
-package. A check answered with what is wrong and Tim's Reject are a
-revision of the kept work, never a start over (Tim 2026-11-22, never throw
-away what worked; `package_resume.revise`, `new_run`'s `revision`, words and
-`by` `sender` or `tim`, from `server._answer_package_job` and
-`_rejected_starts_new_run`): what the run made is copied in (and the outline,
-script and deck source it had kept apart in `revision-before/` to compare
-with), `research` is `done`, the program says into the conversation which
-run it revises and then the words, word for word, as the sender's (its
-check answer, tagged) or Tim's (`tim`); the swarm starts at
-`revise-outline`: the author revises the outline, then (`revise-script`)
-the script, with the words, naming in `changed` the slides it changes, and
-researches again only where the words say something is missing, with its
-tools in that turn; the program finds the slides that changed against the
-script before (`package_resume.changed_slides`), marks only those, and the
-fix passes have the owners and the editor re-check only them
-(`flow["slides"]`, `revision_given`; with none changed, the whole script);
-the deck step starts at `deck-revise` with the kept deck source: the author
-changes only the deck slides whose script slide changed and what the words
-name (`revise_deck_note`), and the review turn and the passes cover only
-those and the deck slides that differ from the source before
-(`review_turn`'s `only`); the rest of the deck source stays. The job
-records `reused` (with `revision`) and, as each step ends, what was redone
-(`revision`: `swarm`'s slides changed and kept, the author's named slides,
-`research_redone` and its `searches`; `deck`'s slides changed, reviewed and
-kept; `package_resume.record`). A run before with no passed script starts
-from research, with the earlier research carried (`_carry_earlier`), the
-job's `reused` saying why. The sender
+(`after`). Every run goes through one mechanism, the step cache
+(`step_cache.py`, construction-drafts.md "Step cache keyed by inputs", Tim
+2026-11-22: the standard design, make and Bazel): every unit of a step is
+`step_cache.Unit` (kind, name, inputs), its key the SHA-256 of its inputs
+in canonical JSON, its output (files and a value) kept with its seconds and
+who made it under `data_paths.package_cache_dir()` (`<data>/package-cache/
+<kind>/<key>`, shared by every package; no content root maps it), and
+reused (`step_cache.reuse`, restored into the run's folder) when kept.
+Model answers are not deterministic, so a key is of the inputs, never the
+output, and a unit that reads another names that unit's output digest
+(`Entry.digest`); only finished work is kept (a stage that failed or waits
+on the sender keeps nothing until it finishes). The units: `gather`
+(`package_gather.unit_of`: the handoff, its Work items, the session and
+engine; a package asked with the same handoff copies the evidence in and
+indexes it); `mark-file`, one a gathered file (`package_mark.unit_of`: its
+bytes, row type, knowledge state, the questions, the labels and, for
+prose, Tim's material; only files whose key is not kept are marked,
+together); `research` (`package_swarm.research_unit`: the request, the
+evidence as gathered, `package_mark.marks_digest`); the swarm's stages
+`swarm-outline`, `swarm-fill`, `swarm-passes` and one `swarm-revision` a
+revision, each keyed by the output of the unit before it and the answers
+to an earlier run's findings on it (`package_swarm.stage_unit`,
+`findings_for`), what each did in this folder in swarm.json's `units`, a
+stage waiting on the sender its `pending`; `script-slide`, one a slide
+(the passed script and each revision's words that changed it,
+`slide_words`); `deck-header`, `deck-source` (one a slide: the deck slide,
+its decision and the pictures and references it names, keyed by its script
+slide and the deck format, `package_deck.Plan`), `deck-build` (the
+source, its files, the script, the pipeline), `deck-fit` (one a slide, its
+layout data; `deck_fit.measure`'s `only` measures just those not kept),
+`deck-review` (one a slide: its part, fit, script slide, the deck
+questions and the findings answered on it), `deck` (the review and
+conversation) and `deliver` (the deck, the briefing, the message, who
+asked; the check is asked every run). Each unit, reused or computed, is in
+the run's `timing.json` (`run_report.unit`: kind, name, key, `reused` or
+`computed`, seconds, `made_by`; each step's and the totals' `cache`), and
+one computed with its key already kept is `recomputed`, never expected
+(`tests/test_step_cache.py` fails on any). A new run carries the run
+before's `inputs` (`package_jobs.inputs_after`: `revisions`, each
+`{run, by, words}`, and `findings`, each `{run, stage, questions,
+answers}`, the stage from `failed_swarm`'s `stage`) and adds its own: an
+Error rerun or `--rerun` adds none and reuses everything up to the step
+that stopped; a findings answer recomputes only the failed stage onward; a
+change at the check or Tim's Reject (`by` `sender` or `tim`, from
+`server._answer_package_job` and `_rejected_starts_new_run`) is one more
+stage after the passed script: the words said into the conversation, the
+author revises the script naming in `changed` the slides it changes
+(`revision_note`), every slide not named is put back exactly
+(`_put_back`), only the changed slides are marked and re-checked
+(`flow["slides"]`, `revision_given`), and only their deck source, fit and
+review are done again with the build and the delivery; the job's
+`revision` says the slides changed, kept, named and put back,
+`research_redone` and its `searches`, and the deck's `slides_reviewed`.
+What the gather step did not make (the sender's answers, his Reject words
+in `jarvis/tim-rejected.md`) is never material for mark, research or the
+swarm (`package_evidence.gathered_rows`): it reaches the run as what it is. The sender
 asks for its package again, without new answers, after a run that ended in
 Error or failed (`make_package --rerun <job> --session <id>`, the agent
 tool `package_rerun`, `POST /api/packages/requests/<job>/rerun`, the
@@ -1653,7 +1666,7 @@ pieces' evidence), the sending session's commands with their results and
 each turn's final message from its own transcript
 (`session_transcript.py`) as
 `jarvis/sender-session.md`, and Tim's record as `jarvis/tim.md`
-(`package_gather.tim_record`, the one writer, gather's and `refresh_tim`'s;
+(`package_gather.tim_record`, the one writer, gather's;
 written with or without a Work item), from everything he has said (Tim's
 decision, construction-drafts.md), in two parts kept apart. Part 1
 (`OWN_PART`), first and weighted higher, on the package's own Work items:
@@ -1692,9 +1705,9 @@ keeps to one path (a package's evidence, a Work item's folder): the
 brain's, a role's, the route's (`POST /api/knowledge/search`) and
 `knowledge_api.search` alike.
 The mark step (`package_mark.mark`, `PRODUCERS["mark"]`; design: workflow.yaml
-mark) reads what gather collected, once per package like the evidence (the
-package's record's `marked_at`; a later run only waits for it to be
-indexed). `type_files`: each stored file gets a type by program from its
+mark) reads what gather collected, one file at a time as far as its inputs
+go (the step cache's `mark-file`: a file whose key is kept is reused, the
+rest marked together; the package's record's `marked_at`). `type_files`: each stored file gets a type by program from its
 content and name (`evidence_structured.type_of`: test_results, build_log,
 ci_run, diff, session_transcript, data, prose; anything else `no reader`,
 never guessed), written into its manifest row (`Row.file_type`).
@@ -1866,8 +1879,7 @@ positions and scores as attributes; whole with marks it is 330 KB (110,586
 tokens, past the 100,000 of room), so it gets the working set, 179 KB
 (59,610 tokens) holding all 1,204 sentences that bear on its question. Then the program's words saying where it
 starts from (`research_note`: the Work item's research folder, the marked
-evidence, the evidence path, an earlier run's research copied into
-`earlier/` by `_carry_earlier`, its tools) and that `research.md` and
+evidence, the evidence path, its tools) and that `research.md` and
 `prep.md` are written together in that turn. When it needs more it calls
 back during that turn through its own tool server: `read_package_file`
 and `search_package_files`, `knowledge_search` under the evidence, the
@@ -2082,9 +2094,10 @@ of a delivered package (the standard vote, at sign-off) starts the
 package's next run too, a revision with his words
 (`server._rejected_starts_new_run`, `package_jobs.delivered_as`,
 `rejected`): his words are kept on the run and
-in Tim's record in the evidence (`package_gather.refresh_tim`,
-`jarvis/tim.md`'s Part 1, "His Reject of its package runs", or with no
-Work item "His Reject of this package's earlier runs").
+in the evidence as a file of its own written after it was gathered
+(`package_gather.refresh_tim`, `jarvis/tim-rejected.md`, "His Reject of this
+package's earlier runs"; a later package's gather has them in
+`jarvis/tim.md`'s Part 1), so what read the gathered evidence is reused.
 Each run's reports (`run_report.py`, work-list item 38; no new judge, no
 new model) are written beside it by the program. `timing.json`: each step
 of `package_jobs.run` timed (`run_report.step`; a step run again after
@@ -3968,10 +3981,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   kept between the run's processes; every search a
   role makes logged, and the hits the passed script used (see "A package's
   evidence")
-- `package_resume.py` — A package's next run going on from the step and
-  stage the run before failed at, reusing what it kept, or revising the
-  kept work with the sender's check or Tim's Reject (see "Package
-  requests")
+- `step_cache.py` — The package steps' cache keyed by their inputs: each
+  unit's key, its kept output and timing, reuse and the run's timing.json
+  units (see "Package requests")
 - `deck_fit.py` — Each slide of a built deck measured at every frame in
   headless Chromium: what is clipped or needs scrolling (see "A package's
   evidence")

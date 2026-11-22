@@ -861,9 +861,10 @@ def test_the_sender_s_words_of_what_is_wrong_start_a_new_run(wired, marks, tmp_p
     assert pj.get(job)["state"] == pj.FAILED
     assert pj.get(job)["rounds"][-1]["answers"] == {"check": "change",
                                                     "what_is_wrong": "The cost is missing."}
-    # A revision of the run with the sender's words; this run never passed
-    # its swarm, so its next run starts from research, saying why.
-    assert r.json()["reused"]["revision"] == {"by": "sender", "words": "The cost is missing."}
+    # A revision with the sender's words, an input of the next run, which
+    # reuses every step whose inputs are unchanged (step_cache.py).
+    assert r.json()["inputs"]["revisions"] == [
+        {"run": "run-1", "by": "sender", "words": "The cost is missing."}]
     assert spawned[-1] == r.json()["id"]
 
 
@@ -934,13 +935,18 @@ def test_tim_s_reject_of_a_delivered_package_starts_a_new_run(wired, marks, tmp_
     later = pj.later_run(job)
     assert later is not None and later["package"] == pj.get(job)["package"]
     assert later["run"] == "run-2" and spawned[-1] == later["id"]
-    assert later["reused"]["revision"] == {"by": "tim", "words": "Lead with the cost."}
+    assert later["inputs"]["revisions"] == [
+        {"run": "run-1", "by": "tim", "words": "Lead with the cost."}]
     assert pj.get(job)["rejected"]["words"] == "Lead with the cost."
+    # His words in the evidence as a file of their own, written after it
+    # was gathered: what was gathered (jarvis/tim.md) stays, so the steps
+    # that read it are reused.
     place = pe.place_of(later)
-    text = (place.folder / pe.TIM_RECORD).read_text(encoding="utf-8")
+    text = (place.folder / pe.TIM_REJECTED).read_text(encoding="utf-8")
     assert "run-1: Lead with the cost." in text
-    [row] = [r for r in pe.read_manifest(place) if r.stored == pe.TIM_RECORD]
+    [row] = [r for r in pe.read_manifest(place) if r.stored == pe.TIM_REJECTED]
     assert row.knowledge_state == pe.KNOWS
+    assert row not in pe.gathered_rows(pe.read_manifest(place))
     assert pj.delivered_as(inbox) is None, "once: a later run has followed it"
     assert package_gather.rejections_text(later["package"]).count("Lead with the cost.") == 1
 

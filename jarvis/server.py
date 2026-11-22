@@ -99,7 +99,7 @@ from jarvis import attachment_locations, draft_files, packages_api, work_package
 from jarvis import decision_stamp
 from jarvis import package_inbox, package_inbox_api
 from jarvis import (package_gather, package_jobs, package_jobs_api, package_request,
-                    package_resume, run_report, sessions, work_research)
+                    package_swarm, run_report, sessions, work_research)
 from jarvis import wait_links
 from jarvis import session_message_sender
 from jarvis import agent_key_store, agent_keys, package_signature
@@ -10906,11 +10906,12 @@ def _rejected_starts_new_run(entry, package) -> None:
     """He answered the standard vote Reject on a package a run made
     (workflow.yaml deliver arrive: "his Reject starts a new run under the
     same package id"; record_and_start new_run): his words are kept on that
-    run and in the package's evidence, in Tim's record (`jarvis/tim.md`,
-    package_gather.refresh_tim), and the next run of the package starts as
-    a revision of that run with his words (package_resume.revise: said into
-    the swarm's conversation as his, the work kept, only what they change
-    done again).
+    run and in the package's evidence (`jarvis/tim-rejected.md`,
+    package_gather.refresh_tim), and the next run of the package is a
+    revision with his words (package_jobs.new_run: said into the swarm's
+    conversation as his; every step whose inputs are unchanged is reused
+    from the step cache, step_cache.py, so only what they change is done
+    again).
     Blocking; never raises. His verdict, Approve or Reject with his words,
     goes in that run's quality report either way (run_report.verdict; his
     words are mapped to the labels by the next run's process)."""
@@ -10941,7 +10942,7 @@ def _rejected_starts_new_run(entry, package) -> None:
                         entry.id, exc_info=True)
         package_gather.refresh_tim(job)
         doc = _new_package_run(job["id"], f"Tim rejected the delivered package: {words}",
-                               False, {"words": words, "by": package_resume.TIM})
+                               {"words": words, "by": package_swarm.TIM})
         log.info("packages: Tim rejected %s (job %s); %s of package %s started (job %s)",
                  entry.id, job["id"], doc["run"], doc["package"], doc["id"])
     except Exception:
@@ -11251,21 +11252,21 @@ async def _answer_package_job(session: str, job: str, answers) -> dict:
     of the package starts from the kept research (workflow.yaml swarm
     when_it_fails); so does its answer to its check of the finished package
     saying what is wrong, with its words (deliver sender_check), while its
-    approval delivers it (`_deliver_package_run`). A run whose swarm or deck
-    review failed goes on from the step and stage that failed, reusing what
-    the run before kept (package_resume, Tim 2026-11-22); one whose check
-    said what is wrong is revised with those words, never started over
-    (package_resume.revise)."""
+    approval delivers it (`_deliver_package_run`). The next run carries the
+    answers (or the words) as its inputs and reuses every step and stage
+    whose inputs are unchanged from the step cache (step_cache.py, Tim
+    2026-11-22), so only the stage that failed, or what the words change,
+    and what follows it is done again."""
     doc = await asyncio.to_thread(package_jobs.answer, job, answers, session=session)
     if doc["state"] == package_jobs.FAILED:
         last = doc["rounds"][-1]
         if package_jobs.kind_of(last) == package_jobs.CHECK:
             words = (last.get("answers") or {}).get(package_jobs.WHAT_IS_WRONG) or ""
             return await asyncio.to_thread(
-                _new_package_run, job, "the sender said what is wrong at its check", False,
-                {"words": words, "by": package_resume.SENDER})
+                _new_package_run, job, "the sender said what is wrong at its check",
+                {"words": words, "by": package_swarm.SENDER})
         return await asyncio.to_thread(_new_package_run, job,
-                                       "the sender answered the swarm's findings", True)
+                                       "the sender answered the swarm's findings")
     if package_jobs.to_deliver(doc):
         return await _deliver_package_run(doc)
     return await asyncio.to_thread(package_jobs.start, doc)
@@ -11301,17 +11302,16 @@ async def _deliver_package_run(doc: dict) -> dict:
         "archive": sent["archive"]})
 
 
-def _new_package_run(job_id: str, why: str, resume: bool = False,
-                     revision: Optional[dict] = None) -> dict:
-    """The next run of a package, started (package_jobs.new_run; with
-    `resume`, going on from the step the run before failed at; with
-    `revision`, revising the run before's work with the words given): the Error
+def _new_package_run(job_id: str, why: str, revision: Optional[dict] = None) -> dict:
+    """The next run of a package, started (package_jobs.new_run, reusing
+    every step whose inputs are unchanged; with `revision`, revising the
+    run before's work with the words given): the Error
     a run of the package left on its Work item is cleared once no other
     remains, and their updates are no longer news. Blocking."""
     package = package_jobs.get(job_id)["package"]
     errored = [d["id"] for d in package_jobs.runs_of(package)
                if d["state"] == package_jobs.ERROR]
-    doc = package_jobs.new_run(job_id, why, resume=resume, revision=revision)
+    doc = package_jobs.new_run(job_id, why, revision=revision)
     for done in {job_id, *errored}:
         _attention_resolved("package_job", done)
     if errored and doc.get("work"):
@@ -11322,10 +11322,11 @@ def _new_package_run(job_id: str, why: str, resume: bool = False,
 def _rerun_package_job(session: str, job: str) -> dict:
     """The asking agent asks for its package again, after a run that ended
     in Error or failed, without new answers (make_package --rerun,
-    package_rerun): the next run goes on from the step that failed, reusing
-    what that run kept (package_jobs.rerun, package_resume). Blocking."""
+    package_rerun): the next run reuses every step whose inputs are
+    unchanged (package_jobs.rerun, step_cache.py), so it goes on from the
+    step that stopped. Blocking."""
     package_jobs.rerun(job, session)
-    return _new_package_run(job, "the sender asked for it again", True)
+    return _new_package_run(job, "the sender asked for it again")
 
 
 # What JARVIS tells an agent whose package run is in Error may do next

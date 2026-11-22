@@ -21,8 +21,8 @@ run has asked its sender questions (waiting_on_sender) `--answer` gives the
 answers and the run goes on. A run that cannot go on is in Error: `--status`
 says the step, why, what was tried and what would fix it. `--rerun` asks for
 the package again after a run that ended in Error or failed, with no new
-answers: the next run goes on from the step that failed, reusing everything
-that run kept (package_resume).
+answers: the next run reuses every step whose inputs are unchanged (the step
+cache, step_cache.py), so it goes on from the step that stopped.
 
 docs/making-a-package.md is the whole of how to use it. In short:
 

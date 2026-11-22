@@ -274,6 +274,22 @@ def read(path: Path) -> Optional[dict]:
     return found if isinstance(found, dict) else None
 
 
+def slide_ids(doc: Optional[dict]) -> list[str]:
+    """The ids of a script's, outline's or deck source's slides, in order."""
+    return [s.get("id") for s in (doc or {}).get("slides") or [] if isinstance(s, dict)]
+
+
+def changed_slides(before: Optional[dict], after: Optional[dict]) -> list[str]:
+    """The ids of the slides that differ between two versions of a script,
+    outline or deck source (changed, added or removed), in the order of
+    `after`, then those removed."""
+    old = {s.get("id"): s for s in (before or {}).get("slides") or [] if isinstance(s, dict)}
+    new = [s for s in (after or {}).get("slides") or [] if isinstance(s, dict)]
+    ids = {s.get("id") for s in new}
+    out = [s.get("id") for s in new if old.get(s.get("id")) != s]
+    return [i for i in out + [i for i in old if i not in ids] if i]
+
+
 # ── read by program ───────────────────────────────────────────────────────
 
 @dataclass(frozen=True)

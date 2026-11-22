@@ -68,16 +68,24 @@ owner's edit that makes one unfit is not applied, and a deck JARVIS cannot
 make fit stops the step in Error (NOT_FIT_FIX), never findings for the
 sender.
 
-A revision (package_resume.revise: the sender said what is wrong at its
-check, or Tim rejected the package; Tim 2026-11-22, never throw away what
-worked) starts the deck step at `deck-revise` with the run before's deck
-source kept: the author revises only the deck slides whose script slide
-changed and what the words name (`revise_deck_note`); the program builds
-and proves the whole deck, finds which deck slides differ from the source
-before (package_resume.changed_slides), and the review turn and the fix
-passes cover only those and the slides whose script changed
-(`flow["slides"]`); the rest of the deck source stays as it was. The job
-records what was redone (package_resume.record "deck").
+Every part of the step is a unit of the step cache (step_cache.py, Tim
+2026-11-22), one a slide where the work is a slide's: the deck's header
+(`deck-header`: everything but its slides, keyed by the script's slide ids,
+its opening slide and the deck format) and each slide's source
+(`deck-source`: the deck slide, its decision, the pictures and references
+it names, keyed by its script slide and the format) are written by the
+author only when not kept: nothing kept, the whole deck is written; some
+kept, the author writes only the others and the program puts every kept
+one back exactly. The build (`deck-build`, keyed by the source, its
+pictures, the script and JARVIS's presentation pipeline) is the deck's,
+one program call; each slide's fit (`deck-fit`, keyed by its layout data
+and the pipeline) is measured only for the slides whose layout changed.
+Each slide's review (`deck-review`, keyed by its source, its fit, its
+script slide and the answers to an earlier run's findings on the review)
+is done only for the slides not kept: the review turn and the fix passes
+cover those alone (`flow["slides"]`), and the kept ones' reviewed source
+stands. The step's record (`deck`: the review and the conversation) is
+kept once it passes.
 
 The deck passes when every deck concern is signed off; after two fix passes
 without that, or a deck the author could not make build, nothing is
@@ -90,15 +98,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
 import yaml
 
 from jarvis import (data_paths, deck_fit, decision_package as dp, layout_spec, make_package,
-                    package_evidence as pe, package_inbox, package_jobs, package_resume,
-                    package_script, package_swarm as ps, presentation_proof, sessions,
-                    spoken_words)
+                    package_evidence as pe, package_inbox, package_jobs, package_script,
+                    package_swarm as ps, presentation_proof, sessions, spoken_words, step_cache)
 from jarvis.presentation_schema import HIS_WORDS
 
 DECK = "deck"
@@ -197,18 +205,19 @@ def revise_note(run: ps.Run) -> str:
             f"changed and why.")
 
 
-def revise_deck_note(run: ps.Run, rev: dict, script_changed: list[str]) -> str:
-    """The author's words for a revision's deck: the deck source the run
-    before made stands; only the slides the revision touches change."""
-    touched = ", ".join(script_changed) or "none"
+def revise_deck_note(run: ps.Run, slides: list[str], kept: list[str]) -> str:
+    """The author's words when only some deck slides are written: the deck
+    source holds the slides kept; only the others are written."""
     return "\n\n".join([
-        f"Revise the deck in {source_of(run)} for this revision of {rev.get('run')}: the deck "
-        f"source there is the one {rev.get('run')} made. Change only the deck slides whose "
-        f"script slide changed (the script changed on: {touched}) and what "
-        f"{ps._who(rev)}'s words, above, name about the deck; every other slide stays exactly "
-        f"as it is. Each script slide is still one deck slide, in the same order and with the "
-        f"same id. Say which slides you changed.",
-        sessions._tag("script", ps._read(run.script), file=ps.SCRIPT)])
+        f"Revise the deck in {source_of(run)}: the deck source there holds every slide whose "
+        f"script slide did not change ({', '.join(kept) or 'none'}), which stay exactly as "
+        f"they are (JARVIS puts them back). Write only the deck slides whose script slide "
+        f"changed (the script changed on: {', '.join(slides) or 'none'}). Each script slide is "
+        f"still one deck slide, in the same order and with the same id. Say which slides you "
+        f"changed.",
+        sessions._tag("script", ps._read(run.script), file=ps.SCRIPT),
+        sessions._tag("format", deck_format()),
+        sessions._tag("example", example(), file=SOURCE)])
 
 
 def _findings_of_build(problems: list[str]) -> list[dict]:
@@ -306,10 +315,161 @@ def script_problems(script: dict, deck: dict) -> list[str]:
     return out
 
 
+HEADER, SLIDE_SOURCE, BUILD, FIT, SLIDE_REVIEW, STEP_UNIT = (
+    "deck-header", "deck-source", "deck-build", "deck-fit", "deck-review", "deck")
+REVIEW_LABEL = SLIDE_REVIEW            # the stage an earlier run's findings answer
+
+
+def format_digest() -> str:
+    """How a deck is written, as the author is told it: the format and the
+    example."""
+    return step_cache.digest([deck_format(), example()])
+
+
+def pipeline_digest() -> str:
+    """JARVIS's presentation pipeline as a build and a fit read it: the
+    layout spec, the renderer files and the fit's own version and frames."""
+    return step_cache.digest({"spec": step_cache.file_sha(layout_spec.PATH),
+                              "templates": presentation_proof.template_hashes(),
+                              "fit": deck_fit.VERSION, "frames": deck_fit.frames()})
+
+
+def _ids_in(value) -> set[str]:
+    out: set[str] = set()
+    if isinstance(value, str):
+        out.add(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            out |= _ids_in(v)
+    elif isinstance(value, list):
+        for v in value:
+            out |= _ids_in(v)
+    return out
+
+
+def parts_of(source: dict) -> tuple[dict, dict[str, dict]]:
+    """A deck source split into its header (everything but its slides, their
+    decisions and the pictures and references a slide names) and one part a
+    slide: {"slide", "decision", "assets", "references"}."""
+    decisions = {d.get("id"): d for d in source.get("decisions") or [] if isinstance(d, dict)}
+    named: set[str] = set()
+    parts: dict[str, dict] = {}
+    for slide in source.get("slides") or []:
+        if not isinstance(slide, dict):
+            continue
+        decision = decisions.get(slide.get("decision")) if slide.get("decision") else None
+        said = _ids_in(slide) | _ids_in(decision)
+        part = {"slide": slide, "decision": decision}
+        for key in ("assets", "references"):
+            part[key] = [x for x in source.get(key) or [] if isinstance(x, dict)
+                         and x.get("id") in said]
+            named |= {x.get("id") for x in part[key]}
+        parts[slide.get("id")] = part
+    header = {k: v for k, v in source.items() if k not in ("slides", "decisions")}
+    for key in ("assets", "references"):
+        if key in header:
+            header[key] = [x for x in header[key] if not (isinstance(x, dict)
+                                                         and x.get("id") in named)]
+    return header, parts
+
+
+def assemble(header: dict, parts: list[dict]) -> dict:
+    """A deck source from its header and its slides' parts, in order."""
+    out = {k: v for k, v in header.items() if k not in ("assets", "references")}
+    for key in ("assets", "references"):
+        seen, merged = set(), []
+        for x in list(header.get(key) or []) + [x for p in parts for x in p.get(key) or []]:
+            if x.get("id") not in seen:
+                seen.add(x.get("id"))
+                merged.append(x)
+        if key in header or merged:
+            out[key] = merged
+    out["slides"] = [p["slide"] for p in parts]
+    out["decisions"] = [p["decision"] for p in parts if p.get("decision")]
+    return out
+
+
+def _read_source(run: ps.Run) -> dict:
+    try:
+        found = yaml.safe_load(source_of(run).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def _write_source(run: ps.Run, source: dict) -> None:
+    pe.write_file(source_of(run), yaml.safe_dump(source, sort_keys=False, allow_unicode=True)
+                  .encode("utf-8"))
+
+
+def _files_of(run: ps.Run, value) -> list[str]:
+    """The files beside the deck source that a part names by path."""
+    folder = run.folder / FOLDER
+    return sorted(v for v in _ids_in(value) if v and not v.startswith("/") and ".." not in v
+                  and len(v) < 300 and (folder / v).is_file() and v != SOURCE)
+
+
+def build_unit(run: ps.Run) -> step_cache.Unit:
+    """The deck's build: its source as written, the files it names, the
+    passed script it is checked against and JARVIS's pipeline."""
+    source = _read_source(run)
+    return step_cache.Unit(BUILD, "", {
+        "source": step_cache.file_sha(source_of(run)),
+        "files": step_cache.files_sha(run.folder / FOLDER, _files_of(run, source)),
+        "script": step_cache.file_sha(run.script), "pipeline": pipeline_digest()})
+
+
+def _compile(run: ps.Run, out: Path) -> list[str]:
+    """The source filled, compiled and proven into `out`; the problems."""
+    source = source_of(run)
+    try:
+        make_package.refuse_json_deck(source)
+        make_package.fill_assets(source)
+        make_package.make_presentation(source, out)
+    except dp.Refused as e:
+        return [str(p) for p in e.problems]
+    except (OSError, ValueError, yaml.YAMLError) as e:
+        return [str(e)]
+    return []
+
+
+def fit_of(run: ps.Run, folder: Path, proof: dict) -> dict:
+    """Every slide's fit at every frame (deck_fit): each slide's reused from
+    the step cache when its layout data is kept, the rest measured
+    together."""
+    pipeline = pipeline_digest()
+    units, have, missing = {}, {}, []
+    for s in proof.get("slides") or []:
+        layout = {k: v for k, v in s.items() if k != "slide"}
+        units[s["id"]] = unit = step_cache.Unit(FIT, s["id"], {"layout": layout,
+                                                               "pipeline": pipeline})
+        entry = step_cache.reuse(unit, run.doc)
+        if entry is None:
+            missing.append(s["id"])
+        else:
+            have[s["id"]] = entry.value
+    if missing:
+        began = time.time()
+        whole = len(missing) == len(units)
+        measured = MEASURE(folder) if whole else MEASURE(folder, only=missing)
+        for one in measured.get("slides") or []:
+            if one["id"] in missing:
+                have[one["id"]] = one
+                step_cache.computed(units[one["id"]], run.doc, began,
+                                    value={k: v for k, v in one.items() if k != "slide"})
+    slides = []
+    for n, s in enumerate(proof.get("slides") or [], 1):
+        if s["id"] in have:
+            slides.append({**have[s["id"]], "slide": s.get("slide", n)})
+    return {"version": deck_fit.VERSION, "frames": [list(f) for f in deck_fit.frames()],
+            "fits": all(x["fits"] for x in slides), "slides": slides}
+
+
 def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[str]]:
     """The author's source filled, compiled and proven by JARVIS's own
     presentation pipeline (make_package.make_presentation), into
-    `deck-built/<round>/`; (the build, []) or (None, every problem)."""
+    `deck-built/<round>/`, reused from the step cache when the same source
+    was built before; (the build, []) or (None, every problem)."""
     source = source_of(run)
     if not source.is_file():
         return None, [f"There is no {SOURCE} at {source}."]
@@ -317,19 +477,21 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
+    unit = build_unit(run)
+    if step_cache.reuse(unit, run.doc, out) is None:
+        began = time.time()
+        problems = _compile(run, out)
+        if problems:
+            return None, problems
+        step_cache.computed(unit, run.doc, began, folder=out, files=["compiled"] + [
+            p.name for p in out.glob("*.zip")])
     try:
-        make_package.refuse_json_deck(source)
-        make_package.fill_assets(source)
-        made = make_package.make_presentation(source, out)
-    except dp.Refused as e:
-        return None, [str(p) for p in e.problems]
-    except (OSError, ValueError, yaml.YAMLError) as e:
-        return None, [str(e)]
-    folder = out / "compiled" / made.deck["name"]
-    try:
+        archive = next(out.glob("*.zip"))
+        folder = next((out / "compiled").iterdir())
         proof = json.loads((folder / presentation_proof.PROOF_FILE).read_text(encoding="utf-8"))
         manifest = json.loads((folder / "package.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
+        deck = dp.read(folder / "deck-data.js")
+    except (OSError, ValueError, StopIteration, dp.Refused) as e:
         return None, [f"The built deck could not be read back: {e}"]
     if manifest.get("vote") != package_inbox.VOTE_ID:
         return None, ["The built deck does not carry Tim's vote, Approve and Reject at the "
@@ -342,7 +504,7 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
     # (deck_fit, Tim 2026-11-22): a fact for the reviewers, and a slide
     # that does not fit even after JARVIS's own fitting does not build.
     try:
-        fit = MEASURE(folder)
+        fit = fit_of(run, folder, proof)
     except deck_fit.Unavailable as e:
         raise package_jobs.Blocked(
             DECK, f"JARVIS could not measure whether the deck's slides fit their frame: {e}",
@@ -353,7 +515,7 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
     deck_fit.write(folder, fit)
     if not fit["fits"]:
         return None, _unfit(deck_fit.problems(fit))
-    return Built(made.archive, folder, proof, made.deck, fit), []
+    return Built(archive, folder, proof, deck, fit), []
 
 
 # ── the review ────────────────────────────────────────────────────────────
@@ -460,10 +622,117 @@ def _write_review(run: ps.Run, result: dict) -> None:
     pe.write_file(run.folder / ps.CONVERSATION, ps.conversation_md(result).encode("utf-8"))
 
 
+def _part_entry(run: ps.Run, part: dict) -> dict:
+    """What a slide's part keeps: the part, and the files beside the deck
+    source it names."""
+    return {"value": part, "files_from": {f"{FOLDER}/{rel}": (run.folder / FOLDER / rel)
+                                          .read_bytes() for rel in _files_of(run, part)}}
+
+
+def _restore_files(run: ps.Run, entry: step_cache.Entry) -> None:
+    step_cache.restore(entry, run.folder)
+
+
+class Plan:
+    """The deck's units as they stand for this run: the header and each
+    slide's source, kept or to write (step_cache.py)."""
+
+    def __init__(self, run: ps.Run, script: dict):
+        self.run = run
+        self.slides = [s for s in script.get("slides") or [] if isinstance(s, dict)]
+        self.ids = [s.get("id") for s in self.slides]
+        fmt = format_digest()
+        self.header_unit = step_cache.Unit(HEADER, "", {
+            "slides": self.ids, "opening": step_cache.digest(self.slides[:1]), "format": fmt})
+        self.source_units = {s.get("id"): step_cache.Unit(SLIDE_SOURCE, s.get("id"), {
+            "script": step_cache.digest(s), "format": fmt}) for s in self.slides}
+        self.header: Optional[dict] = None
+        self.parts: dict[str, dict] = {}
+
+    def reuse(self) -> None:
+        entry = step_cache.reuse(self.header_unit, self.run.doc)
+        if entry is not None:
+            _restore_files(self.run, entry)
+            self.header = entry.value
+        for sid, unit in self.source_units.items():
+            entry = step_cache.reuse(unit, self.run.doc)
+            if entry is not None:
+                _restore_files(self.run, entry)
+                self.parts[sid] = entry.value
+
+    @property
+    def to_write(self) -> list[str]:
+        return [sid for sid in self.ids if sid not in self.parts]
+
+    @property
+    def complete(self) -> bool:
+        return self.header is not None and not self.to_write
+
+    def put_back(self) -> list[str]:
+        """The kept header and slides put back into the source exactly as
+        kept (the author writes only the others), in the author's order;
+        the slides put back that it had changed."""
+        if not self.parts and self.header is None:
+            return []
+        now = _read_source(self.run)
+        header, parts = parts_of(now)
+        back = [sid for sid, part in self.parts.items() if sid in parts and parts[sid] != part]
+        order = list(parts)
+        for sid in self.ids:
+            if sid in self.parts and sid not in order:
+                order.insert(min(self.ids.index(sid), len(order)), sid)
+        final = assemble(self.header if self.header is not None else header,
+                         [self.parts.get(sid) or parts[sid] for sid in order])
+        if final != now:
+            _write_source(self.run, final)
+        return back
+
+    def start_source(self) -> None:
+        """The source as kept so far, for the author to write the rest in."""
+        if self.parts or self.header is not None:
+            _write_source(self.run, assemble(self.header or {},
+                                             [self.parts[sid] for sid in self.ids
+                                              if sid in self.parts]))
+
+    def keep_written(self, began: float) -> None:
+        """Once the written source builds: the header and each slide the
+        author wrote, kept under their keys."""
+        header, parts = parts_of(_read_source(self.run))
+        if self.header is None:
+            step_cache.computed(self.header_unit, self.run.doc, began, value=header,
+                                files_from=_part_entry(self.run, header)["files_from"])
+            self.header = header
+        for sid in self.to_write:
+            if sid in parts:
+                step_cache.computed(self.source_units[sid], self.run.doc, began,
+                                    **_part_entry(self.run, parts[sid]))
+                self.parts[sid] = parts[sid]
+
+
+def review_units(run: ps.Run, built: Built, script: dict) -> dict[str, step_cache.Unit]:
+    """Each slide's review unit: its source part as built, its fit, its
+    script slide, the deck's questions and the sender's answers to an
+    earlier run's findings on the review."""
+    _, parts = parts_of(_read_source(run))
+    by_id = {s.get("id"): s for s in script.get("slides") or [] if isinstance(s, dict)}
+    findings = ps.findings_for(run.doc, REVIEW_LABEL)
+    questions = step_cache.digest(DECK_QUESTIONS)
+    out = {}
+    for sid, part in parts.items():
+        fit = deck_fit.of_slide(built.fit, sid) or {}
+        out[sid] = step_cache.Unit(SLIDE_REVIEW, sid, {
+            "part": step_cache.digest(part), "fit": step_cache.digest(
+                {k: v for k, v in fit.items() if k != "slide"}),
+            "script": step_cache.digest(by_id.get(sid)), "questions": questions,
+            "findings": findings})
+    return out
+
+
 def deck(doc: dict) -> Optional[str]:
-    """The deck step of one run (package_jobs.PRODUCERS["deck"]): WAITING
-    when it waits on the sender (questions, or what is left after its fix
-    passes)."""
+    """The deck step of one run (package_jobs.PRODUCERS["deck"]): every
+    unit reused from the step cache when its inputs are kept, only the rest
+    done; WAITING when it waits on the sender (questions, or what is left
+    after its fix passes)."""
     run = ps._run(doc, DECK)
     kept = ps._kept(run)
     if (package_jobs.get(doc["id"]).get("swarm") or {}).get("result") != "passed":
@@ -474,11 +743,14 @@ def deck(doc: dict) -> Optional[str]:
                                          f"in this install ({DOC}).",
                                    "JARVIS reached the deck step.",
                                    "Install JARVIS with its docs folder, then a new run.")
+    script = package_script.read(run.script) or {}
     state = kept.setdefault(DECK, {"builds": 0})
-    flow = kept.setdefault("deck_flow", {"stage": "deck-write", "pass": 1})
+    units = kept.setdefault("deck_units", {})
+    flow = kept.setdefault("deck_flow", {"stage": "deck-pass", "pass": 1})
     clock = ps.Clock(kept)
     outcome: dict = {}
     last: dict = {}
+    began = time.time()
 
     def build_now() -> Optional[Built]:
         state["builds"] += 1
@@ -488,43 +760,45 @@ def deck(doc: dict) -> Optional[str]:
         last["built"] = built
         return built
 
-    rev = kept.get("revision") or {}
-    before = run.folder / package_resume.BEFORE / package_resume.DECK_SOURCE
-    if flow["stage"] == package_resume.DECK_REVISE_STAGE and not before.is_file():
-        flow["stage"] = "deck-write"        # no deck to revise: written from the script
+    def begin_review(built: Built) -> list[str]:
+        """Each slide's review reused when kept; the slides left to review."""
+        reviews = review_units(run, built, script)
+        reviewed: dict[str, dict] = {}
+        only = [sid for sid in plan.ids if sid in reviews
+                and not _reuse_review(run, reviews[sid], reviewed)]
+        units.update(phase="review", only=only, said=False, reviewed=reviewed,
+                     inputs={sid: u.inputs for sid, u in reviews.items()})
+        flow.clear()
+        flow.update({"stage": "deck-pass", "pass": 1,
+                     "slides": only if len(only) < len(plan.ids) else None})
+        return only
 
-    def revised_slides() -> Optional[list[str]]:
-        """In a revision, the slides to review: those whose script slide
-        changed and the deck slides that differ from the source before, in
-        the deck's order; None when not a revision or nothing changed."""
-        if not rev or not before.is_file():
-            return None
-        try:
-            now = yaml.safe_load(source_of(run).read_text(encoding="utf-8")) or {}
-            was = yaml.safe_load(before.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError):
-            return None
-        changed = set(package_resume.changed_slides(was, now)) | set(
-            rev.get("slides_changed") or [])
-        return [i for i in package_resume.slide_ids(now) if i in changed] or None
+    plan = Plan(run, script)
+    if units.get("phase") != "review":
+        plan.reuse()
+        if plan.complete:
+            plan.start_source()
+            if build_now() is None and state.get("unfit"):
+                return _not_fit(run, kept, state)
+            if last.get("built") is not None and not begin_review(last["built"]):
+                return _finish(run, kept, plan, outcome, last, state, build_now, began, True)
 
     async def go():
         swarm_ = ps.build(run, kept, DECK_CONCERNS)
         source = DeckSource(run, build_now)
 
         async def written(note: str) -> bool:
-            """The author writes or revises the deck until it builds and
-            proves, at most ROUNDS_MAX more times; the review said once it
-            does (in a revision, of the slides that changed)."""
+            """The author writes the slides not kept (every slide when none
+            is), the kept ones put back, until the deck builds and proves,
+            at most ROUNDS_MAX more times."""
             for attempt in range(ROUNDS_MAX + 1):
                 await swarm_.answer(ps.AUTHOR, ps.TIMEOUT, note if attempt == 0 else
                                     revise_note(run), ps.TALK)
-                built = build_now()
-                if built is not None:
-                    only = revised_slides()
-                    if rev:
-                        flow["slides"] = only
-                    swarm_.say(PROGRAM, review_turn(run, built, only))
+                back = plan.put_back()
+                if back:
+                    swarm_.say(PROGRAM, f"JARVIS put back slides {', '.join(back)} as they "
+                                        f"were: their script slides did not change.")
+                if build_now() is not None:
                     return True
                 swarm_.say(PROGRAM, build_problems_note(state["problems"]))
             return False
@@ -534,49 +808,48 @@ def deck(doc: dict) -> Optional[str]:
 
         def given(name: str) -> str:
             slides = flow.get("slides")
-            return ((f"This run revises {rev.get('run')}: review only the slides that changed, "
-                     f"{', '.join(slides)}; every other slide is as {rev.get('run')} made it.\n"
-                     if slides else "")
+            return ((f"Review only these slides: {', '.join(slides)}; every other slide was "
+                     f"reviewed before and stays as it is.\n" if slides else "")
                     + "Review the deck, above, against the passed script, for your concerns.\n"
                     + sessions._tag(DeckSource.key, source.text(), file=SOURCE))
         try:
             await swarm_.open()
             ps._take_answers(run, swarm_, kept)
-            if flow["stage"] == package_resume.DECK_REVISE_STAGE:
-                with clock("deck-revise"):
-                    if not await written(revise_deck_note(run, rev,
-                                                          rev.get("slides_changed") or [])):
-                        outcome.update(result="not passed",
-                                       findings=_findings_of_build(state["problems"]))
-                        return
-                try:
-                    was = yaml.safe_load(before.read_text(encoding="utf-8")) or {}
-                    now = yaml.safe_load(source_of(run).read_text(encoding="utf-8")) or {}
-                except (OSError, yaml.YAMLError):
-                    was, now = {}, {}
-                changed = package_resume.changed_slides(was, now)
-                reviewed = flow.get("slides") or []
-                package_resume.record(doc["id"], DECK, {
-                    "slides_changed": changed, "slides_reviewed": reviewed,
-                    "slides_kept": [i for i in package_resume.slide_ids(now)
-                                    if i not in changed]})
-                flow["stage"] = "deck-pass"
+            if units.get("phase") != "review":
+                if plan.complete and last.get("built") is None:
+                    # The kept source no longer builds: the author writes it all.
+                    plan.parts.clear()
+                    plan.header = None
+                if not plan.complete:
+                    write = plan.to_write
+                    kept_ids = [i for i in plan.ids if i in plan.parts and i not in write]
+                    plan.start_source()
+                    with clock("deck-write"):
+                        note = (write_note(run) if not kept_ids and plan.header is None
+                                else revise_deck_note(run, write, kept_ids))
+                        if not await written(note):
+                            outcome.update(result="not passed",
+                                           findings=_findings_of_build(state["problems"]))
+                            return
+                    plan.keep_written(began)
+                if not begin_review(last["built"]):
+                    outcome["result"] = "passed"
+                    return
+            if not units.get("said"):
+                said = ps.findings_said(ps.findings_for(doc, REVIEW_LABEL))
+                if said:
+                    swarm_.say(PROGRAM, "The run before ended the deck's review with findings "
+                                        "for the sender; its answers follow, and the deck is "
+                                        "reviewed again as it stands.")
+                    swarm_.say("sender", said)
+                built = last.get("built") or build_now()
+                if built is None:
+                    outcome.update(result="not passed",
+                                   findings=_findings_of_build(state["problems"]))
+                    return
+                swarm_.say(PROGRAM, review_turn(run, built, flow.get("slides")))
+                units["said"] = True
                 ps._keep(run, swarm_, kept)
-            elif flow["stage"] == "deck-write":
-                with clock("deck-write"):
-                    if not await written(write_note(run)):
-                        outcome.update(result="not passed",
-                                       findings=_findings_of_build(state["problems"]))
-                        return
-                flow["stage"] = "deck-pass"
-                ps._keep(run, swarm_, kept)
-            elif last.get("built") is None and build_now() is None:
-                flow.pop("review_again", None)
-                swarm_.say(PROGRAM, build_problems_note(state["problems"]))
-            elif flow.pop("review_again", False):
-                # A run that goes on from the run before it (package_resume):
-                # the deck built again, with JARVIS's layout as it is now.
-                swarm_.say(PROGRAM, review_turn(run, last["built"]))
             end = await ps.fix_passes(
                 run, swarm_, kept, flow, DECK_IDS, source, mark=nothing,
                 revise=lambda items: written(revise_note(run)), given=given, clock=clock,
@@ -597,31 +870,100 @@ def deck(doc: dict) -> Optional[str]:
                        "and proved it, and had the owners and the editor compare it with the "
                        "script.", go())
     if outcome.get("waiting"):
-        return package_jobs.WAITING
-    built = last.get("built")
-    if built is None and state.get("unfit"):
         ps._save(run, kept)
-        raise package_jobs.Blocked(
-            DECK, "JARVIS could not make the deck fit its frame: "
-                  + " ".join(state.get("problems") or []),
-            "JARVIS laid each slide out with its own fit (its words down to the 13 px floor, "
-            "then smaller gaps and shorter bars) and measured it at every frame from 662 x 489 "
-            "to 1600 x 900; the author was told to split it and revised it.", NOT_FIT_FIX)
-    passed = outcome["result"] == "passed" and built is not None
-    result = {**outcome["swarm"], "result": "passed" if passed else "not passed",
-              "program": [readable(built.fit)] if built is not None else [],
-              "findings": [] if passed else (outcome["findings"] or _findings_of_build(
-                  state.get("problems") or [])),
-              "deck_passes": flow["pass"], "times": kept.get("times") or []}
-    _write_review(run, result)
+        return package_jobs.WAITING
+    if last.get("built") is None and state.get("unfit"):
+        return _not_fit(run, kept, state)
+    return _finish(run, kept, plan, outcome, last, state, build_now, began,
+                   outcome.get("result") == "passed" and (last.get("built") is not None
+                                                          or units.get("phase") == "review"))
+
+
+def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, state: dict,
+            build_now: Callable[[], Optional[Built]], began: float, passed: bool
+            ) -> Optional[str]:
+    """The deck step's end: passed, each slide reviewed now kept and the
+    final deck built; the review written (reused when the step's record
+    is kept) and the outcome on the job; else what is left to the sender."""
+    doc = run.doc
+    units = kept.get("deck_units") or {}
+    reviews = {sid: step_cache.Unit(SLIDE_REVIEW, sid, inputs)
+               for sid, inputs in (units.get("inputs") or {}).items()}
+    built = last.get("built") or (build_now() if passed else None)
+    if passed and built is not None:
+        built = _final(run, plan, reviews, units.get("reviewed") or {}, build_now) or built
+    if built is None and state.get("unfit"):
+        return _not_fit(run, kept, state)
+    passed = passed and built is not None
+    step = step_cache.Unit(STEP_UNIT, "", {"reviews": sorted(u.key for u in reviews.values()),
+                                           "source": step_cache.file_sha(source_of(run))})
+    if not (passed and "swarm" not in outcome and step_cache.reuse(step, doc, run.folder)):
+        swarm = outcome.get("swarm") or {**(kept.get("swarm") or {})}
+        result = {**swarm, "result": "passed" if passed else "not passed",
+                  "program": [readable(built.fit)] if built is not None else [],
+                  "findings": [] if passed else (outcome.get("findings") or _findings_of_build(
+                      state.get("problems") or [])),
+                  "deck_passes": (kept.get("deck_flow") or {}).get("pass", 1),
+                  "times": kept.get("times") or []}
+        result.setdefault("conversation", [])
+        _write_review(run, result)
+        if passed:
+            step_cache.computed(step, doc, began, folder=run.folder,
+                                files=[REVIEW, ps.CONVERSATION])
+    only = list(units.get("only") or [])
+    kept.pop("deck_units", None)
+    ps._save(run, kept)
+    flow = kept.get("deck_flow") or {}
     if passed:
         package_jobs.noted(doc["id"], DECK, {
-            "result": "passed", "passes": flow["pass"], "archive": str(built.archive),
+            "result": "passed", "passes": flow.get("pass", 1), "archive": str(built.archive),
             "folder": str(built.folder), "source": str(source_of(run)),
-            "review": str(run.folder / REVIEW), "fit": str(built.folder / deck_fit.FILE)})
+            "review": str(run.folder / REVIEW), "fit": str(built.folder / deck_fit.FILE),
+            "slides_reviewed": only})
         return None
-    package_jobs.noted(doc["id"], DECK, {"result": "not passed", "passes": flow["pass"],
+    package_jobs.noted(doc["id"], DECK, {"result": "not passed", "passes": flow.get("pass", 1),
                                          "review": str(run.folder / REVIEW)})
-    package_jobs.failed_swarm(doc["id"], ps.findings_questions(result["findings"]),
-                              result["findings"])
+    findings = json.loads((run.folder / REVIEW).read_text(encoding="utf-8"))["findings"]
+    package_jobs.failed_swarm(doc["id"], ps.findings_questions(findings), findings,
+                              stage=REVIEW_LABEL)
     return package_jobs.WAITING
+
+
+def _reuse_review(run: ps.Run, unit: step_cache.Unit, reviewed: dict) -> bool:
+    """A slide's review reused from the step cache: its reviewed part kept
+    for the final source. False when not kept."""
+    entry = step_cache.reuse(unit, run.doc)
+    if entry is None:
+        return False
+    _restore_files(run, entry)
+    reviewed[unit.name] = entry.value
+    return True
+
+
+def _final(run: ps.Run, plan: Plan, reviews: dict[str, step_cache.Unit], reviewed: dict,
+           build_now: Callable[[], Optional[Built]]) -> Optional[Built]:
+    """The review passed: each slide reviewed now kept under its review key
+    with its source as reviewed; the final source is each reused slide's
+    reviewed part and the rest as they stand, built (reused when built
+    before). The final build."""
+    began = time.time()
+    header, parts = parts_of(_read_source(run))
+    for sid, unit in reviews.items():
+        if sid not in reviewed and sid in parts:
+            step_cache.computed(unit, run.doc, began, **_part_entry(run, parts[sid]))
+    final = assemble(header, [reviewed.get(sid) or parts[sid] for sid in plan.ids
+                              if sid in parts or sid in reviewed])
+    if final != _read_source(run):
+        _write_source(run, final)
+        return build_now()
+    return None
+
+
+def _not_fit(run: ps.Run, kept: dict, state: dict):
+    ps._save(run, kept)
+    raise package_jobs.Blocked(
+        DECK, "JARVIS could not make the deck fit its frame: "
+              + " ".join(state.get("problems") or []),
+        "JARVIS laid each slide out with its own fit (its words down to the 13 px floor, "
+        "then smaller gaps and shorter bars) and measured it at every frame from 662 x 489 "
+        "to 1600 x 900; the author was told to split it and revised it.", NOT_FIT_FIX)

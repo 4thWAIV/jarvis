@@ -314,7 +314,8 @@ def answer(job: str, answers: dict, *, session: str) -> dict:
 
 def rerun(job: str, *, session: str) -> dict:
     """Ask for the package again after the run `job` ended in Error or
-    failed, with no new answers: the next run goes on from the step that
-    failed, reusing what that run kept (package_resume). The new run's job."""
+    failed, with no new answers: the next run reuses every step whose
+    inputs are unchanged (step_cache.py), so it goes on from the step that
+    stopped. The new run's job."""
     with _client(session) as client:
         return _answer(client.post(f"{ROUTE}/{urllib.parse.quote(job, safe='')}/rerun", {}))

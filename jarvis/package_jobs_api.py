@@ -21,8 +21,8 @@ each calls the server's one function for it.
         or starts a new run with its words
   POST /api/packages/requests/{job}/rerun
         the asking agent asks for its package again after this run ended in
-        Error or failed, with no new answers: the next run goes on from the
-        step that failed, reusing what this run kept (package_resume);
+        Error or failed, with no new answers: the next run reuses every
+        step whose inputs are unchanged (step_cache.py);
         answers the new run's job. Refused (409) while a later run of the
         package is still going, or when this run did neither
 """

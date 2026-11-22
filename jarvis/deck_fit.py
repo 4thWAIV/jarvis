@@ -47,7 +47,7 @@ CLIPPED, SCROLLS = "clipped", "needs scrolling"
 # scrolling, by its own words or its control's name. A part one pixel or
 # less across is hidden on purpose (a heading for screen readers) and is
 # not a part of the slide.
-_MEASURE = r"""() => {
+_MEASURE = r"""(only) => {
   const tiny = r => r.width <= 1 || r.height <= 1;
   const scrolls = st => /(auto|scroll)/.test(st.overflowY + " " + st.overflowX);
   const words = e => {
@@ -58,6 +58,7 @@ _MEASURE = r"""() => {
   };
   const out = [];
   document.querySelectorAll(".slide").forEach((s, i) => {
+    if (only && !only.includes(s.dataset.sourceSlide || s.id)) return;
     const box = s.getBoundingClientRect();
     const own = getComputedStyle(s);
     const cut = [];
@@ -125,7 +126,8 @@ def frames() -> list[tuple[int, int]]:
     return sorted({(round(w), round(h)) for w, h in layout_spec.frames()})
 
 
-def _measure_now(folder: Path, sizes: list[tuple[int, int]]) -> list[dict]:
+def _measure_now(folder: Path, sizes: list[tuple[int, int]],
+                 only: Optional[list[str]] = None) -> list[dict]:
     try:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -154,7 +156,7 @@ def _measure_now(folder: Path, sizes: list[tuple[int, int]]) -> list[dict]:
                         page.set_viewport_size({"width": w, "height": h})
                         deck.evaluate(_SETTLED)
                         deck.evaluate(_SETTLED)
-                        seen.append({"frame": [w, h], "slides": deck.evaluate(_MEASURE)})
+                        seen.append({"frame": [w, h], "slides": deck.evaluate(_MEASURE, only)})
                     return seen
                 finally:
                     browser.close()
@@ -162,8 +164,12 @@ def _measure_now(folder: Path, sizes: list[tuple[int, int]]) -> list[dict]:
             raise Unavailable(f"Chromium could not draw the deck: {e}") from None
 
 
-def measure(folder: Path, sizes: Optional[list[tuple[int, int]]] = None) -> dict:
-    """Every slide of the built deck in `folder`, drawn at every frame:
+def measure(folder: Path, sizes: Optional[list[tuple[int, int]]] = None,
+            only: Optional[list[str]] = None) -> dict:
+    """Every slide of the built deck in `folder` (with `only`, those slide
+    ids alone: the step cache keeps each slide's fit, deck_fit's per slide,
+    and only a slide whose layout changed is measured again), drawn at
+    every frame:
     {version, frames, fits, slides: [{slide, id, fits, cut: [{frame, parts:
     [{part, how, by_px}]}]}]}. Run in a thread of its own (the deck step's
     loop is running). Raises Unavailable."""
@@ -172,7 +178,7 @@ def measure(folder: Path, sizes: Optional[list[tuple[int, int]]] = None) -> dict
 
     def go():
         try:
-            got["seen"] = _measure_now(Path(folder), sizes)
+            got["seen"] = _measure_now(Path(folder), sizes, only)
         except BaseException as e:      # noqa: BLE001 - handed back to the caller
             got["error"] = e
     worker = threading.Thread(target=go, name="deck-fit", daemon=True)

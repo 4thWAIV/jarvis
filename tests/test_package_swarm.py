@@ -288,16 +288,21 @@ def test_research_without_its_prep_is_an_error(marked, plan):
         ps.research(pj.get(marked["id"]))
 
 
-def test_a_new_run_starts_from_the_earlier_run_s_research(marked, plan):
+def test_a_new_run_reuses_the_research_its_inputs_made(marked, plan):
+    """The step cache (step_cache.py): research's inputs are the handoff,
+    the evidence as gathered and its marks; a later run with the same ones
+    reuses it, the author never asked again."""
     ps.research(pj.get(marked["id"]))
-    (Path(marked["folder"]) / research_log.NAME).write_text('{"tool": "knowledge_search"}\n')
-    later = pj.new_run(marked["id"], "the sender answered the swarm's findings")
+    turns = len(plan.sent["author"])
+    later = pj.new_run(marked["id"], "the sender asked for it again")
     plan.folder = Path(later["folder"])
     ps.research(pj.get(later["id"]))
-    earlier = Path(later["folder"]) / ps.EARLIER
-    assert (earlier / ps.RESEARCH_MD).read_text().startswith("Finding:")
-    assert (earlier / research_log.NAME).is_file()
-    assert f"An earlier run's research is in {earlier}" in plan.sent["author"][-1]
+    assert len(plan.sent["author"]) == turns, "the author is not asked again"
+    new = Path(later["folder"])
+    assert (new / ps.RESEARCH_MD).read_text() == (Path(marked["folder"]) / ps.RESEARCH_MD
+                                                   ).read_text()
+    kept = json.loads((new / ps.STATE).read_text())
+    assert [u["kind"] for u in kept["units"]] == ["research"]
 
 
 # ── the swarm ─────────────────────────────────────────────────────────────

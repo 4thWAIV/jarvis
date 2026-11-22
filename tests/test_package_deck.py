@@ -300,9 +300,20 @@ def test_a_slide_that_does_not_fit_goes_back_to_the_author_never_the_sender(
         marked, deck_plan, monkeypatch):
     from tests.deck_fixtures import fitting_every_frame
     measured = iter([_cut_at_the_smallest_frame])
-    monkeypatch.setattr(pd, "MEASURE", lambda folder: next(measured, fitting_every_frame)(folder))
+    asked = []
+
+    def measure(folder, only=None):
+        asked.append(only)
+        return next(measured, lambda f: fitting_every_frame(f, only))(folder)
+    monkeypatch.setattr(pd, "MEASURE", measure)
+    # The author answers by changing the slide that did not fit; the same
+    # layout measures the same (its fit is kept, step_cache.py).
+    shorter = deck_with_his_words()
+    shorter["decisions"][0]["reason"] = "No table to book."
+    deck_plan.decks = [deck_with_his_words(), shorter]
     doc = _passed(marked)
     assert pd.deck(doc) is None
+    assert asked == [None, ["where"]], "only the slide whose layout changed is measured again"
     review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
     said = _said_on_the_deck(review)
     assert "does not fit even after JARVIS's own fitting" in said[0]

@@ -552,22 +552,16 @@ EXEMPT = {
         "words, the run's own paths and the deck's layout data, a turn between role sessions, "
         "never a brain header, never said. Driven by tests/test_package_deck.py"),
     "package_swarm.go": (
-        "the swarm step's own flow: in a revision it reads the run's own revision record (the "
-        "run id before, who said what is wrong, the slide ids that changed) to say the program's "
-        "fixed words, those ids and the slides kept into the package swarm's own conversation "
-        "between role sessions and to keep what was redone on the job record; never a brain "
-        "header, never said. Driven by tests/test_package_resume.py"),
-    "package_deck.go": (
-        "the deck step's own flow: in a revision it reads the run's own revision record (the run "
-        "id before, the slide ids that changed) to say the program's fixed words and those ids "
-        "into the package swarm's own conversation between role sessions and to keep what was "
-        "redone on the job record; never a brain header, never said. Driven by "
-        "tests/test_package_resume.py"),
-    "package_resume.revise": (
-        "it copies the run before's work into the next run's folder and says, as JARVIS's own "
-        "turn in the package's role conversation, which run it revises, then the sender's words "
-        "of what is wrong in their own tagged element or Tim's Reject words as his, word for "
-        "word; never a brain header, never said. Driven by tests/test_package_resume.py"),
+        "the swarm step's own flow: in a revision it reads the run's own revision record (who "
+        "said what is wrong, the slide ids that changed) to say the program's fixed words, those "
+        "ids and the slides kept into the package swarm's own conversation between role sessions "
+        "and to keep what was redone on the job record; never a brain header, never said. "
+        "Driven by tests/test_step_cache.py"),
+    "package_swarm.findings_said": (
+        "it puts the sender's answers to an earlier run's findings into the package's role "
+        "conversation as the sender's, each in its own tagged element, as "
+        "package_swarm._take_answers does; never a brain header, never said. Driven by "
+        "tests/test_step_cache.py"),
     "package_deck.review_turn": (
         "the deck review's program turn in the package swarm's own conversation between role "
         "sessions: each script slide and its deck slide's layout data inside its own <slide>, "
@@ -677,9 +671,7 @@ EXEMPT = {
     'make_package._job_command': ("it prints the package request's own answer (package_request.py) as JSON, or JARVIS's refusal's problems, to the sending agent's own terminal; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
     'package_author.read_questions': ("it reads the fresh author's questions file into the job record for its own sender; ids are checked against a fixed slug pattern and nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
     'package_jobs._record_run': ("it records a package run's job (package_jobs.py) with the asking session's id as `requested_by`, a record field, never a header the brain reads as JARVIS's words. Driven by tests/test_package_jobs.py"),
-    'package_jobs.rerun': ("it checks a package job is its sender's own and has ended in Error or failed before the next run goes on from it; its refusals name only JARVIS's own run and job ids and the job's state word, to the asking agent, never the brain or the voice. Driven by tests/test_package_resume.py"),
-    'package_resume.carry': ("it copies a failed run's kept files into the next run's folder and says, as JARVIS's own turn in the package's role conversation, which run and step it goes on from (JARVIS's own ids and step names); never a brain header, never said. Driven by tests/test_package_resume.py"),
-    'package_resume._answers_of': ("it puts the sender's answers to a failed run's findings into the package's role conversation as the sender's, each in its own tagged element, as package_swarm._take_answers does; never a brain header, never said. Driven by tests/test_package_resume.py"),
+    'package_jobs.rerun': ("it checks a package job is its sender's own and has ended in Error or failed before the next run goes on from it; its refusals name only JARVIS's own run and job ids and the job's state word, to the asking agent, never the brain or the voice. Driven by tests/test_step_cache.py"),
     'deck_fit.measure': ("it measures a built deck's slides in headless Chromium and keeps, per slide, the words of each part that does not fit (the deck's own words) in the fit record for the package's deck review; never a brain header, never said. Driven by tests/test_voice_page_deck_fit.py"),
     'deck_fit.problems': ("it says which slides of a built deck do not fit, quoting the parts the measure named, to the package's author in its role conversation as JARVIS's program turn; never a brain header, never said. Driven by tests/test_package_deck.py"),
     'package_jobs.new_run': ("it records the next run of a package with the change named by JARVIS's own caller; the asking session's id is a record field, never a header. Driven by tests/test_package_jobs.py"),

@@ -149,6 +149,13 @@ def read_manifest(place: Place) -> list[Row]:
     return [Row(**r) for r in rows if isinstance(r, dict)]
 
 
+def gathered_rows(rows: list[Row]) -> list[Row]:
+    """The rows the gather step made: every row but those written after it
+    (the sender's answers, his Reject words on earlier runs). The mark and
+    research steps read these alone (their inputs, step_cache.py)."""
+    return [r for r in rows if r.type != SENDER_ANSWER and r.stored != TIM_REJECTED]
+
+
 def write_manifest(place: Place, rows: list[Row]) -> None:
     place.write(MANIFEST, json.dumps([asdict(r) for r in rows], indent=2,
                                      ensure_ascii=False).encode("utf-8"))
@@ -158,6 +165,12 @@ def write_manifest(place: Place, rows: list[Row]) -> None:
 
 # The stored files of JARVIS's own records, by what they are.
 TIM_RECORD = "jarvis/tim.md"
+# His Reject words on the package's earlier runs, written after the package
+# was gathered (package_gather.refresh_tim) as a file of its own, as the
+# sender's answers are: what was gathered stays as it was gathered, so the
+# steps that read it (mark, research) are reused (step_cache.py), and his
+# words reach the run as the revision it is (package_swarm).
+TIM_REJECTED = "jarvis/tim-rejected.md"
 WORK_ITEM_RECORD = "jarvis/work-item"
 SENDER_SESSION = "jarvis/sender-session.md"
 
@@ -200,7 +213,7 @@ def knowledge_state(row: Row) -> str:
     if row.resolved != OK:
         return PROBABLY_NOT
     if row.type == JARVIS_TYPE:
-        if row.stored == TIM_RECORD:
+        if row.stored in (TIM_RECORD, TIM_REJECTED):
             return KNOWS
         if (row.stored or "").startswith(WORK_ITEM_RECORD):
             return HAD_ACCESS
@@ -313,7 +326,7 @@ def wait_indexed(place: Place, step: str, uds=None, text_only: tuple = ()) -> li
 
 # ── the package's links ──────────────────────────────────────────────────
 
-def link(place: Place, items: list[str], rows: list[Row]) -> str:
+def link(place: Place, items: list[str], rows: list[Row], key: str = "") -> str:
     """The package's own record, naming each stored file and each record it
     gathered: the engine makes a reference link from it to each (the first
     step of co-use). Its path."""
@@ -321,7 +334,8 @@ def link(place: Place, items: list[str], rows: list[Row]) -> str:
     read = list(dict.fromkeys(r.record for r in rows if r.record and item_paths.is_path(r.record)))
     records.write(place.record, {"package": place.package, "work": place.work,
                                  "evidence": place.path, "gathered": gathered, "records": read,
-                                 "rows": len(rows), "gathered_at": time.time()},
+                                 "rows": len(rows), "gathered_at": time.time(),
+                                 "gather_key": key},
                   by=records.JARVIS, change="evidence gathered",
                   summary=f"{len(gathered)} file(s), {len(read)} record(s)")
     return place.record
