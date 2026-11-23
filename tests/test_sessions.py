@@ -697,26 +697,26 @@ def test_the_tool_channel_answers_a_role_only_for_its_own_tools(monkeypatch, tmp
 # ── the splitter ──────────────────────────────────────────────────────────
 
 def test_written_text_splits_into_sentences_and_their_parts_at_its_offsets():
-    text = ("# The plan\nWe moved it, because Mr. Smith asked; it broke (twice) and we "
+    text = ("# The plan\nWe moved it, because Mr. Chair asked; it broke (twice) and we "
             "fixed it.\nThis wraps\nonto the next line.\n\n- First item\n- Second: done")
     found = text_parts.split(text)
     for seg in found:
         assert text[seg.start:seg.end] == seg.text
     sentences = [s.text for s in found if s.kind == text_parts.SENTENCE]
     assert sentences == ["# The plan",
-                         "We moved it, because Mr. Smith asked; it broke (twice) and we fixed it.",
+                         "We moved it, because Mr. Chair asked; it broke (twice) and we fixed it.",
                          "This wraps\nonto the next line.", "- First item", "- Second: done"]
     parts = [s.text for s in found if s.within == "s2"]
-    assert parts == ["We moved it,", "because Mr. Smith asked;", "it broke", "(twice)",
+    assert parts == ["We moved it,", "because Mr. Chair asked;", "it broke", "(twice)",
                      "and we fixed it."]
-    assert text_parts.sentence_around(text, text.index("Smith"), text.index("Smith") + 5) == \
+    assert text_parts.sentence_around(text, text.index("Chair"), text.index("Chair") + 5) == \
         sentences[1]
 
 
 def test_spanish_joins_and_abbreviations():
-    parts = [p.text for p in text_parts.split("Lo hizo la Sra. Pérez, pero falló porque sí.")
+    parts = [p.text for p in text_parts.split("Lo hizo la Sra. Presidenta, pero falló porque sí.")
              if p.kind == text_parts.PHRASE]
-    assert parts == ["Lo hizo la Sra. Pérez,", "pero falló", "porque sí."]
+    assert parts == ["Lo hizo la Sra. Presidenta,", "pero falló", "porque sí."]
 
 
 # ── the sessions, the model faked at the session ──────────────────────────
