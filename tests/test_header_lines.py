@@ -32,6 +32,7 @@ test is over all of them, found in the source rather than listed here.
 """
 
 import ast
+import asyncio
 import importlib
 import re
 import sys
@@ -350,6 +351,10 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "run_report.step": (
+        "it times a package run's step and writes its numbers into the run's timing.json; the one "
+        "text it builds is the name of the exception class that ended the step, and the job id it "
+        "reads is JARVIS's own and goes into that file, never into a line anyone reads"),
     "server._agent_or_explain": (
         "it reads only an agent's session id from the agent directory to build the "
         "`agent:<session id>` its caller records; what it says is fixed words and a count, never "
@@ -425,13 +430,267 @@ EXEMPT = {
         "it passes the brain's own arguments (provider, window, times, resolution) to the usage "
         "history read and returns that JSON of JARVIS's own numbers and window names under a fixed "
         "header; a refusal quotes at most 40 characters of an argument after 'Refused:'"),
-    "author_proof.transcript": (
-        "it returns the path of the author session's own transcript, found by an id checked against "
-        "a fixed pattern; nothing it reads is printed, said or put in a header"),
-    "package_author.claim_of": (
-        "it builds the author claim from the receipt's engine and session id, both checked by "
-        "author_proof.Claim.of against fixed values and a fixed pattern; its refusal names only "
-        "the source's path, printed to the agent running make_package, never a brain header"),
+    "evidence_readers.ci_run": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.issue": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.message": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.package": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.pr": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.run": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.work_item": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.work_item_text": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "evidence_readers.workflow": (
+        "it writes a package's evidence file (evidence_readers.py) for the package's own steps to read as gathered material, under the gather step's folder; never a brain header, never said, and every role is given it as material, never as JARVIS's words"),
+    "package_evidence._message_state": (
+        "it reads a message's direction and state to set Tim's knowledge state, one of three fixed words; it prints nothing"),
+    "package_evidence.knowledge_state": (
+        "it returns one of three fixed knowledge states from a row's type and stored path; it prints nothing"),
+    "package_evidence.add_sender_answers": (
+        "it writes the sender's answers into the package's evidence file sender-answers/<n>.md, read by the package's steps as the sender's words; never a brain header, never said"),
+    "package_gather.gather_jarvis_material": (
+        "it writes JARVIS's own material into the package's evidence files (jarvis/), read by the package's steps as material; never a brain header, never said"),
+    "package_gather._read_now": (
+        "it hashes each evidence row's type, stored path, SHA-256, resolution and origin into "
+        "a step-cache key; it prints nothing"),
+    "package_gather.retrieve_labels": (
+        "it writes manifest rows for the labels retrieval resolved, in the package's evidence; never a brain header, never said"),
+    "package_mark._fact_item": (
+        "it gives ClassificationSession one fact of a file as an item: the fact's id (the "
+        "program's own, f1, f2 ...), its value and its source (the stored path, position and "
+        "field), the session's material inside its tagged items; never a brain header, never "
+        "said"),
+    "package_mark.read_and_score": (
+        "it feeds the facts and marked parts of the package's evidence to ClassificationSession "
+        "and keeps each one's scores by its id (the program's own); the one text it builds is "
+        "fixed words and a count of files for the step's Error, no file's words; never a brain "
+        "header, never said"),
+    "package_gather.tim_text": (
+        "it writes Tim's record into the package's evidence file jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
+    "package_gather._his_words": (
+        "it gives his own words found elsewhere in the engine (his turns, his messages to agents, "
+        "his answers) as lines of Part 2 of Tim's record, the package's evidence file "
+        "jarvis/tim.md, read by the package's steps as material; never a brain header, never said"),
+    "package_gather.said_elsewhere": (
+        "it writes Part 2 of Tim's record, what he said elsewhere, and any search that could not "
+        "be made, into the package's evidence file jarvis/tim.md, read by the package's steps as "
+        "material; never a brain header, never said"),
+    "session_transcript.find": (
+        "it returns the path of a session's own transcript, found by its id; nothing it reads is printed, said or put in a header"),
+    "work_research.markdown": (
+        "it writes what was looked up into a research file (a Work item's data/work/<id>/research/queries.md, a package run's research-searches.md), indexed as material, and the same text is given to the package's author as material; never a brain header, never said"),
+    "work_research._summaries_md": (
+        "it writes the summaries of what was looked up for a Work item into its research file, "
+        "data/work/<id>/research/summaries.md, indexed as material, as markdown writes queries.md; "
+        "never a brain header, never said"),
+    "working_set._sentences": (
+        "it reads the mark step's own marks of one evidence file (each sentence's or fact's id, "
+        "words, position and scores) into the material a package role session is given, inside "
+        "its tagged items; never a brain header, never said"),
+    "working_set.build": (
+        "it builds what a package role session is given of the evidence: its files whole with "
+        "the program's short marks in place, or the working set of them, the contents and the "
+        "search hits, all inside tagged items of that session's material; never a brain header, "
+        "never said"),
+    "role_search.run": (
+        "the author's batch search on its own tool server: what the engine found is given back "
+        "to that role session as its tool's answer, short, and kept in the run's search log; "
+        "never a brain header, never said"),
+    "claude_provider.role_command": (
+        "it builds a package role's `claude -p` argument list; the only field it reads is the "
+        "session id JARVIS made for that role's own session (`--session-id`), and the role's "
+        "prompt is one argument, never a header the brain reads or words said"),
+    "sessions._open_one": (
+        "the field it reads is the brain provider of the role's own pick (claude or codex), "
+        "JARVIS's own word; the text it builds is a role session's failure to start within "
+        "Settings' run_timeout_sec, raised as SessionFailed into the package job's Error reason "
+        "with the role's own name, never a brain header, never said"),
+    "codex_role_probe.judge": (
+        "the field it reads is the id of an item in the Codex app server's own messages to the "
+        "probe, used only to pair each tool listing's start with its end; the text it builds is "
+        "a server and tool name in the probe's verdict, printed to the probe's own terminal, "
+        "never a brain header, never said"),
+    "server._package_swarm_failed": (
+        "a failed swarm's findings (the swarm's own votes and reasons) go on the Work item as "
+        "JARVIS's message (read by the brain walled, as every message is) and to the asking "
+        "agent's own session as JARVIS's message (that agent's own request, read by it alone); the "
+        "attention record gets the agent's name as other people's words (untrusted) and counts; "
+        "the job's id is JARVIS's own. Driven by tests/test_package_jobs.py"),
+    "sessions.sign": (
+        "the fields it reads are a role session's own sign-off on its concern (JARVIS's own "
+        "words resolved or not_yet, and the session's reason and what it left), kept as data in "
+        "the package swarm's record; never a brain header, never said"),
+    "sessions.state": (
+        "the field it reads is a concern's latest sign-off state, one of JARVIS's own words "
+        "(open, resolved, not_yet); it prints nothing"),
+    "package_swarm.list_text": (
+        "the merged list of what the owners left is the program's turn in the package swarm's "
+        "own conversation between role sessions, each item a role session's own words kept "
+        "word for word as the design says; never a brain header, never said"),
+    "package_swarm.findings_questions": (
+        "it turns what the owners left into the questions the sender's own job asks, data on "
+        "the job record the sender reads as its own; never a brain header, never said"),
+    "package_swarm.swarm": (
+        "the swarm step: the only fields it reads are the job's id, the run's own flow stage "
+        "and its outcome, JARVIS's own, to keep the outcome on the job record and send what is "
+        "left to the sender as data; never a brain header, never said. Driven by "
+        "tests/test_package_swarm.py"),
+    "package_script._slide_ids": (
+        "it names an outline's or script's slide whose id is another's, in the check's problems "
+        "said back to the author in the package swarm's own conversation between role sessions; "
+        "never a brain header, never said"),
+    "package_script.outline_units": (
+        "it reads an outline's slides into units the owners' edits are applied to by offsets; "
+        "it prints nothing"),
+    "package_deck.deck": (
+        "the deck step: the only fields it reads are the job's id and its swarm result, JARVIS's "
+        "own, to keep the deck's outcome on the job record and send a failed deck's findings to "
+        "the sender as data; what it writes into the swarm's conversation is the program's fixed "
+        "words, the run's own paths and the deck's layout data, a turn between role sessions, "
+        "never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_swarm.go": (
+        "the swarm step's own flow: in a revision it reads the run's own revision record (who "
+        "said what is wrong, the slide ids that changed) to say the program's fixed words, those "
+        "ids and the slides kept into the package swarm's own conversation between role sessions "
+        "and to keep what was redone on the job record; never a brain header, never said. "
+        "Driven by tests/test_step_cache.py"),
+    "package_swarm.findings_said": (
+        "it puts the sender's answers to an earlier run's findings into the package's role "
+        "conversation as the sender's, each in its own tagged element, as "
+        "package_swarm._take_answers does; never a brain header, never said. Driven by "
+        "tests/test_step_cache.py"),
+    "package_deck.review_turn": (
+        "the deck review's program turn in the package swarm's own conversation between role "
+        "sessions: each script slide and its deck slide's layout data inside its own <slide>, "
+        "<script> and <layout> elements, kept word for word as the design says; never a brain "
+        "header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.script_problems": (
+        "it checks the deck against the passed script (slide ids, Tim's quoted words) and names "
+        "what does not check, each value quoted; said into the package swarm's own conversation "
+        "as the program's turn to the author, never a brain header, never said. Driven by "
+        "tests/test_package_deck.py"),
+    "package_script.problems": (
+        "it checks the author's script against script/1 and names what does not check, each "
+        "value quoted; said into the package swarm's own conversation as the program's turn to "
+        "the author, never a brain header, never said. Driven by tests/test_package_script.py"),
+    "package_script.units": (
+        "it returns the script's words with their slide and field, which marking scores inside "
+        "<part> elements and the editor edits; never a brain header, never said. Driven by "
+        "tests/test_package_script.py"),
+    "package_script.opening": (
+        "slide 1 of the passed script's words, which open the message that carries the package "
+        "and reach Tim as a message in his Inbox, read by the brain walled as every message is; "
+        "never a brain header, never said. Driven by tests/test_package_script.py"),
+    "package_script._visual_units": (
+        "it returns a typed visual's words and data with their slide and field, as "
+        "package_script.units does, which marking scores and the owners edit; it prints "
+        "nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals._build": (
+        "it turns a script slide's typed visuals into presentation/1 objects for the deck "
+        "source, the script's words as data in their fields; it prints nothing. Driven by "
+        "tests/test_script_visuals.py"),
+    "script_visuals._dataset": (
+        "it turns a script chart's columns and rows into a presentation/1 dataset, the "
+        "script's words as data; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals._chart_problems": (
+        "it checks a script chart's columns and values and names what does not check, each "
+        "value quoted; said into the package swarm's own conversation as the program's turn to "
+        "the author, never a brain header, never said. Driven by tests/test_script_visuals.py"),
+    "script_visuals._targets": (
+        "it collects the ids a narration cue may light on a built slide; it prints nothing. "
+        "Driven by tests/test_script_visuals.py"),
+    "script_visuals.narration": (
+        "a built slide's one narration cue, the script's own narration as data in the deck "
+        "source; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals.plan_problems": (
+        "it names each script slide whose visual is not the one its outline slide names, said "
+        "into the package swarm's own conversation as the program's turn to the author, never a "
+        "brain header, never said. Driven by tests/test_script_visuals.py"),
+    "script_visuals.sourced_values": (
+        "it lists the numbers a script slide's visuals show with their sources, for the "
+        "program's own check; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals.unmatched": (
+        "it names each deck object that is not the script's, said into the package swarm's own "
+        "conversation as the program's turn to the author, never a brain header, never said. "
+        "Driven by tests/test_script_visuals.py"),
+    "script_visuals.piece_problems": (
+        "it checks a script slide's typed visual (its counts, figures, a diagram's ids) and "
+        "names what does not check, each value quoted; said into the package swarm's own "
+        "conversation as the program's turn to the author, never a brain header, never said. "
+        "Driven by tests/test_script_visuals.py"),
+    "script_visuals.objects": (
+        "it compares a deck slide's or decision's objects with those built from the script and "
+        "names what is not the script's with the slide's id; the reasons are said into the "
+        "package swarm's own conversation as the program's turn, never a brain header, never "
+        "said. Driven by tests/test_script_visuals.py"),
+    "package_deck.script_change": (
+        "it puts the script slides the author gave at the deck into script.yaml, checked whole, "
+        "and names a slide id the script does not have, quoted; said into the package swarm's "
+        "own conversation as the program's turn to the author, never a brain header, never "
+        "said. Driven by tests/test_package_deck.py"),
+    "package_deck.given": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.go": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.mark": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.outline_signoff": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.revise": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.through_script": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.written": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "presentation._object_targets": (
+        "it lists a presentation/1 object's targets with their accessible names, the author's "
+        "words as data in target-index.json and the deck's model; it prints nothing to the "
+        "brain or the voice. Driven by tests/test_script_visuals.py"),
+    "presentation_source.object_semantics": (
+        "it checks a presentation/1 object (its pictures, tables, charts, diagrams, bars, "
+        "shapes) and names what does not check by its id in a compiler diagnostic said to the "
+        "deck's author; never a brain header, never said. Driven by tests/test_script_visuals.py"),
+    "script_visuals.script_edits": (
+        "it turns a deck owner's edit of a built word into the same edit of the script, and "
+        "names what cannot be one with the slide's id; the reasons are said into the package "
+        "swarm's own conversation as the program's turn, never a brain header, never said. "
+        "Driven by tests/test_script_visuals.py"),
+    "package_script.change_forms": (
+        "it changes an outline slide's visual form as the author's script turn names it and "
+        "names a slide it cannot find, quoted; said into the package swarm's own conversation "
+        "as the program's turn to the author, never a brain header, never said. Driven by "
+        "tests/test_script_visuals.py"),
+    "package_deliver.deliver": (
+        "the deliver step: the only field it reads is the job's id, JARVIS's own, to keep where "
+        "the signed package is and its message on the job record for its own sender; never a "
+        "brain header, never said. Driven by tests/test_package_deck.py"),
+    "server._deliver_package_run": (
+        "it delivers a package through _send_message, the one way an agent's package reaches him; "
+        "the message is recorded as the asking agent's and read by the brain walled, and the log "
+        "line names only JARVIS's own ids. Driven by tests/test_package_jobs.py"),
+    "server._package_check_to_sender": (
+        "it sends the asking agent's own session JARVIS's message with the package's paths and its "
+        "message (that agent's own request, read by it alone); the job's id is JARVIS's own; "
+        "nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    "server._package_questions_to_sender": (
+        "it sends the asking agent's own session JARVIS's message with the questions the swarm "
+        "voted it needs (the swarm's own words, that agent's own request, read by it alone); the "
+        "job's id is JARVIS's own; nothing reaches the brain or the voice. Driven by "
+        "tests/test_package_jobs.py"),
+    "server._rejected_starts_new_run": (
+        "his Reject words on a package go onto the run's record and into Tim's record in the "
+        "package's evidence (read by the role sessions as evidence, never a brain header), and "
+        "into the next run's swarm conversation as his revision (read by the role sessions, "
+        "never a brain header); the log line names only JARVIS's own ids. Driven by "
+        "tests/test_package_jobs.py"),
+    "work_research.refresh": (
+        "it writes a Work item's research files from what was looked up; never a brain header, never said"),
     "package_author.author": (
         "it records provider model/session metadata and raw author text in local source/provenance "
         "files for the originating factory command. It does not create a trusted JARVIS header or "
@@ -491,16 +750,26 @@ EXEMPT = {
         "package's declared Markdown, not a trusted brain header. The existing inbox read wraps "
         "that Markdown as untrusted; complete access and hostile delimiters are driven by "
         "test_package_understanding.py"),
-    'make_package._job_command': ("it is the package job's own record and command output for the sending agent (package_jobs.py), printed as JSON to that agent's own terminal; the project is the agent's own folder name, never a spoken or brain header. Driven by tests/test_package_jobs.py"),
+    'make_package._job_command': ("it prints the package request's own answer (package_request.py) as JSON, or JARVIS's refusal's problems, to the sending agent's own terminal; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
     'package_author.read_questions': ("it reads the fresh author's questions file into the job record for its own sender; ids are checked against a fixed slug pattern and nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
-    'package_jobs.answer': ("it is the package job's own record and command output for the sending agent (package_jobs.py), its state a fixed word from STATES in a refusal to the answering agent; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
-    'package_jobs.ended': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it moves a job whose process died to refused with fixed words and the log path; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
-    'package_jobs.package_answer': ("it is the package job's own record and command output for the sending agent (package_jobs.py), its refusals name the job id and its fixed state words to the answering agent alone; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
-    'package_jobs.package_start': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it records the caller's own working folder so the detached job runs where the agent ran it; nothing is printed into a header. Driven by tests/test_package_jobs.py"),
-    'package_jobs.package_status': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it reads the job's state, a fixed word, to decide whether its process died; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
-    'package_jobs.resuming': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it composes the message that resumes the author with its sender's answers by question id, for that author session only, never the brain. Driven by tests/test_package_jobs.py"),
-    'package_jobs.run': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it prints the job's fixed state word into the job's own log when there is nothing to run; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
-    'package_jobs.unanswered_message': ("it is the package job's own record and command output for the sending agent (package_jobs.py), it tells the resumed author which of its own questions go to Tim as UNANSWERED, by question id, never the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs._record_run': ("it records a package run's job (package_jobs.py) with the asking session's id as `requested_by`, a record field, never a header the brain reads as JARVIS's words. Driven by tests/test_package_jobs.py"),
+    'package_jobs.rerun': ("it checks a package job is its sender's own and has ended in Error or failed before the next run goes on from it; its refusals name only JARVIS's own run and job ids and the job's state word, to the asking agent, never the brain or the voice. Driven by tests/test_step_cache.py"),
+    'package_jobs.new_run': ("it records the next run of a package with the change named by JARVIS's own caller; the asking session's id is a record field, never a header. Driven by tests/test_package_jobs.py"),
+    'package_jobs.overdue': ("it writes a run's Error in JARVIS's own fixed words (the step, the round count and the run's log path) into the job record the asking agent reads; nothing reaches the brain unwalled. Driven by tests/test_package_jobs.py"),
+    'package_jobs.write': ("the job record's own edits (package_jobs.py): a refusal names the job id and its fixed state words to the asking agent alone; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'package_jobs.answer': ("its refusals name the job id and the asking session's id and fixed state words to the answering agent alone (package_jobs.py); nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'diagram_layout._cycle': ("it lays out a diagram the author wrote and says what of it does not fit (its node, link and group ids and words, the counts its slot holds) back to the deck's own author, in make_package --check-only's refusal and as JARVIS's program turn in the package's role conversation, and records the layout in the proof; never a brain header, never said. Driven by tests/test_presentation_diagrams.py"),
+    'diagram_layout._flow': ("it lays out a diagram the author wrote and says what of it does not fit (its node, link and group ids and words, the counts its slot holds) back to the deck's own author, in make_package --check-only's refusal and as JARVIS's program turn in the package's role conversation, and records the layout in the proof; never a brain header, never said. Driven by tests/test_presentation_diagrams.py"),
+    'diagram_layout._hierarchy': ("it lays out a diagram the author wrote and says what of it does not fit (its node, link and group ids and words, the counts its slot holds) back to the deck's own author, in make_package --check-only's refusal and as JARVIS's program turn in the package's role conversation, and records the layout in the proof; never a brain header, never said. Driven by tests/test_presentation_diagrams.py"),
+    'diagram_layout.frame_problems': ("it lays out a diagram the author wrote and says what of it does not fit (its node, link and group ids and words, the counts its slot holds) back to the deck's own author, in make_package --check-only's refusal and as JARVIS's program turn in the package's role conversation, and records the layout in the proof; never a brain header, never said. Driven by tests/test_presentation_diagrams.py"),
+    'deck_capacity.problems': ("it says which object of a deck the author wrote is over its slot's capacity (its id, slot, layout and slide id, and the lines it needs and holds) to the package's author in its role conversation as JARVIS's program turn, and in make_package --check-only's refusal to the deck's own author; never a brain header, never said. Driven by tests/test_deck_capacity.py"),
+    'presentation_schema.words': ("it returns the words a deck object shows, the deck author's own, which become its target's accessible name and the shared deck's text of it inside the built package; never a brain header, never said. Driven by tests/test_presentation_components.py"),
+    'package_jobs.start': ("it writes into the job record, for the asking agent alone, why its run's process could not be started (the OS error and the run's folder) in JARVIS's own words; nothing reaches the brain unwalled. Driven by tests/test_package_jobs.py"),
+    'package_jobs.run': ("it prints the job's fixed state word into the run's own log, and its Error names the step in JARVIS's own words for the asking agent; nothing reaches the brain unwalled. Driven by tests/test_package_jobs.py"),
+    'package_request.check': ("it refuses a sender's handoff naming the sender's own field names and paths back to that sender alone (the 400 answer to its own request); nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'server._accept_package_request': ("it logs who asked for a package and refuses a request naming the sender's own source path to that sender alone; nothing reaches the brain or the voice. Driven by tests/test_package_jobs.py"),
+    'server._new_package_run': ("it clears the Work item's Error with JARVIS's own words naming the package id; the agent's words are nowhere in it. Driven by tests/test_package_jobs.py"),
+    'server._package_job_errored': ("the run's Error goes on the Work item and, with none, as a message (both read by the brain walled, as every message and Work record is), to the asking agent's own session as JARVIS's message (the agent's own request's Error, read by that agent alone), and to the attention record with the agent's name and the reason, what was tried and the fix as other people's words (untrusted); the step is a fixed word. Driven by tests/test_package_jobs.py"),
     "codex_runtime._request": "Formats a fixed internal RPC method in a timeout/error, never a spoken header or brain instruction; runtime failures expose only the exception class in inventory JSON.",
     "codex_runtime.event_evidence": "Formats a provider event-method name as evidence-source metadata; no text delta or tool argument is retained and the inventory tool output is taint-wrapped.",
     "session_watch.build_snapshot": "Formats provider discovery failure metadata from a configured provider name and exception class; the inventory exposes it as JSON through the taint-wrapped list_workers tool, not a spoken line.",
@@ -1329,10 +1598,10 @@ EXEMPT = {
         "server and name). They reach a log line, usage_store and the brain "
         "provider's events; the only text it composes for the model is the "
         "assistant delta, which is the model's own output"),
-    "codex_provider.open": (
-        "it logs the id Codex gave JARVIS's own thread, the Codex home path "
-        "JARVIS chose, and a count; the server and tool names it reads are "
-        "the brain's own MCP inventory, reported as SessionInfo"),
+    "codex_provider._usage_seen": (
+        "the app-server's own rate-limit status for JARVIS's OWN brain, recorded in usage_store "
+        "and carried on the brain provider's usage event; the one text it builds is a log line "
+        "naming the exception usage_store raised, never a header the brain reads or words said"),
     "codex_provider.call": (
         "a JSON-RPC call inside CodexUsage.read: the only value it prints is "
         "the method name, one of this module's own literals"),
@@ -1640,6 +1909,8 @@ EXEMPT = {
         "it names who tried to send a held thing for the Work item's Error line and the error package, which the page shows as text and the brain reads only through work_status's wall"),
     "server._hold_package": (
         "it keeps a package's zip and records the hold; its words (the package's name and version) go to the error package as escaped text and to the agent's refusal, never a brain header"),
+    "server._receive_package_zip": (
+        "it checks and records a package for his inbox; a zip that cannot be read is refused with the archive's own error as the route's or the agent's refusal, never a brain header, and the inbox row reaches the brain only walled"),
     "server._make_key_error_package": (
         "it builds the error package from the holds; every word of the agent's is escaped into its page (key_error_package._e) and the inbox row reaches the brain only walled"),
     "server._request_from_unrecognised": (
@@ -2361,6 +2632,30 @@ DRIVERS["server.tool_set_agent_active"] = _drive_set_agent_active
 DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
 
 
+def _drive_package_run_reports(server, session, monkeypatch):
+    """The brain's `package_run_reports`: what the swarm left in a pass
+    (each item's words) and his Reject words are other
+    people's words, every foreign value of the session put in each; the
+    rest (ids, step names, counts, the job's state) is JARVIS's own."""
+    said = " ".join(" ".join(map(str, v)) if isinstance(v, list) else str(v)
+                    for v in (getattr(session, f) for f in FOREIGN_FIELDS))
+    run = {"run": "run-1", "job": "job-1", "state": "done",
+           "timing": {"steps": [{"step": "swarm", "seconds": 12.0, "calls": [],
+                                 "tokens": {"in": 1, "cached": 0, "out": 1}}]},
+           "quality": {"result": "passed", "passes_to_done": 1,
+                       "verdict": {"answer": "reject", "labels": ["thin"], "words": said},
+                       "passes": [{"stage": "fix-1", "items": [
+                           {"concern": "context", "then": "fixed", "labels": ["thin"],
+                            "what": said, "fix": said}]}]}}
+    found = {"packages": [{"package": "package-1", "runs": [run],
+                           "summed": {"timing": {"seconds": 12.0, "calls": 0}}}]}
+    return [server.package_run_reports_text(found),
+            server.package_run_reports_text(found["packages"][0])]
+
+
+DRIVERS["server.package_run_reports_text"] = _drive_package_run_reports
+
+
 # --- THE OTHER FOREIGN RECORD: a run row ---------------------------------
 #
 # `project_name` comes from `POST /api/runs` and, where the body omits it,
@@ -2834,7 +3129,7 @@ def test_every_function_that_prints_a_session_field_is_driven_or_exempt():
     """The check that cannot miss a site. Not a list of names — the list IS
     the source file."""
     undecided = sorted(set(PRINTERS) - set(DRIVERS) - set(RUN_DRIVERS)
-                       - set(EXEMPT))
+                       - set(ROLE_PROMPT_DRIVERS) - set(EXEMPT))
     assert not undecided, (
         f"these print somebody else's words and nobody has decided whether "
         f"that is safe: {undecided}")
@@ -3198,3 +3493,160 @@ def test_an_ordinary_document_title_still_reaches_the_user(server,
     out = server.tool_review_document({"project": "chitauri"})
     assert "The Chitauri Plan" in out, out
     assert "1 sections" in out or "1 section" in out, out
+
+
+# --- a package role's prompt ---------------------------------------------------
+#
+# The package roles (sessions.py) are given other people's words: Tim's
+# material, the sender's labels, the script and its marked parts. Each is
+# given as a tagged document, its words as they are (never escaped: a value
+# copied from them, and its offsets, must be the text's own), every
+# attribute quoted. So a hostile value stands only inside its own element:
+# nothing of it is left once every element is taken out, and the program's
+# own lines around it are its own. A knowledge state that is not one of the
+# three is refused before anything is shared.
+
+_ELEMENT = re.compile(r"<([a-z_]+)(?:\s[^<>]*)?>.*?</\1>", re.S)
+
+
+def _outside_elements(text: str) -> str:
+    return _ELEMENT.sub("", text)
+
+
+def _assert_only_inside_elements(out: str) -> None:
+    assert MARKER not in _outside_elements(out), out
+
+
+class _Role:
+    """A package role session standing in for the brain: what it is given."""
+
+    def __init__(self, answer):
+        self.given, self.answer = [], answer
+
+    def for_role(self, role, prompt, folder, **kwargs):
+        self.given.append(prompt)
+        return self
+
+    async def once(self, text, timeout):
+        from jarvis import sessions
+        self.given.append(text)
+        return sessions.Reply("", self.answer)
+
+    async def ask(self, text, timeout, answer_format=None, strict=True):
+        return await self.once(text, timeout)
+
+    @property
+    def pick(self):
+        from jarvis import model_tiers
+        return model_tiers.Pick("claude", "sonnet", 3, "test", ["sonnet"])
+
+    last_turn = None
+
+    async def open(self):
+        pass
+
+    async def fresh(self):
+        pass
+
+    async def close(self):
+        pass
+
+
+def _drive_share(monkeypatch, tmp_path):
+    from jarvis import sessions
+    with pytest.raises(ValueError) as refused:
+        sessions.share("author", [sessions.Known("words", HOSTILE)])
+    assert "\n" not in str(refused.value) and MARKER in str(refused.value)
+    kept = sessions.share("tims_reader", [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)])
+    return [sessions._material(kept, marked=False)]
+
+
+def _drive_material(monkeypatch, tmp_path):
+    from jarvis import sessions
+    items = [sessions.Known(HOSTILE, state, HOSTILE) for state in sessions.STATES]
+    return [sessions._material(items, marked=True), sessions._material(items, marked=False)]
+
+
+def _hostile_parts() -> list[dict]:
+    return [{"id": HOSTILE, "segment": HOSTILE, "kind": HOSTILE,
+             "position": {"start": 0, "end": len(HOSTILE)}, "within": None,
+             "scores": {HOSTILE: 1.0}}]
+
+
+def _drive_marked_parts(monkeypatch, tmp_path):
+    from jarvis import sessions
+    return [sessions.marked_parts(_hostile_parts())]
+
+
+def _drive_mark(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"parts": []})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
+    with pytest.raises(sessions.SessionFailed):
+        asyncio.run(sessions.BrainMarkingSession(tmp_path).mark(
+            HOSTILE, [sessions.Label("plain", HOSTILE, HOSTILE)],
+            [sessions.Known(HOSTILE, sessions.KNOWS, HOSTILE)], 1.0))
+    return role.given
+
+
+def _drive_mark_and_classify(monkeypatch, tmp_path):
+    from jarvis import sessions
+    given = _drive_mark(monkeypatch, tmp_path)
+    role = _Role({"items": []})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
+    with pytest.raises(sessions.SessionFailed):
+        asyncio.run(sessions.BrainClassificationSession(tmp_path).classify(
+            [sessions.Item(HOSTILE, HOSTILE, HOSTILE, HOSTILE)],
+            [sessions.ClassQuestion(HOSTILE, HOSTILE)], 1.0))
+    return given + role.given
+
+
+def _drive_resolve(monkeypatch, tmp_path):
+    from jarvis import sessions
+    role = _Role({"references": []})
+    monkeypatch.setattr(sessions.BrainChatSession, "for_role", role.for_role)
+    out = asyncio.run(sessions.BrainRetrievalSession(tmp_path).resolve(
+        [sessions.Reference("label-1", HOSTILE)], 1.0))
+    assert out[0]["resolved"] == sessions.NOT_FOUND
+    return role.given
+
+
+def _drive_handoff_questions(monkeypatch, tmp_path):
+    from jarvis import package_swarm
+    return [package_swarm._handoff_questions({"request": {"questions": [
+        {"id": HOSTILE, "text": HOSTILE,
+         "options_from_the_sender": [{"id": HOSTILE, "name": HOSTILE, "says": HOSTILE}]}]}})]
+
+
+def _drive_take_answers(monkeypatch, tmp_path):
+    from jarvis import package_jobs, package_swarm, sessions
+    rounds = [{"kind": package_jobs.QUESTIONS, "questions": [{"id": HOSTILE, "question": HOSTILE}],
+               "answers": {HOSTILE: HOSTILE}}]
+    monkeypatch.setattr(package_jobs, "get", lambda job: {"id": job, "rounds": rounds})
+    run = package_swarm.Run({"id": "job-1"}, None, [], {})
+    swarm = sessions.BrainSwarmSession({}, [])
+    package_swarm._take_answers(run, swarm, {})
+    return [m["text"] for m in swarm.conversation]
+
+
+ROLE_PROMPT_DRIVERS = {
+    "package_swarm._handoff_questions": _drive_handoff_questions,
+    "package_swarm._take_answers": _drive_take_answers,
+    "sessions.share": _drive_share,
+    "sessions._material": _drive_material,
+    "sessions.marked_parts": _drive_marked_parts,
+    "sessions.mark": _drive_mark,
+    "sessions._marked": _drive_mark,
+    "sessions.values": _drive_mark_and_classify,
+    "sessions._check_sparse": _drive_mark,
+    "sessions.resolve": _drive_resolve,
+}
+
+
+@pytest.mark.parametrize("name", sorted(ROLE_PROMPT_DRIVERS))
+def test_a_package_role_is_given_other_people_s_words_only_inside_their_elements(
+        name, monkeypatch, tmp_path):
+    outputs = ROLE_PROMPT_DRIVERS[name](monkeypatch, tmp_path)
+    assert any(MARKER in out for out in outputs), (name, "the role was given nothing hostile")
+    for out in outputs:
+        _assert_only_inside_elements(out)

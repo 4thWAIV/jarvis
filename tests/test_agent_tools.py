@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from jarvis import agent_mcp, agent_rights, package_jobs, work_report, work_store
+from jarvis import agent_mcp, agent_rights, package_request, work_report, work_store
 from tests.test_brain_page_parity import HOSTILE, _Brain, _call, _walled, wired  # noqa: F401
 
 RESEARCH = agent_rights.TOOLS["research"]
@@ -269,22 +269,26 @@ def test_a_command_s_refusal_is_its_words(monkeypatch):
     assert not ok and text == "JARVIS refused it (409): held."
 
 
-def test_the_package_job_tools_call_package_jobs(monkeypatch):
+def test_the_package_tools_ask_jarvis_signed_as_the_sender(monkeypatch):
     monkeypatch.setenv("JARVIS_AGENT_SESSION", "")
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     ok, text, _ = agent_mcp.call("package_status", {"job": "j1"})
-    assert not ok and text == "Refused: There is no package job j1."
+    assert not ok and "signed with your session's key" in text
 
     seen = []
-    monkeypatch.setattr(package_jobs, "package_start",
-                        lambda handoff, work=None, general=False, session=None:
-                        seen.append((handoff, work, general, session)) or {"job": "j9"})
+    monkeypatch.setattr(package_request, "start",
+                        lambda handoff, session, work="", general=False:
+                        seen.append((str(handoff), work, general, session)) or {"job": "j9"})
     ok, text, _ = agent_mcp.call("package_start", {"handoff": "/h.json", "work": "w1",
                                                    "as_session": "sess-x"})
     assert ok and json.loads(text) == {"job": "j9"}
     assert seen == [("/h.json", "w1", False, "sess-x")]
-    from jarvis import env_names
-    assert env_names.read("JARVIS_AGENT_SESSION") == "sess-x", "the job signs as the sender"
+
+    def refused(job, session):
+        raise package_request.Refused(["There is no package job j2."])
+    monkeypatch.setattr(package_request, "status", refused)
+    ok, text, _ = agent_mcp.call("package_status", {"job": "j2", "as_session": "sess-x"})
+    assert not ok and text == "Refused: There is no package job j2."
 
 
 def test_the_server_lists_every_tool_and_dispatches(monkeypatch):
@@ -292,7 +296,8 @@ def test_the_server_lists_every_tool_and_dispatches(monkeypatch):
     names = [t["name"] for t in listed["result"]["tools"]]
     assert set(RESEARCH) <= set(names)
     assert {"send_message", "work_piece", "workflow_event", "retrieve_attachment",
-            "language_document", "package_start", "package_status", "package_answer"} \
+            "language_document", "package_start", "package_status", "package_answer",
+            "package_rerun"} \
         <= set(names)
     assert len(names) == len(set(names))
     assert all("as_session" in t["inputSchema"]["properties"]

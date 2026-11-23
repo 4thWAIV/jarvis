@@ -28,14 +28,23 @@ Passages carry their trust; whoever shows them to the brain walls them.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Awaitable, Callable, Iterable, Optional
 
 from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds, workspace_ref
+from jarvis.knowledge import paths as item_paths
 
 SEARCH_LIMIT_MAX = 50
-SEARCH_DEADLINE_SEC = 0.5
+# An ordinary call's deadline (a count, a status, a setting). A search has
+# none: it runs to the end and answers, and ends early only when its caller
+# no longer needs it (`knowledge_client.Cancel`; construction-drafts
+# "Knowledge search: no deadline that drops results").
+CALL_DEADLINE_SEC = 0.5
+# How often a search's waiter looks whether its caller's request has gone
+# (`until_unneeded`): a look, never a limit on the search.
+CALLER_LOOK_SEC = 0.25
 FOLDER_COUNTS_DEADLINE_SEC = 2.0
 FOLDER_COUNTS_MAX = 500
 TIM = "tim"
@@ -72,7 +81,7 @@ class Context:
         return rt.supervisor.client
 
     def call(self, method: str, path: str, body: Optional[dict] = None,
-             deadline: float = SEARCH_DEADLINE_SEC) -> Any:
+             deadline: float = CALL_DEADLINE_SEC) -> Any:
         try:
             return self.client().call(method, path, body, deadline)
         except knowledge_client.EngineUnavailable as e:
@@ -80,7 +89,7 @@ class Context:
         except knowledge_client.KnowledgeRefused as e:
             raise Refused(str((e.payload or {}).get("detail") or (e.payload or {}).get("error") or e)) from e
 
-    def uds(self, deadline: float = SEARCH_DEADLINE_SEC):
+    def uds(self, deadline: Any = CALL_DEADLINE_SEC):
         """The UDS interface over the running engine's transport, for calls
         made as a `Caller` (uds.py); raises `Unavailable` as `client` does."""
         from jarvis.knowledge.uds import EngineUDS
@@ -90,6 +99,32 @@ class Context:
         rt = self.runtime
         if rt is not None:
             rt.ingest.wake()
+
+
+async def until_unneeded(work: Callable[[knowledge_client.Cancel], Any],
+                         gone: Optional[Callable[[], Awaitable[bool]]] = None) -> Any:
+    """A search run off the event loop until it answers, however long that
+    takes; ended only when its caller no longer needs it: the task awaiting
+    it is cancelled (a tool call whose request went away), or `gone()` says
+    the caller's own request has gone (the page's route). Then the search's
+    connection is closed, the engine stops it (serve's `gone`), and
+    `knowledge_client.Cancelled` (or the cancellation) is raised. The one
+    way the page's route, the brain's tools and agents' calls wait for a
+    search (construction-drafts "Knowledge search: no deadline that drops
+    results")."""
+    cancel = knowledge_client.Cancel()
+    task = asyncio.ensure_future(asyncio.to_thread(work, cancel))
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=CALLER_LOOK_SEC if gone is not None else None)
+            if done:
+                return task.result()
+            if gone is not None and await gone():
+                cancel.cancel()
+                raise knowledge_client.Cancelled("its caller no longer needed it")
+    except asyncio.CancelledError:
+        cancel.cancel()
+        raise
 
 
 def settings(ctx: Context) -> dict:
@@ -217,7 +252,7 @@ def folder_counts(ctx: Context, folder_ids: Optional[Iterable[str]] = None,
         left = ends - time.monotonic()
         if left <= 0:
             return {"available": True, "partial": True, "folders": out}
-        uds.deadline = min(SEARCH_DEADLINE_SEC, left)
+        uds.deadline = min(CALL_DEADLINE_SEC, left)
         try:
             c = uds.count(caller, under=f"/folders/{fid}")
         except (EngineUnavailable, ValueError) as e:
@@ -268,21 +303,26 @@ def _passage(data: dict, text: str) -> Optional[str]:
 
 
 def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_only: bool = False,
-               limit: int = 10, deadline: float = SEARCH_DEADLINE_SEC,
-               types: Optional[list[str]] = None) -> list[dict]:
+               limit: int = 10, types: Optional[list[str]] = None, under: str = "/",
+               cancel: Optional[knowledge_client.Cancel] = None) -> list[dict]:
     """Items by meaning and words, or holding an exact phrase, one hit an
     item, read as Tim (the brain's rights are his): a file or note with
     the text of the section where it matched, a record (a turn, a message,
     a run...) with its words that matched. Each carries whose words it
-    holds (`item_trust`); `own_only` keeps his own."""
-    from jarvis.knowledge.uds import Caller, Query, Stream
-    uds = ctx.uds(deadline)
+    holds (`item_trust`); `own_only` keeps his own. The search and the
+    reads of its hits are waited for with no deadline; `cancel` ends them
+    when the caller no longer needs them."""
+    from jarvis.knowledge.uds import NO_DEADLINE, Caller, Query, Stream
+    uds = ctx.uds(NO_DEADLINE)
     caller = Caller(TIM, agent="brain")
     query = Query(meaning=text or None, words=text or None, phrase=phrase or None,
-                  types=tuple(types) if types else None, limit=min(SEARCH_LIMIT_MAX * 4, limit * 4))
-    found = uds.search_page(caller, query, budget_ms=max(1, int(deadline * 1000)))
+                  types=tuple(types) if types else None, under=under,
+                  limit=min(SEARCH_LIMIT_MAX * 4, limit * 4))
+    found = uds.search_page(caller, query, cancel)
     out = []
     for h in found["hits"]:
+        if cancel is not None and cancel.cancelled:
+            raise knowledge_client.Cancelled("its caller no longer needed it")
         item = uds.get(caller, h.path, {Stream.DATA, Stream.SECTIONS})
         if item is None:
             continue
@@ -307,25 +347,37 @@ def _item_hits(ctx: Context, text: str, *, phrase: Optional[str] = None, own_onl
 
 
 def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_untrusted: bool = True,
-           kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None) -> dict:
+           kinds: Optional[list[str]] = None, limit: int = 10, phrase: Optional[str] = None,
+           under: Optional[str] = None, cancel: Optional[knowledge_client.Cancel] = None) -> dict:
     """Search over what JARVIS holds, as items (UDS round 3): the files and
     notes indexed in place (meaning, words, an exact `phrase`, one hit an
     item, with the section where it matched) and the records, each found by
     its own words (turns, messages, runs, workflows...). `kinds` keeps the
     item types named (`md`, `turn`, `run`...). `query_en` searches again in
     English (the brain fills it when he speaks Spanish) and the answers are
-    merged."""
+    merged. `under` keeps the items below one path (a package's evidence
+    folder, a Work item's folder; workflow.yaml gather scoped_search).
+
+    It runs to the end and answers, however long that takes: no deadline
+    drops its results. `cancel` ends it when its caller no longer needs it
+    (`knowledge_client.Cancelled` is raised then). `took_sec` is its time."""
+    began = time.monotonic()
     text = (text or "").strip()
     phrase = (phrase or "").strip() or None
     if not text and not phrase:
         raise Refused("search needs words")
+    under = (under or "").strip().rstrip("/") or "/"
+    if under != "/" and not item_paths.is_path(under):
+        raise Refused("under is a path, such as /work/<id>")
     limit = max(1, min(int(limit or 10), SEARCH_LIMIT_MAX))
     merged: dict[str, dict] = {}
     partial = False
     for words in dict.fromkeys(w for w in (text, (query_en or "").strip()) if w or phrase):
         try:
             found = _item_hits(ctx, words, phrase=phrase, own_only=not include_untrusted, limit=limit,
-                               types=kinds or None)
+                               types=kinds or None, under=under, cancel=cancel)
+        except knowledge_client.Cancelled:
+            raise
         except knowledge_client.EngineUnavailable as e:
             raise Unavailable(f"the knowledge engine did not answer: {e}") from e
         except ValueError as e:
@@ -342,8 +394,9 @@ def search(ctx: Context, text: str, *, query_en: Optional[str] = None, include_u
     building = build(ctx)
     if not (building or {}).get("items_waiting"):
         building = None
-    return {"query": text, "query_en": query_en, "phrase": phrase, "hits": hits,
-            "partial": partial or building is not None, "building": building, "notes": []}
+    return {"query": text, "query_en": query_en, "phrase": phrase, "under": under, "hits": hits,
+            "partial": partial or building is not None, "building": building, "notes": [],
+            "took_sec": round(time.monotonic() - began, 3)}
 
 
 def entity(ctx: Context, *, name: Optional[str] = None, key: Optional[str] = None) -> dict:
@@ -570,17 +623,19 @@ def answer_seed(ctx: Context, *, seed: str, action: str) -> dict:
 
 # --- the context pack ---------------------------------------------------------------
 
-def context_search(ctx: Context) -> Optional[Callable[[str, bool, float], Optional[list[dict]]]]:
+def context_search(ctx: Context, cancel: Optional[knowledge_client.Cancel] = None
+                   ) -> Optional[Callable[[str, bool], Optional[list[dict]]]]:
     """The engine's search as context_service wants it: None when the engine
-    is off, and a search that answers None when late or down."""
+    is off, and a search, run to the end, that answers None when down;
+    `cancel` ends it when its caller no longer needs it."""
     if ctx.runtime is None:
         return None
 
-    def run(text: str, own_only: bool, deadline: float) -> Optional[list[dict]]:
-        if deadline <= 0:
-            return None
+    def run(text: str, own_only: bool) -> Optional[list[dict]]:
         try:
-            found = _item_hits(ctx, text, own_only=own_only, limit=30, deadline=deadline)
+            found = _item_hits(ctx, text, own_only=own_only, limit=30, cancel=cancel)
+        except knowledge_client.Cancelled:
+            raise
         except (Unavailable, Refused, knowledge_client.EngineUnavailable, ValueError):
             return None
         return sorted(found, key=lambda h: -(h.get("score") or 0))
@@ -599,14 +654,15 @@ def _open_decisions(project: str) -> list[str]:
 def run_pack(ctx: Context, *, purpose: str, project: Optional[str] = None,
              scope: Optional[dict] = None) -> dict:
     """The pack a run is given, exactly: his own words only, at the run's
-    budget and deadline."""
+    budget."""
     return context_service.pack(purpose=purpose, project=project or None, scope=scope, trust="own",
                                 search=context_search(ctx)).json()
 
 
 def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,
                  include_received: bool = False, scope: Optional[dict] = None,
-                 budget: int = context_service.BRAIN_BUDGET) -> dict:
+                 budget: int = context_service.BRAIN_BUDGET,
+                 cancel: Optional[knowledge_client.Cancel] = None) -> dict:
     """The pack the brain reads before starting or briefing work: the same
     one a run gets, at the brain's budget; with `include_received`, other
     people's words too (walled by the caller). `scope` is the project
@@ -615,6 +671,6 @@ def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,
         raise Refused("say what the work is")
     found = context_service.pack(purpose=purpose, project=project or None, scope=scope, budget_chars=budget,
                                  trust="all" if include_received else "own",
-                                 search=context_search(ctx), deadline_s=context_service.BRAIN_DEADLINE_SEC,
+                                 search=context_search(ctx, cancel),
                                  decisions=_open_decisions)
     return found.json()

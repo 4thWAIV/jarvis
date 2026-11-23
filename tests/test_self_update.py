@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -973,6 +974,71 @@ def test_shutdown_leaves_another_servers_record_alone():
     server_address.forget()
     assert data_paths.server_address_path().exists()
     assert server_address.running().pid == other
+
+
+@pytest.fixture
+def other_server():
+    """A live process that is neither this one nor its parent, recorded as
+    the server on this data folder."""
+    other = subprocess.Popen(["sleep", "60"])
+    _record(other.pid, scheme="http", host="127.0.0.1", port=8340)
+    yield other.pid
+    other.kill()
+    other.wait()
+
+
+def test_a_start_is_refused_while_another_jarvis_runs_on_the_data_folder(other_server):
+    from jarvis import data_paths, server_address
+    why = server_address.refusal()
+    assert why is not None
+    assert f"process {other_server}" in why and "http://127.0.0.1:8340" in why
+    assert str(data_paths.data_dir()) in why and "refused" in why
+
+
+def test_the_server_refuses_before_anything_starts(server, other_server, monkeypatch):
+    from jarvis import data_paths
+    started = []
+    monkeypatch.setattr(server.module, "start_knowledge_engine",
+                        lambda *a, **k: started.append("engine"), raising=False)
+    with pytest.raises(SystemExit) as refused:
+        server.module._refuse_second_start()
+    assert f"process {other_server}" in str(refused.value)
+    with pytest.raises(BaseException):
+        with TestClient(server.module.app):
+            pass
+    assert started == []
+    # The other server's record is left as it was.
+    assert json.loads(data_paths.server_address_path().read_text())["pid"] == other_server
+
+
+def test_main_refuses_before_anything_starts(server, other_server, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["jarvis"])
+    monkeypatch.setattr(server.module, "_apply_start_settings",
+                        lambda args: pytest.fail("nothing starts"))
+    with pytest.raises(SystemExit) as refused:
+        server.module.main()
+    assert f"process {other_server}" in str(refused.value)
+
+
+@pytest.mark.parametrize("whose", ["mine", "gone"])
+def test_a_start_goes_ahead_on_its_own_record_or_a_stale_one(whose):
+    from jarvis import server_address
+    _record({"mine": os.getpid(), "gone": _dead_pid()}[whose])
+    assert server_address.another() is None and server_address.refusal() is None
+
+
+def test_a_start_is_refused_while_its_own_parent_is_recorded_as_running():
+    """Only the same pid (execv) is exempt: a JARVIS started as a child of
+    the running one, or by a wrapper whose pid is recorded, is refused."""
+    from jarvis import server_address
+    _record(os.getppid())
+    assert server_address.another().pid == os.getppid()
+    assert f"process {os.getppid()}" in server_address.refusal()
+
+
+def test_a_start_goes_ahead_with_no_record():
+    from jarvis import server_address
+    assert server_address.refusal() is None
 
 
 @pytest.mark.parametrize("text", ["", "not json", "{}", '{"scheme": "http", "pid": "x"}'])

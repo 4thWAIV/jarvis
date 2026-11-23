@@ -1,13 +1,40 @@
 {
-  "about": "JARVIS's one layout spec for every deck it draws. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
+  "about": "JARVIS's one layout spec for every deck it draws. components are JARVIS's own parts an author fills with words (callout, figures, steps); diagram is how JARVIS lays out and draws a diagram (flow, cycle, hierarchy, timeline) from its nodes, links and groups; chart is how JARVIS draws a chart from a dataset (lengths in em of its text style, drawn at the deck size, never grown by the slide's fit). capacity is how much each slot holds, worked out by program (jarvis/deck_capacity.py) at the smallest frame with every word at its style's floor: content over a slot's capacity is refused as the source is read. Read by jarvis/layout_spec.py, which generates the CSS from it (python -m jarvis.layout_spec; --check fails when they differ). Lengths are deck units unless named px: one deck unit is the frame's width / unit.width or height / unit.height, the smaller. A layout's boxes are [x, y, width, height] on the 880 x 640 canvas, which is centred in the frame.",
   "frame": {"min": [662, 489], "max": [1600, 900]},
   "unit": {"width": 880, "height": 640},
-  "text": {"min_px": 13, "max_px": 25},
+  "text": {"min_px": 13, "max_px": 64},
   "styles": {
-    "body": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35},
-    "heading": {"units": 26, "min_px": 13, "max_px": 25, "line": 1.2},
-    "cell": {"units": 18, "min_px": 13, "max_px": 21, "line": 1.35}
+    "body": {"units": 18, "min_px": 13, "max_px": 48, "line": 1.35},
+    "heading": {"units": 26, "min_px": 13, "max_px": 64, "line": 1.2},
+    "cell": {"units": 18, "min_px": 13, "max_px": 48, "line": 1.35},
+    "figure": {"units": 30, "min_px": 16, "max_px": 64, "line": 1.15},
+    "node": {"units": 16, "min_px": 13, "max_px": 40, "line": 1.25},
+    "link": {"units": 14, "min_px": 13, "max_px": 34, "line": 1.2}
   },
+  "components": {
+    "callout": {"pad": [14, 10], "border_px": 4},
+    "figures": {"gap": 14, "pad": [12, 10]},
+    "steps": {"gap": 10, "marker": 1.9, "marker_gap": 0.6}
+  },
+  "chart": {"style": "cell", "axis_gap": 0.5, "legend_gap": 1, "swatch": 0.8, "swatch_gap": 0.4,
+            "x_lines_max": 2, "plot_min_px": 80, "mark_min_px": 6, "band": 0.8, "dot": 0.6},
+  "diagram": {"about": "How JARVIS draws a diagram (jarvis/diagram_layout.py lays it out; the author gives no position, size, colour or font). Its words are in the node and link styles at the deck size, never grown by the slide's fit, so the program's geometry is what is drawn. Lengths are em of the node style unless named px or _chars (characters at capacity.char_em). It is laid out where its slot holds least for its words across the frame range (662 x 489, every word at its floor), as shares of its slot, so it fits at every frame. pad is the node's [x, y] padding; shapes give each shape's share of its box that holds its words [width, height]; tones are the colours an author chooses among.",
+              "node": "node", "link": "link", "pad": [0.6, 0.35], "label_lines_max": 3,
+              "node_min_chars": 6, "node_max_chars": 22, "stroke_px": 1.5, "arrow": 7,
+              "rank_gap": 2.2, "rank_gap_labelled": 5, "rank_gap_down": 1.6, "rank_gap_down_labelled": 3.8,
+              "cross_gap": 0.9, "edge_margin": 1, "channel": 0.9,
+              "link_lines_max": 2, "link_pad": 0.2, "link_chars_max": 24,
+              "group_pad": 0.5, "group_gap": 0.6,
+              "level_gap": 1.8, "level_gap_labelled": 4.2, "sibling_gap": 0.8,
+              "axis_px": 3, "marker": 0.8, "when_gap": 0.4, "when_lines_max": 2, "band_pad": 0.25,
+              "shapes": {"box": [1, 1], "rounded": [1, 1], "pill": [0.84, 1], "ellipse": [0.72, 0.74],
+                         "diamond": [0.64, 0.52], "cylinder": [1, 0.7], "document": [1, 0.82]},
+              "tones": {"neutral": "var(--text)", "accent": "var(--accent)", "good": "#22c55e",
+                        "warn": "#f59e0b", "bad": "#ef4444", "muted": "#7d8a99"}},
+  "capacity": {"about": "Words are drawn in the system font stack, so a word's width is taken as char_em of its size: an average character of a sans-serif face, wider than most, so content within capacity fits wherever it is drawn. A slide of only prose holds at most prose_paragraph_lines lines of its widest text slot: one paragraph; more is shown as a visual or split.",
+               "char_em": 0.6, "prose_paragraph_lines": 6},
+  "fit": {"about": "Each slide's words are drawn at the largest size at which its content fits its frame: one scale for the slide's words (and one for its title), found in the page by a binary search between scale_min and scale_max (deck.js fitSlide), each style then clamped to its min_px and max_px. A slide with pictures in its flow never grows its words past scale 1, so its pictures keep the room.",
+          "scale_min": 0.5, "scale_max": 3, "steps": 12},
   "control": {"min_px": 32},
   "picture": {"min_px": 60, "stretch_max": 2},
   "slide": {"width": 824, "gap": 8},
@@ -31,13 +58,13 @@
     "table": {"slots": {"table": [28, 94, 824, 420], "words": [28, 530, 824, 98]}, "required": ["table"]}
   },
   "accepts": {
-    "words": ["text"],
-    "body": ["text", "table", "bar", "vector", "image"],
-    "picture": ["image", "vector", "bar"],
-    "first": ["image", "vector", "bar", "text"],
-    "second": ["image", "vector", "bar", "text"],
-    "third": ["image", "vector", "bar", "text"],
-    "fourth": ["image", "vector", "bar", "text"],
+    "words": ["text", "callout", "figures", "steps"],
+    "body": ["text", "table", "bar", "vector", "image", "chart", "diagram", "callout", "figures", "steps"],
+    "picture": ["image", "vector", "bar", "chart", "diagram"],
+    "first": ["image", "vector", "bar", "chart", "diagram", "text", "callout", "figures", "steps"],
+    "second": ["image", "vector", "bar", "chart", "diagram", "text", "callout", "figures", "steps"],
+    "third": ["image", "vector", "bar", "chart", "diagram", "text", "callout", "figures", "steps"],
+    "fourth": ["image", "vector", "bar", "chart", "diagram", "text", "callout", "figures", "steps"],
     "table": ["table"]
   }
 }

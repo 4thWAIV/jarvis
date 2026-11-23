@@ -1,0 +1,700 @@
+"""The script of a briefing as structured YAML: script.yaml, script/1
+(workflow.yaml swarm). Tim approved structured YAML on 2026-11-20 to
+preserve the full structure and detail of each slide.
+
+A list of slides in order, each with an id, a title, what is on screen (an
+ordered list of pieces: text, Tim's own words with their source, a picture
+by path, a table, and the typed visuals, script_visuals.PIECES: steps, key
+figures each with its source, a callout, a comparison, a chart's dataset
+with each value's source path and position), what JARVIS says over it, the
+source path and position of every fact, the questions it answers and the
+decision it asks if any. The script describes each slide and how it will
+look, with the information to fill it, for the deck to build later
+(construction-drafts.md "The script describes each slide's visual", Tim
+2026-11-22): `problems` also checks each visual by program
+(script_visuals: what it cannot be without, every number a chart or key
+figure shows found in its source at its position, and every content slide
+laid out in one of JARVIS's layouts within each slot's capacity,
+deck_capacity), so a script that cannot be drawn is refused before the
+deck.
+It is the approved author prompt's "each slide's words and what JARVIS says
+over it" written as a format: `schema` is given to the author as the answer
+schema of its script turns (the prompt's words unchanged), and `problems`
+is the program's check of what it answered against that schema, nothing
+more. The program writes script.yaml from the checked answer (`dump`).
+
+What the rest of the run reads from it, by program:
+- `units`: every piece of words on a slide, each at its slide and field
+  (a visual's words and data too: a step, a figure and its value, a
+  column's label, each value of a chart's dataset),
+  which marking scores slide by slide and the editor edits by offsets
+  within (`apply_edits`; Tim's own words are quoted, never edited);
+- `his_words`: each piece of Tim's own words, which the deck must draw in
+  the his-words style and narrate (deck his_words_check);
+- `sources`: every source path the script cites (research
+  record_hits_used);
+- `opening`: slide 1's words, which open the message that carries the
+  package (deliver write_message).
+
+The outline the script is written from is outline.yaml, outline/1
+(`outline_schema`, `OutlineFile`): each slide's title, its one point, the
+question it answers, its evidence by source path, and its visual: the form
+that shows its point (script_visuals.FORMS) and why that form carries it
+(the cooperative swarm's first step, construction-drafts.md "Cooperative
+swarm"; its visual plan, "The script describes each slide's visual").
+"""
+from __future__ import annotations
+
+import copy
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import yaml
+
+from jarvis import script_visuals as visuals
+
+VERSION = "script/1"
+FILE = "script.yaml"
+TEXT, HIS_WORDS, PICTURE, TABLE = "text", "his_words", "picture", "table"
+KINDS = (TEXT, HIS_WORDS, PICTURE, TABLE)
+UNANSWERED = "unanswered"
+# A slide's id becomes its deck slide's id (write_deck maps one to one), so
+# it is written as a deck's ids are (presentation_schema.Id).
+ID = r"^[a-z][a-z0-9-]{0,79}$"
+
+_TEXT = {"type": "string"}
+_WORDS = {"type": "string", "minLength": 1, "pattern": r"\S"}
+
+
+def _object(properties: dict, description: str = "") -> dict:
+    out = {"type": "object", "properties": properties, "required": list(properties),
+           "additionalProperties": False}
+    if description:
+        out["description"] = description
+    return out
+
+
+def _array(items: dict, description: str = "", least: int = 0) -> dict:
+    out: dict = {"type": "array", "items": items}
+    if least:
+        out["minItems"] = least
+    if description:
+        out["description"] = description
+    return out
+
+
+def _described(base: dict, description: str) -> dict:
+    return {**base, "description": description}
+
+
+PIECE = _object({
+    "kind": {"type": "string", "enum": list(KINDS),
+             "description": "text: words on the slide; his_words: the current user's own words, quoted "
+                            "exactly, with their source; picture: a picture by path; table: "
+                            "words in rows and columns."},
+    "text": _described(_TEXT, "The words (text, his_words), or what the picture shows "
+                              "(picture). Empty for a table."),
+    "source": _described(_TEXT, "his_words: where the current user said it, its source path. Empty "
+                                "otherwise."),
+    "position": _described(_TEXT, "his_words: where in that source. Empty otherwise."),
+    "path": _described(_TEXT, "picture: the picture's file path. Empty otherwise."),
+    "rows": _array(_array(_TEXT), "table: its rows, each a list of cells, the first row its "
+                                  "heading. Empty otherwise."),
+}, "One piece of what is on screen: words, the current user's words, a picture or a table.")
+# Every piece on screen: the words, picture and table above, or one of the
+# typed visuals (script_visuals.PIECES), each with its content.
+ON_SCREEN = {"anyOf": [PIECE, *visuals.PIECES.values()]}
+FACT = _object({
+    "fact": _described(_WORDS, "The fact, as the slide states it."),
+    "source": _described(_WORDS, f"Its source path, or {UNANSWERED!r} where none is found."),
+    "position": _described(_TEXT, "Where in that source (lines, characters or section)."),
+})
+OPTION = _object({"id": _WORDS, "name": _WORDS, "says": _WORDS})
+DECISION = _object({"id": _WORDS, "question": _WORDS,
+                    "options": _array(OPTION, "The final options, which you write.")})
+
+
+def schema(question_ids: list[str]) -> dict:
+    """script/1 as a JSON schema both brains take as an answer format;
+    `question_ids`, the handoff's questions a slide may say it answers."""
+    slide = _object({
+        "id": {"type": "string", "pattern": ID,
+               "description": "Lower case letters, digits and dashes; it is the deck "
+                              "slide's id."},
+        "title": _WORDS,
+        "on_screen": _array(ON_SCREEN, "What is on screen, in order: each slide shows its "
+                                       "point (steps, figures, a callout, a comparison, a "
+                                       "chart, a table, a picture) rather than describes it."),
+        "narration": _described(_WORDS, "What JARVIS says over it."),
+        "facts": _array(FACT, "Every fact on the slide or in its narration, each with its "
+                              "source path and position."),
+        "answers": _array({"type": "string", "enum": list(question_ids)},
+                          "The ids of the questions it answers.") if question_ids
+        else _array(_TEXT, "The ids of the questions it answers."),
+        "decision": {"anyOf": [DECISION, {"type": "null"}],
+                     "description": "The decision it asks, or null. A slide that asks a "
+                                    "decision is the deck's slide for that decision."},
+    })
+    return _object({"version": {"type": "string", "enum": [VERSION]},
+                    "slides": _array(slide, "The slides, in order.", least=1)},
+                   "The script: each slide's words and what JARVIS says over it.")
+
+
+# ── the program's check ───────────────────────────────────────────────────
+
+def _against(value, form: dict, at: str, out: list[str]) -> None:
+    """`value` checked against the part of the schema `form` is: the forms
+    `schema` uses, nothing else."""
+    if "anyOf" in form:
+        tried: list[list[str]] = []
+        for one in form["anyOf"]:
+            found: list[str] = []
+            _against(value, one, at, found)
+            if not found:
+                return
+            tried.append(found)
+        out.extend(min(tried, key=len))
+        return
+    kind = form.get("type")
+    if kind == "null":
+        if value is not None:
+            out.append(f"{at} is not null.")
+    elif kind == "string":
+        if not isinstance(value, str):
+            out.append(f"{at} is not words.")
+            return
+        if "enum" in form and value not in form["enum"]:
+            out.append(f"{at} is {value!r}, not one of {', '.join(form['enum'])}.")
+        if len(value) < form.get("minLength", 0) or (
+                "pattern" in form and not re.search(form["pattern"], value)):
+            out.append(f"{at} is {value!r}, which is empty or not written as asked"
+                       + (f" ({form['description']})" if form.get("description") else "") + ".")
+    elif kind == "array":
+        if not isinstance(value, list):
+            out.append(f"{at} is not a list.")
+            return
+        if len(value) < form.get("minItems", 0):
+            out.append(f"{at} has fewer than {form['minItems']} item(s).")
+        for n, item in enumerate(value):
+            _against(item, form["items"], f"{at}[{n}]", out)
+    elif kind == "object":
+        if not isinstance(value, dict):
+            out.append(f"{at} is not a mapping.")
+            return
+        for key in form["required"]:
+            if key not in value:
+                out.append(f"{at} has no {key}.")
+        for key in value:
+            if key not in form["properties"]:
+                out.append(f"{at} has {key}, which script/1 does not have.")
+        for key, sub in form["properties"].items():
+            if key in value:
+                _against(value[key], sub, f"{at}.{key}", out)
+
+
+def _piece_problems(piece: dict, at: str) -> list[str]:
+    """What a piece of its kind cannot be without: words, Tim's words with
+    their source, a picture's path, a table's rows."""
+    kind = piece.get("kind")
+    need = {TEXT: ("text",), HIS_WORDS: ("text", "source"), PICTURE: ("path",),
+            TABLE: ()}.get(kind, ())
+    out = [f"{at}, a {kind}, has no {k}." for k in need if not str(piece.get(k) or "").strip()]
+    if kind == TABLE and not [r for r in piece.get("rows") or [] if r]:
+        out.append(f"{at}, a table, has no rows.")
+    return out
+
+
+def _slide_ids(doc: dict) -> list[str]:
+    """Each slide whose id is another slide's."""
+    out, seen = [], set()
+    for n, slide in enumerate(doc["slides"]):
+        if slide["id"] in seen:
+            out.append(f"slide {n + 1} ({slide['id']}): its id is another slide's.")
+        seen.add(slide["id"])
+    return out
+
+
+def problems(script, question_ids: list[str], sources: Optional[visuals.Sources] = None,
+             outline: Optional[dict] = None, deck: Optional[dict] = None) -> list[str]:
+    """Everything in `script` that is not script/1 as `schema` gives it;
+    empty when it checks. Its visuals are checked by program too: each
+    piece's content, every content slide laid out within its slots'
+    capacity, every number (and every chart word naming a source) found in
+    its source at its position and every picture a file that is there and
+    drawn (when `sources` reads them), and each slide showing the visual
+    its outline slide names (when `outline` is given). A slide that asks a
+    decision is sized as the deck will draw its decision slide, with the
+    author's part of it from the deck source (`deck`) once there is one."""
+    out: list[str] = []
+    _against(script, schema(question_ids), "the script", out)
+    if out:
+        return out
+    twice = set(_slide_ids(script))
+    for n, slide in enumerate(script["slides"]):
+        at = f"slide {n + 1} ({slide['id']})"
+        out += [p for p in twice if p.startswith(f"{at}:")]
+        for i, piece in enumerate(slide["on_screen"]):
+            if piece.get("kind") in visuals.VISUAL_KINDS:
+                out += visuals.piece_problems(piece, f"{at} on_screen[{i}]")
+            else:
+                out += _piece_problems(piece, f"{at} on_screen[{i}]")
+    if out:
+        return out
+    for n, slide in enumerate(script["slides"]):
+        at = f"slide {n + 1} ({slide['id']})"
+        out += visuals.value_problems(slide, at, sources)
+        out += visuals.picture_problems(slide, at, sources)
+        out += visuals.fit_problems(slide, at, script, deck)
+    return out + visuals.plan_problems(script, outline)
+
+
+# ── the outline ───────────────────────────────────────────────────────────
+
+# The outline the author writes before the script (owner-prompts.md, "Author:
+# the outline"; construction-drafts.md "Cooperative swarm" flow 1): for each
+# slide, its title, its one point, the question it answers (one of the
+# handoff's questions, or background for one), the evidence it rests on,
+# by source path, and its visual: the form that shows its point and why it
+# carries it (construction-drafts.md "The script describes each slide's
+# visual"). The owners work on it, and the script is written from it.
+OUTLINE_VERSION = "outline/1"
+OUTLINE_FILE = "outline.yaml"
+
+
+def outline_schema(question_ids: list[str]) -> dict:
+    """outline/1 as a JSON schema both brains take as an answer format."""
+    answers = ({"type": "string", "enum": list(question_ids)} if question_ids else _WORDS)
+    slide = _object({
+        "id": {"type": "string", "pattern": ID,
+               "description": "Lower case letters, digits and dashes; the script's slide "
+                              "keeps it."},
+        "title": _WORDS,
+        "point": _described(_WORDS, "Its one point."),
+        "answers": _described(answers, "The id of the question it answers, or the one it "
+                                       "is background for."),
+        "background": {"type": "boolean",
+                       "description": "True when it is background for that question rather "
+                                      "than its answer."},
+        "evidence": _array(_described(_WORDS, f"A source path, or {UNANSWERED!r}."),
+                           "The evidence it rests on, by source path."),
+        "visual": {"type": "string", "enum": list(visuals.FORMS),
+                   "description": "The form that shows its point, one the deck can draw: "
+                                  + visuals.FORM_WORDS + "."},
+        "why": _described(_WORDS, "Why that form carries its point."),
+    })
+    return _object({"version": {"type": "string", "enum": [OUTLINE_VERSION]},
+                    "slides": _array(slide, "The slides, in order.", least=1)},
+                   "The outline: each slide's title, its one point, the question it "
+                   "answers, its evidence and its visual.")
+
+
+# A slide's visual form changed after the outline was signed off: the author
+# names it with why in a script turn (`forms`), JARVIS changes the outline,
+# and the structure owner signs off the new form (package_swarm).
+FORMS = _array(_object({
+    "slide": _described(_WORDS, "The slide's id."),
+    "visual": {"type": "string", "enum": list(visuals.FORMS),
+               "description": "Its new visual form, one the deck can draw."},
+    "why": _described(_WORDS, "Why the new form carries its point better."),
+}), "A slide whose visual form you change from what the outline names, with why; empty "
+    "when you change none. JARVIS changes the outline and the structure owner signs off the "
+    "new form.")
+
+
+def change_forms(outline: dict, changes: list[dict]) -> tuple[dict, list[dict], list[str]]:
+    """The outline with each slide's visual and why changed as `changes`
+    says: (the outline, each change made with the form it was, why a change
+    cannot be made: no such slide, or the same form)."""
+    outline = copy.deepcopy(outline)
+    slides = {s.get("id"): s for s in outline.get("slides") or [] if isinstance(s, dict)}
+    made, refused = [], []
+    for change in changes:
+        slide = slides.get(change.get("slide"))
+        if slide is None:
+            refused.append(f"forms: the outline has no slide {change.get('slide')!r}.")
+            continue
+        if slide.get("visual") == change.get("visual"):
+            continue
+        made.append({"slide": change["slide"], "was": slide.get("visual"),
+                     "visual": change.get("visual"), "why": change.get("why")})
+        slide.update(visual=change.get("visual"), why=change.get("why"))
+    return outline, made, refused
+
+
+def outline_problems(outline, question_ids: list[str]) -> list[str]:
+    """Everything in `outline` that is not outline/1; empty when it checks."""
+    out: list[str] = []
+    _against(outline, outline_schema(question_ids), "the outline", out)
+    return out or _slide_ids(outline)
+
+
+# ── the file ──────────────────────────────────────────────────────────────
+
+def dump(script: dict) -> str:
+    return yaml.safe_dump(script, sort_keys=False, allow_unicode=True, width=100)
+
+
+def write(path: Path, script: dict) -> str:
+    """script.yaml written whole, in one rename; its text."""
+    from jarvis import package_evidence
+    text = dump(script)
+    package_evidence.write_file(Path(path), text.encode("utf-8"))
+    return text
+
+
+def read(path: Path) -> Optional[dict]:
+    """The script at `path`, or None when there is none or it is not YAML."""
+    try:
+        found = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def slide_ids(doc: Optional[dict]) -> list[str]:
+    """The ids of a script's, outline's or deck source's slides, in order."""
+    return [s.get("id") for s in (doc or {}).get("slides") or [] if isinstance(s, dict)]
+
+
+def changed_slides(before: Optional[dict], after: Optional[dict]) -> list[str]:
+    """The ids of the slides that differ between two versions of a script,
+    outline or deck source (changed, added or removed), in the order of
+    `after`, then those removed."""
+    old = {s.get("id"): s for s in (before or {}).get("slides") or [] if isinstance(s, dict)}
+    new = [s for s in (after or {}).get("slides") or [] if isinstance(s, dict)]
+    ids = {s.get("id") for s in new}
+    out = [s.get("id") for s in new if old.get(s.get("id")) != s]
+    return [i for i in out + [i for i in old if i not in ids] if i]
+
+
+# ── read by program ───────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Unit:
+    """One stretch of words on a slide: marked, and edited by offsets
+    within it."""
+    slide: str
+    field: str                  # where in the slide: "title", "on_screen[2].text", ...
+    text: str
+    editable: bool = True       # Tim's own words are quoted, never edited
+
+
+def _visual_units(sid: str, at: str, piece: dict) -> list[Unit]:
+    """A typed visual's words and data, each at its field."""
+    kind, out = piece["kind"], []
+    if kind == visuals.STEPS:
+        for n, step in enumerate(piece["steps"]):
+            out += [Unit(sid, f"{at}.steps[{n}].{k}", step[k]) for k in ("title", "says")]
+    elif kind == visuals.FIGURES:
+        for n, figure in enumerate(piece["figures"]):
+            out += [Unit(sid, f"{at}.figures[{n}].{k}", figure[k]) for k in ("value", "label")]
+    elif kind == visuals.CALLOUT:
+        out += [Unit(sid, f"{at}.{k}", piece[k]) for k in ("label", "says")]
+    elif kind == visuals.COMPARISON:
+        for n, column in enumerate(piece["columns"]):
+            out.append(Unit(sid, f"{at}.columns[{n}].title", column["title"]))
+            out += [Unit(sid, f"{at}.columns[{n}].points[{p}]", point)
+                    for p, point in enumerate(column["points"])]
+    elif kind == visuals.DIAGRAM:
+        out.append(Unit(sid, f"{at}.text", piece["text"]))
+        for n, node in enumerate(piece["nodes"]):
+            out += [Unit(sid, f"{at}.nodes[{n}].{k}", node[k]) for k in ("label", "when")]
+        out += [Unit(sid, f"{at}.links[{n}].label", link["label"])
+                for n, link in enumerate(piece["links"])]
+        out += [Unit(sid, f"{at}.groups[{n}].label", group["label"])
+                for n, group in enumerate(piece["groups"])]
+    elif kind == visuals.CHART:
+        out.append(Unit(sid, f"{at}.text", piece["text"]))
+        out += [Unit(sid, f"{at}.columns[{n}].{k}", column[k])
+                for n, column in enumerate(piece["columns"]) for k in ("label", "units")]
+        for r, row in enumerate(piece["rows"]):
+            out += [Unit(sid, f"{at}.rows[{r}].values[{v}].value", value["value"])
+                    for v, value in enumerate(row["values"])]
+    return out
+
+
+def units(script: dict) -> list[Unit]:
+    """Every piece of words of every slide, in order: its title, what is on
+    screen (a visual's words and data too), what JARVIS says over it, and
+    the decision it asks."""
+    out = []
+    for slide in script.get("slides") or []:
+        sid = slide["id"]
+        out.append(Unit(sid, "title", slide["title"]))
+        for i, piece in enumerate(slide.get("on_screen") or []):
+            if piece["kind"] in visuals.VISUAL_KINDS:
+                out += _visual_units(sid, f"on_screen[{i}]", piece)
+            elif piece["kind"] == TABLE:
+                for r, row in enumerate(piece.get("rows") or []):
+                    for c, cell in enumerate(row):
+                        out.append(Unit(sid, f"on_screen[{i}].rows[{r}][{c}]", cell))
+            elif piece.get("text"):
+                out.append(Unit(sid, f"on_screen[{i}].text", piece["text"],
+                                editable=piece["kind"] != HIS_WORDS))
+        out.append(Unit(sid, "narration", slide["narration"]))
+        decision = slide.get("decision")
+        if decision:
+            out.append(Unit(sid, "decision.question", decision["question"]))
+            for j, option in enumerate(decision.get("options") or []):
+                out.append(Unit(sid, f"decision.options[{j}].name", option["name"]))
+                out.append(Unit(sid, f"decision.options[{j}].says", option["says"]))
+    return [u for u in out if u.text.strip()]
+
+
+_STEP = re.compile(r"\.?([a-z_]+)|\[(\d+)\]")
+
+
+def _steps(field: str) -> list:
+    steps, at = [], 0
+    for found in _STEP.finditer(field):
+        if found.start() != at:
+            raise KeyError(field)
+        steps.append(found.group(1) if found.group(1) else int(found.group(2)))
+        at = found.end()
+    if at != len(field) or not steps:
+        raise KeyError(field)
+    return steps
+
+
+def _set(slide: dict, field: str, text: str) -> None:
+    holder, steps = slide, _steps(field)
+    for step in steps[:-1]:
+        holder = holder[step]
+    holder[steps[-1]] = text
+
+
+def outline_units(outline: dict) -> list[Unit]:
+    """Every piece of words of the outline's slides, in order: its title,
+    its point, each source path of its evidence, and its visual and why
+    (an owner may change the form; the outline must still check)."""
+    out = []
+    for slide in outline.get("slides") or []:
+        out.append(Unit(slide["id"], "title", slide["title"]))
+        out.append(Unit(slide["id"], "point", slide["point"]))
+        for i, path in enumerate(slide.get("evidence") or []):
+            out.append(Unit(slide["id"], f"evidence[{i}]", path))
+        for key in ("visual", "why"):
+            if isinstance(slide.get(key), str):
+                out.append(Unit(slide["id"], key, slide[key]))
+    return [u for u in out if u.text.strip()]
+
+
+def apply_edits(script: dict, edits: list[dict], units_of=None
+                ) -> tuple[dict, list[dict], list[dict]]:
+    """Edits applied by the program, each at its slide and field, by
+    offsets within that field's words (sessions.apply_edits): (the script,
+    or the outline with `units_of` its `outline_units`; the edits applied;
+    the edits refused: no such slide or field, Tim's own words, or old text
+    not at its offsets)."""
+    from jarvis import sessions
+    script = copy.deepcopy(script)
+    slides = {s["id"]: s for s in script.get("slides") or []}
+    by_unit = {(u.slide, u.field): u for u in (units_of or units)(script)}
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    refused: list[dict] = []
+    for edit in edits:
+        unit = by_unit.get((str(edit.get("slide")), str(edit.get("field"))))
+        if unit is None or not unit.editable:
+            refused.append(edit)
+            continue
+        grouped.setdefault((unit.slide, unit.field), []).append(edit)
+    applied: list[dict] = []
+    for (sid, field), group in grouped.items():
+        text, done, not_done = sessions.apply_edits(by_unit[(sid, field)].text, group)
+        _set(slides[sid], field, text)
+        applied += done
+        refused += not_done
+    return script, applied, refused
+
+
+def his_words(script: dict) -> list[dict]:
+    """Each piece of Tim's own words, at its slide: {slide, text, source,
+    position}."""
+    return [{"slide": s["id"], "text": p["text"], "source": p["source"],
+             "position": p.get("position", "")}
+            for s in script.get("slides") or [] for p in s.get("on_screen") or []
+            if p.get("kind") == HIS_WORDS]
+
+
+def _value_sources(slide: dict) -> list[str]:
+    return [v.get("source", "") for _, v in visuals.sourced_values(slide)]
+
+
+def sources(script: dict) -> str:
+    """Every source path the script cites (its facts', his words' and its
+    visuals' values), one a line: what research's record of hits used is
+    matched against."""
+    found = [f["source"] for s in script.get("slides") or [] for f in s.get("facts") or []]
+    found += [w["source"] for w in his_words(script)]
+    found += [p for s in script.get("slides") or [] for p in _value_sources(s)]
+    return "\n".join(dict.fromkeys(p for p in found if p and p != UNANSWERED))
+
+
+def slide_sources(slide: dict) -> list[str]:
+    """The source paths one slide cites: its facts', its quotes of Tim and
+    its visuals' values."""
+    found = [f["source"] for f in slide.get("facts") or []]
+    found += [p["source"] for p in slide.get("on_screen") or [] if p.get("kind") == HIS_WORDS]
+    found += _value_sources(slide)
+    return [p for p in found if p and p != UNANSWERED]
+
+
+def opening(script: dict) -> list[str]:
+    """Slide 1 of the script: its title, then what is on screen in order
+    (words, Tim's words, a table's rows); a picture is not words."""
+    slide = (script.get("slides") or [{}])[0]
+    lines = [slide.get("title", "")]
+    for piece in slide.get("on_screen") or []:
+        kind = piece.get("kind")
+        if kind in (TEXT, HIS_WORDS) and piece.get("text"):
+            lines.append(piece["text"])
+        elif kind == TABLE:
+            lines += [" | ".join(row) for row in piece.get("rows") or [] if row]
+        elif kind == visuals.CALLOUT:
+            lines += [piece.get("label", ""), piece.get("says", "")]
+        elif kind == visuals.STEPS:
+            lines += [" ".join(w for w in (s.get("title"), s.get("says")) if w)
+                      for s in piece.get("steps") or []]
+        elif kind == visuals.FIGURES:
+            lines += [f"{f.get('value')} {f.get('label')}" for f in piece.get("figures") or []]
+        elif kind == visuals.COMPARISON:
+            lines += [": ".join([c.get("title", ""), "; ".join(c.get("points") or [])])
+                      for c in piece.get("columns") or []]
+        elif kind in (visuals.CHART, visuals.DIAGRAM) and piece.get("text"):
+            lines.append(piece["text"])
+    return [line for line in lines if line.strip()]
+
+
+class StructuredFile:
+    """A run's outline.yaml or script.yaml as the swarm writes it
+    (sessions.Script): the author answers it in its own form, the program
+    checks it and writes it, and the owners' edits are applied at their
+    slides and fields."""
+
+    key = "script"
+    version = VERSION
+
+    def __init__(self, path: Path, question_ids: list[str],
+                 sources: Optional[visuals.Sources] = None, outline: Optional[Path] = None):
+        self.path = Path(path)
+        self.name = self.path.name
+        self.question_ids = list(question_ids)
+        self.form = {self.key: self.schema(self.question_ids)}
+        self.problems: list[str] = []       # the last answer's, when it did not check
+        # What the visuals are checked against: their sources, read by the
+        # program, and the outline the script is written from.
+        self.sources = sources
+        self.outline = Path(outline) if outline else None
+
+    def _check(self, doc) -> list[str]:
+        return self.check(doc, self.question_ids)
+
+    @staticmethod
+    def schema(question_ids: list[str]) -> dict:
+        return schema(question_ids)
+
+    @staticmethod
+    def check(doc, question_ids: list[str]) -> list[str]:
+        return problems(doc, question_ids)
+
+    @staticmethod
+    def units_of(doc: dict) -> list[Unit]:
+        return units(doc)
+
+    @property
+    def edit_form(self) -> dict:
+        from jarvis import sessions
+        return sessions.located(sessions.EDIT)
+
+    def take(self, answer: dict) -> list[str]:
+        doc = answer.get(self.key) if isinstance(answer, dict) else None
+        self.problems = ([f"The answer has no {self.key}."] if doc is None
+                         else self._check(doc))
+        if not self.problems:
+            write(self.path, doc)
+        return self.problems
+
+    def read(self) -> dict:
+        return read(self.path) or {}
+
+    def text(self) -> str:
+        try:
+            return self.path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    def edit(self, edits: list[dict]) -> tuple[str, list[dict], list[dict]]:
+        doc, applied, refused = apply_edits(self.read(), edits, self.units_of)
+        if applied and self._check(doc):
+            # Edits that would leave it not checking are not applied: it
+            # stays as the author wrote it.
+            return self.text(), [], refused + applied
+        if applied:
+            write(self.path, doc)
+        return self.text(), applied, refused
+
+
+class ScriptFile(StructuredFile):
+    """script.yaml, script/1: its visuals checked against their sources and
+    the outline's visual plan. A script turn may change a slide's visual
+    form (`forms`, with why): JARVIS changes the outline first and checks
+    the script against it, and keeps the change only when the script
+    checks (`form_changes`, the changes the last answer made)."""
+
+    def __init__(self, *args, deck: Optional[Path] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The deck source written from the script (the deck step): its
+        # decisions are sized with the author's part of them.
+        self.deck = Path(deck) if deck else None
+        if self.outline is not None:
+            self.form = {**self.form, "forms": FORMS}
+        self.form_changes: list[dict] = []
+
+    def _check(self, doc) -> list[str]:
+        outline = read(self.outline) if self.outline else None
+        deck = read(self.deck) if self.deck else None
+        return problems(doc, self.question_ids, self.sources, outline, deck)
+
+    def take(self, answer: dict) -> list[str]:
+        self.form_changes = []
+        changes = [c for c in (answer.get("forms") if isinstance(answer, dict) else None) or []
+                   if isinstance(c, dict)]
+        if not changes or self.outline is None:
+            return super().take(answer)
+        before = self.outline.read_text(encoding="utf-8") if self.outline.is_file() else None
+        outline, made, refused = change_forms(read(self.outline) or {}, changes)
+        found = refused + outline_problems(outline, self.question_ids)
+        if found:
+            self.problems = found
+            return found
+        if made:
+            write(self.outline, outline)
+        found = super().take(answer)
+        if found and made and before is not None:
+            # The script did not check: the outline stays as it was.
+            from jarvis import package_evidence
+            package_evidence.write_file(self.outline, before.encode("utf-8"))
+        elif not found:
+            self.form_changes = made
+        return found
+
+
+class OutlineFile(StructuredFile):
+    """outline.yaml, outline/1."""
+
+    key = "outline"
+    version = OUTLINE_VERSION
+
+    @staticmethod
+    def schema(question_ids: list[str]) -> dict:
+        return outline_schema(question_ids)
+
+    @staticmethod
+    def check(doc, question_ids: list[str]) -> list[str]:
+        return outline_problems(doc, question_ids)
+
+    @staticmethod
+    def units_of(doc: dict) -> list[Unit]:
+        return outline_units(doc)

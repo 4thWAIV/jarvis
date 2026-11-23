@@ -10,7 +10,8 @@ everything about it in one document. `agent` is its row on the agents list
 session is seen, and an agent dropped from the list keeps its keys and
 what was sent to it); `keys` are its keys (principal `agent:<session>`),
 `rights` its grants, `author_proofs` the packages it vouched for as an
-author (`<engine>:<session>`), `steers` the keystrokes, Terminal commands
+author (`<engine>:<session>`) while packages carried a fresh author's proof
+(kept as written; nothing reads them now), `steers` the keystrokes, Terminal commands
 and refused attempts JARVIS made at it. A work-item key has no session: it
 is a document of its own, `workkey` at `/keys/work/<fingerprint>.workkey`,
 with its key, its rights and its history. (Any other principal, never

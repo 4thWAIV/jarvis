@@ -192,18 +192,6 @@ def test_visible_source_ids_and_frozen_file_evidence(source, tmp_path):
     assert frozen.read_text()=='A frozen observation for this presentation.\n'
 
 
-def test_author_proof_includes_frozen_file_dependency(source):
-    from jarvis.author_proof import source_digest, source_files
-    evidence=source.parent/'observation.txt'
-    evidence.write_text('First observation.')
-    change(source,lambda d:d['references'][0].update(kind='file',locator='observation.txt'))
-    before=source_digest(source)
-    assert 'planted.svg' in source_files(source)
-    assert 'reference-evidence/sample-evidence.bin' in source_files(source)
-    evidence.write_text('Changed observation.')
-    assert source_digest(source)!=before
-
-
 @pytest.fixture
 def presentation_page(source, tmp_path):
     """Compile before opening the browser; compilation has its own layout check."""
@@ -386,18 +374,26 @@ def test_a_story_too_long_to_hear_is_refused(source, tmp_path):
         compile_deck(source, tmp_path / "compiled")
 
 
-def test_words_are_not_measured_and_any_character_is_drawn(source, tmp_path):
+def test_any_character_is_drawn_and_room_is_the_slot_s_capacity(source, tmp_path):
     """No font ships with JARVIS: a slide's words are drawn in the system
-    font stack, so neither their room nor their characters are proven."""
+    font stack, so their characters are not proven; their room is held by
+    the slot's capacity (deck_capacity), worked out from the layout spec."""
     from jarvis.presentation import compile_deck
-    def crowd(data):
-        data["slides"][1]["title"] = "Rain ☃ routes"
-        paragraphs = data["slides"][1]["objects"][0]["paragraphs"]
-        paragraphs[1:] = [{"id": f"more-{n}", "role": "paragraph", "runs": [
-            {"id": f"more-{n}-words", "text": "Rain stays on the planted block longer.", "emphasis": "normal"}]}
-            for n in range(4)]
-    change(source, crowd)
+
+    def crowd(count):
+        def change_(data):
+            data["slides"][1]["title"] = "Rain ☃ routes"
+            paragraphs = data["slides"][1]["objects"][0]["paragraphs"]
+            paragraphs[1:] = [{"id": f"more-{n}", "role": "paragraph", "runs": [
+                {"id": f"more-{n}-words", "text": "Rain stays on the planted block longer.",
+                 "emphasis": "normal"}]} for n in range(count)]
+        return change_
+    change(source, crowd(1))
     compile_deck(source, tmp_path / "compiled")
+    change(source, crowd(4))
+    with pytest.raises(DeckCompileError, match="The words slot of slide compare-runoff "
+                                               r"\(comparison\) is over its capacity"):
+        compile_deck(source, tmp_path / "again")
 
 
 def test_the_proof_is_recorded_and_templates_must_be_jarvis_own(source, tmp_path):
@@ -452,3 +448,26 @@ def test_a_deck_carries_and_links_no_font(source, tmp_path):
     assert "@font-face" not in css and "-apple-system" in css
     assert not any(p.suffix in {".ttf", ".otf", ".woff", ".woff2"}
                    for p in made.package_source.rglob("*"))
+
+
+def test_the_shared_deck_fits_words_within_the_layout_spec_s_bounds():
+    """deck.js fitSlide searches each slide's scale between the bounds the
+    layout spec names ("fit"), its title and words by the spec's units, and
+    every style is declared again on each slide so the slide's own scale
+    sizes it."""
+    import re
+
+    from jarvis import decision_package, layout_spec
+    spec = layout_spec.spec()
+    js = (decision_package.BUILDER.parent / "deck.js").read_text(encoding="utf-8")
+    bounds = re.search(r"var FIT_MIN = ([\d.]+), FIT_MAX = ([\d.]+), FIT_STEPS = (\d+);", js)
+    assert bounds and [float(bounds[1]), float(bounds[2]), int(bounds[3])] == \
+        [spec["fit"]["scale_min"], spec["fit"]["scale_max"], spec["fit"]["steps"]]
+    units = re.search(r"var BODY_UNITS = (\d+), HEADING_UNITS = (\d+);", js)
+    assert [int(units[1]), int(units[2])] == [spec["styles"]["body"]["units"],
+                                              spec["styles"]["heading"]["units"]]
+    assert ":root, .slide, .presentation-title {" in layout_spec.generated_css()
+    assert layout_spec.stale() == []
+    for style in spec["styles"]:
+        low, high = layout_spec.style_range(style, layout_spec.unit((662, 489)))
+        assert low == spec["styles"][style]["min_px"] >= spec["text"]["min_px"] and high > low

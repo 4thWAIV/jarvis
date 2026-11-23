@@ -6,7 +6,7 @@ origin or the tool token, and no access-key category covers them. A change
 is followed by a `knowledge` hint on /ws/sessions (`on_change`).
 
   GET  /api/knowledge/health         the engine's state, ingest and counts
-  POST /api/knowledge/search         {text, phrase, query_en, include_untrusted, kinds, limit}
+  POST /api/knowledge/search         {text, phrase, query_en, include_untrusted, kinds, limit, under}
   GET  /api/knowledge/entity         ?name= typed matches and a card, or ?key=
   GET  /api/knowledge/proposals      what the linker proposes, waiting for his yes
   POST /api/knowledge/links          {action: link|unlink|accept|reject, topic, kind, target, proposal}
@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse
 from jarvis import knowledge_api as ka
 
 PREFIX = "/api/knowledge"
-_SEARCH = {"text", "phrase", "query_en", "include_untrusted", "kinds", "limit"}
+_SEARCH = {"text", "phrase", "query_en", "include_untrusted", "kinds", "limit", "under"}
 _LINKS = {"action", "topic", "kind", "target", "proposal"}
 _TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_aliases"}
 _MAINTAIN = {"action", "source"}
@@ -44,9 +44,18 @@ _CONTEXT = {"purpose", "project", "include_received"}
 
 def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda: None) -> None:
 
-    async def run(work: Callable[[], object], changes: bool = False):
+    async def run(work: Callable[[], object], changes: bool = False,
+                  search: Optional[Request] = None):
+        """`work` off the event loop. A search (`search`, its request) is
+        waited for to the end, cancelled only once that request has gone
+        (`ka.until_unneeded`), and then answers nothing anyone reads."""
         try:
-            result = await asyncio.to_thread(work)
+            if search is not None:
+                result = await ka.until_unneeded(work, search.is_disconnected)
+            else:
+                result = await asyncio.to_thread(work)
+        except ka.knowledge_client.Cancelled:
+            return JSONResponse({"error": "cancelled"}, status_code=499)
         except ka.Refused as e:
             return JSONResponse({"error": "refused", "message": str(e)}, status_code=400)
         except (ka.Unavailable, ka.knowledge_client.EngineUnavailable) as e:
@@ -87,10 +96,11 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         b = await fields(request, _SEARCH)
         if b is None:
             return bad()
-        return await run(lambda: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
-                                           include_untrusted=b.get("include_untrusted", True) is not False,
-                                           kinds=b.get("kinds"), limit=b.get("limit") or 10,
-                                           phrase=b.get("phrase")))
+        return await run(lambda cancel: ka.search(ctx, b.get("text") or "", query_en=b.get("query_en"),
+                                                  include_untrusted=b.get("include_untrusted", True) is not False,
+                                                  kinds=b.get("kinds"), limit=b.get("limit") or 10,
+                                                  phrase=b.get("phrase"), under=b.get("under"), cancel=cancel),
+                         search=request)
 
     async def entity(name: Optional[str] = None, key: Optional[str] = None):
         return await run(lambda: ka.entity(ctx, name=name, key=key))
@@ -143,9 +153,11 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         b = await fields(request, _CONTEXT)
         if b is None:
             return bad()
-        return await run(lambda: ka.work_context(ctx, purpose=str(b.get("purpose") or ""),
-                                                 project=b.get("project"),
-                                                 include_received=b.get("include_received") is True))
+        return await run(lambda cancel: ka.work_context(ctx, purpose=str(b.get("purpose") or ""),
+                                                        project=b.get("project"),
+                                                        include_received=b.get("include_received") is True,
+                                                        cancel=cancel),
+                         search=request)
 
     async def embedder():
         return await run(lambda: ka.embedding_model(ctx))

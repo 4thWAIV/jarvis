@@ -4,7 +4,9 @@ stays on disk; the engine indexes it").
 
 The engine never holds a file's bytes. For every file under a watched
 folder it holds one item at the file's path: `/folders/<folder id>/<rel>`
-for a registered folder, `/jarvis/<area>/<rel>` for JARVIS's own (`ROOTS`).
+for a registered folder, `/jarvis/<area>/<rel>` for JARVIS's own, and
+`/work/<id>/<rel>` and `/packages/<package id>/<rel>` for a Work item's and
+a package's files (`jarvis_roots`).
 The item's data is its path entry (the file as it is: `file`, `size`,
 `mtime`, `inode`, `sha256`) and what the reader found (title, format,
 media type, pages, headings, notes, `state`); its content is the extracted
@@ -96,6 +98,11 @@ class Root:
     # given the file's relative path and bytes, its fields, or None for a
     # file read as any other.
     summarise: Optional[Callable[[str, bytes], Optional[dict]]] = None
+    # The prefix also holds JARVIS's records (a Work item at
+    # /work/<id>/<id>.work, a package's at /packages/...): only the content
+    # child's own file items (those with `file`) are written or removed
+    # there, never a record at a file's path.
+    shares: bool = False
 
     @property
     def area(self) -> str:
@@ -127,11 +134,17 @@ def jarvis_roots() -> list[Root]:
     is read again and again while he talks. A voice samples file has
     nothing to search (a second's numbers): it is kept as its summary
     fields only (`voice_diagnostics.samples_summary`), with no text; the
-    events files are read as text."""
+    events files are read as text. A Work item's files (`data_paths.work_dir`)
+    are under its own folder of records, `/work/<id>/`, and a package's made
+    for no Work item (`data_paths.package_dir`) under `/packages/<package
+    id>/`: both hold what agents and people wrote, read as text, beside
+    records (`shares`)."""
     found = [Root(BRAIN, str(data_paths.brain_home()), "docs", "own", only=BRAIN_NOTES),
              Root("/jarvis/answers", str(data_paths.answers_dir()), "docs", "own"),
              Root("/jarvis/packages", str(data_paths.packages_dir()), "docs", "untrusted"),
              Root("/jarvis/received", str(data_paths.messaging_downloads_dir()), "docs", "untrusted"),
+             Root("/work", str(data_paths.work_dir()), "text", "untrusted", shares=True),
+             Root("/packages", str(data_paths.package_dir()), "text", "untrusted", shares=True),
              # Each run's output stream (run_store.py): JSON lines, the agent's words.
              Root("/jarvis/runs", str(data_paths.runs_dir()), "text", "untrusted", closed_only=True),
              # The voice record (voice_diagnostics.py): counts, timings and
@@ -190,7 +203,8 @@ def item_path(root: Root, rel: str) -> Optional[str]:
 def skipper(root: Root) -> Callable[[str, bool], bool]:
     """What the walk passes over in one root: the folder catalog's rule,
     git-ignored paths, `SKIP_DIRS`, JARVIS's own data inside a registered
-    folder, files out of scope or with no item path."""
+    folder, a package run's bookkeeping under /work and /packages
+    (`run_bookkeeping`), files out of scope or with no item path."""
     from jarvis import repo_read
     ignored = fs_watch.git_ignored(root.path)
     data = os.path.realpath(data_paths.data_dir())
@@ -205,6 +219,8 @@ def skipper(root: Root) -> Callable[[str, bool], bool]:
             return True
         if inside is not None and (rel == inside or rel.startswith(inside + "/")):
             return True
+        if root.shares and run_bookkeeping(rel, is_dir):
+            return True
         if repo_read.sensitive_reason(Path(rel), named_dotfiles=root.folder_id is not None) is not None:
             return True
         if ignored(rel, is_dir):
@@ -213,6 +229,25 @@ def skipper(root: Root) -> Callable[[str, bool], bool]:
             return True
         return False
     return skip
+
+
+def run_bookkeeping(rel: str, is_dir: bool) -> bool:
+    """Whether a path in a Work item's or a package's folder is a package
+    run's bookkeeping (run_report.BOOKKEEPING: timing.json, quality.json,
+    swarm.json, run.job, job.log, research-log.jsonl, research-used.json,
+    each directly in a run's folder, `.../runs/<run id>/`), the role
+    servers' configuration folder (run_report.ROLE_CONFIG) or the package's
+    step cache and anything in it (step_cache.CACHE_DIR: copies of what its
+    runs made, indexed where they are restored). Never indexed, so no
+    search returns it; one indexed before leaves on the next scan."""
+    from jarvis import run_report, step_cache
+    parts = rel.split("/")
+    if step_cache.CACHE_DIR in parts:
+        return True
+    if is_dir:
+        return parts[-1] == run_report.ROLE_CONFIG
+    return (len(parts) >= 3 and parts[-3] == "runs"
+            and parts[-1] in run_report.BOOKKEEPING)
 
 
 def wanted(root: Root, rel: str, is_dir: bool = False,
@@ -244,6 +279,11 @@ def read_file(root: Root, rel: str) -> tuple[bytes, os.stat_result]:
 
 def _stat_fields(stat: fs_watch.Stat) -> dict:
     return {"size": stat.size, "mtime": stat.mtime_ns / 1e9, "mtime_ns": stat.mtime_ns, "inode": stat.inode}
+
+
+def _is_file_item(data) -> bool:
+    """An item this child wrote for a file (its path entry names the file)."""
+    return isinstance((data or {}).get("file"), str)
 
 
 def _known_stat(data: dict) -> Optional[fs_watch.Stat]:
@@ -319,6 +359,8 @@ class Indexer:
             return False
         if held is not None and _known_stat(held) == stat:
             return held.get("state") == "pending"
+        if held is None and root.shares and self._record_at(path):
+            return False
         own = tx is None
         tx = tx if tx is not None else Transaction()
         if held is None:
@@ -330,6 +372,11 @@ class Indexer:
             self.uds.transaction(WRITER, tx, change="file changed", summary=rel[:200])
         self.counters.noted += 1
         return True
+
+    def _record_at(self, path: str) -> bool:
+        """Whether a record that is no file item of this child is at `path`."""
+        item = self.uds.get(WRITER, path, {Stream.DATA})
+        return item is not None and not _is_file_item(item.data)
 
     def remove(self, root: Root, rels: Iterable[str]) -> int:
         paths = [p for p in (item_path(root, r) for r in rels) if p]
@@ -385,12 +432,15 @@ class Indexer:
         path = item_path(root, rel)
         stat = fs_watch.stat_of(full)
         if stat is None or path is None or not wanted(root, rel, skip=self.skip_of(root)):
-            if path is not None and self.uds.get(WRITER, path) is not None:
+            if path is not None and _is_file_item(
+                    getattr(self.uds.get(WRITER, path, {Stream.DATA}), "data", None)):
                 self.remove(root, [rel])
             return None
         if root.closed_only and not closed_files.closed(full):
             return None                        # still being written: read once closed
         item = self.uds.get(WRITER, path, {Stream.DATA})
+        if item is not None and not _is_file_item(item.data):
+            return None                        # a record at this path, never a file's
         held = None if item is None else {**(item.data or {}), "_version": item.version}
         return rel if self.note(root, rel, stat, held) or (held or {}).get("state") == "pending" else None
 
@@ -484,9 +534,10 @@ class Indexer:
         return "file://" + os.path.join(root.path, rel)
 
     def forget_root(self, prefix: str) -> int:
-        """Every item under a root that is no longer watched (a folder
-        unregistered, or its scope turned off)."""
-        paths = [i.path for i in self.uds.scan(WRITER, prefix, streams={Stream.ENTRY}, limit=1000)]
+        """Every file item under a root that is no longer watched (a folder
+        unregistered, or its scope turned off); a record there stays."""
+        paths = [i.path for i in self.uds.scan(WRITER, prefix, streams={Stream.DATA}, limit=1000)
+                 if _is_file_item(i.data)]
         for i in range(0, len(paths), WRITE_BATCH):
             tx = Transaction()
             for p in paths[i:i + WRITE_BATCH]:

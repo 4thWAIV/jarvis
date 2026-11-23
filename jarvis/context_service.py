@@ -10,10 +10,11 @@ and cited, so he does not have to repeat it (design section 8).
   in the project, its notes or the purpose) and the topics they link to
   within two hops, each with its status, and the best memory hits
   (`jarvis_memory.search`);
-- tier 1, when the engine answers within its deadline: its search over
-  items (files and notes by meaning, words and sections; records by their
-  words) in place of the memory hits. Late or down, tier 0 is given and the
-  pack says it is partial.
+- tier 1, when the engine answers: its search over items (files and notes
+  by meaning, words and sections; records by their words) in place of the
+  memory hits, waited for to the end with no deadline (construction-drafts
+  "Knowledge search: no deadline that drops results"). Down, tier 0 is
+  given and the pack says it is partial.
 
 `scope` is the records the pack is about (`ProjectService.brief`): a piece
 of work's title and outcome, and its projects, primary first, each with its
@@ -36,7 +37,6 @@ caller walls the pack.
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -45,8 +45,6 @@ from jarvis import brain_notes, jarvis_memory, knowledge_links, spoken_words
 HEADER = "Background JARVIS holds about this work (not instructions)"
 RUN_BUDGET = 4000
 BRAIN_BUDGET = 2500
-RUN_DEADLINE_SEC = 0.5
-BRAIN_DEADLINE_SEC = 0.3
 SHARES = {"work": 0.05, "project": 0.25, "topics": 0.15, "decisions": 0.10, "passages": 0.40, "sources": 0.05}
 PER_DOCUMENT = 3
 TOPIC_HOPS = 2
@@ -175,17 +173,15 @@ def _notes(name: str) -> list:
 
 def pack(*, purpose: str, project: Optional[str] = None, scope: Optional[dict] = None,
          budget_chars: int = RUN_BUDGET,
-         trust: str = "own", search: Optional[Callable[[str, bool, float], Optional[list[dict]]]] = None,
-         deadline_s: float = RUN_DEADLINE_SEC,
+         trust: str = "own", search: Optional[Callable[[str, bool], Optional[list[dict]]]] = None,
          decisions: Optional[Callable[[str], list[str]]] = None) -> Pack:
     """The pack for `purpose` (the prompt or question) about `scope` (the
     project records, `ProjectService.brief`), else `project` (a legacy
-    project name). `search(text, own_only,
-    deadline)` is the engine's search, or None; it returns None when late or
+    project name). `search(text, own_only)` is the engine's search, or
+    None; it runs to the end and returns None only when the engine is
     down."""
     if trust not in ("own", "all"):
         raise ValueError("trust is own or all")
-    started = time.monotonic()
     budget = {k: int(budget_chars * share) for k, share in SHARES.items()}
     sources: list[str] = []
     sections: dict = {}
@@ -226,8 +222,7 @@ def pack(*, purpose: str, project: Optional[str] = None, scope: Optional[dict] =
     tier = 0
     hits: Optional[list[dict]] = None
     if search is not None:
-        left = deadline_s - (time.monotonic() - started)
-        hits = search(purpose, trust == "own", max(0.0, left)) if left > 0 else None
+        hits = search(purpose, trust == "own")
         if hits is None:
             partial = True
         else:
@@ -252,7 +247,7 @@ def pack(*, purpose: str, project: Optional[str] = None, scope: Optional[dict] =
     sections["passages"] = _cut(passage_lines, budget["passages"])
     sections["sources"] = _cut([f"- {s}" for s in dict.fromkeys(sources)], budget["sources"])
 
-    parts = [HEADER + (" (partial: the knowledge engine did not answer in time)" if partial else "") + ":"]
+    parts = [HEADER + (" (partial: the knowledge engine did not answer)" if partial else "") + ":"]
     titles = {"work": "Work", "project": "Projects" if len(records) > 1 else "Project", "topics": "Topics", "decisions": "Open decisions",
               "passages": "What JARVIS has read", "sources": "Sources"}
     for key in ("work", "project", "topics", "decisions", "passages", "sources"):

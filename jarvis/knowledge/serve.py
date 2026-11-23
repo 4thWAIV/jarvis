@@ -40,10 +40,20 @@ log = logging.getLogger("jarvis.knowledge.serve")
 BODY_MAX_BYTES = 64 << 20
 
 
+def _never_gone() -> bool:
+    return False
+
+
 class Request(NamedTuple):
     params: dict
     query: dict
     body: Any
+    # Whether the caller has gone (its connection closed): a search stops
+    # then, and only then (items.Cancelled).
+    gone: Callable[[], bool] = _never_gone
+
+
+CANCELLED = 499     # the caller went away; nothing is sent back
 
 
 class Answer(NamedTuple):
@@ -72,9 +82,13 @@ def route(method: str, template: str) -> Callable[[Handler], Handler]:
     return register
 
 
-def dispatch(engine: Engine, method: str, target: str, body: Any = None) -> Answer:
+def dispatch(engine: Engine, method: str, target: str, body: Any = None,
+             gone: Optional[Callable[[], bool]] = None) -> Answer:
     """Run the route `target` names; each request's time is kept by route
-    in the engine's health (`Engine.route_times`)."""
+    in the engine's health (`Engine.route_times`), a search's whole time
+    included. `gone` says when the caller has gone; a search it ends is
+    answered `CANCELLED`, which nobody reads."""
+    from jarvis.knowledge.items import Cancelled
     parts = urlsplit(target)
     path = parts.path
     known_path = False
@@ -89,7 +103,9 @@ def dispatch(engine: Engine, method: str, target: str, body: Any = None) -> Answ
         query = {k: v[-1] for k, v in parse_qs(parts.query).items()}
         began = time.monotonic()
         try:
-            return fn(engine, Request(params, query, body))
+            return fn(engine, Request(params, query, body, gone or _never_gone))
+        except Cancelled:
+            return Answer(CANCELLED, {"error": "cancelled"})
         except BadRequest as e:
             return Answer(400, {"error": "bad_request", "detail": str(e)})
         finally:
@@ -217,14 +233,16 @@ def _walk(engine: Engine, request: Request) -> Answer:
 @_guard
 def _query(engine: Engine, request: Request) -> Answer:
     from jarvis.knowledge import query
-    return Answer(200, query.run(engine, request.body or {}))
+    with engine.searching():
+        return Answer(200, query.run(engine, request.body or {}, request.gone))
 
 
 @route("POST", "/v1/search")
 @_guard
 def _search(engine: Engine, request: Request) -> Answer:
     from jarvis.knowledge import query
-    return Answer(200, query.search(engine, request.body or {}))
+    with engine.searching():
+        return Answer(200, query.search(engine, request.body or {}, request.gone))
 
 
 @route("GET", "/v1/watermarks")
@@ -407,7 +425,10 @@ def _items_links(engine: Engine, request: Request) -> Answer:
 @route("POST", "/v1/items/search")
 @_guard
 def _items_search(engine: Engine, request: Request) -> Answer:
-    return Answer(200, engine.items.search(request.body or {}))
+    """A search in the fast lane: this request thread at normal priority,
+    with the background lane held while it runs (`Engine.searching`)."""
+    with engine.searching():
+        return Answer(200, engine.items.search(request.body or {}, request.gone))
 
 
 @route("POST", "/v1/items/rights")
@@ -432,6 +453,31 @@ def _items_proposals(engine: Engine, request: Request) -> Answer:
 @_guard
 def _items_answer(engine: Engine, request: Request) -> Answer:
     return Answer(200, engine.items.answer_proposal(request.body or {}))
+
+
+# How long a text's embedding is waited for at /v1/items/embed: the
+# embedding thread's queue puts it ahead of every waiting ingest batch.
+EMBED_SEC = 60.0
+
+
+@route("POST", "/v1/items/embed")
+@_guard
+def _items_embed(engine: Engine, request: Request) -> Answer:
+    """Texts embedded by the engine's own model, for a program that groups
+    words by meaning (package_swarm's questions to the sender): each text's
+    vector in the item space's model, or 503 while there is no model."""
+    texts = (request.body or {}).get("texts")
+    if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
+        raise BadRequest("texts is a list of words")
+    vectors = engine.vectors
+    if vectors is None or vectors.queue is None:
+        return Answer(503, {"error": "no_model", "detail": "no embedding model is attached"})
+    if not texts:
+        return Answer(200, {"space": vectors.space_id, "vectors": []})
+    found = vectors.queue.embed_now(texts, EMBED_SEC, purpose="query")
+    if found is None:
+        return Answer(503, {"error": "busy", "detail": "the embedding did not finish in time"})
+    return Answer(200, {"space": vectors.space_id, "vectors": [list(v) for v in found]})
 
 
 class _HTTPHandler(BaseHTTPRequestHandler):
@@ -471,11 +517,28 @@ class _HTTPHandler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "bad_json"})
                 return
         try:
-            answer = dispatch(server.engine, method, self.path, body)
+            answer = dispatch(server.engine, method, self.path, body, gone=self._caller_gone)
         except Exception:
             log.exception("knowledge route %s %s failed", method, self.path)
             answer = Answer(500, {"error": "internal"})
+        if answer.status == CANCELLED:
+            self.close_connection = True
+            return
         self._send(answer.status, answer.payload)
+
+    def _caller_gone(self) -> bool:
+        """Whether the caller has closed its connection (nothing more can
+        arrive on it while it waits for this answer, so a readable socket
+        that reads nothing is a closed one)."""
+        import select
+        import socket
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            if not readable:
+                return False
+            return self.connection.recv(1, socket.MSG_PEEK) == b""
+        except (OSError, ValueError):
+            return True
 
     def do_GET(self) -> None:  # noqa: N802
         self._handle("GET")

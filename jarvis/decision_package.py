@@ -291,7 +291,7 @@ KEYS = {
              "decisions", "understanding"),
     "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
-                 "picture", "compare", "say", "text_only", "needs_words"),
+                 "picture", "compare", "say", "text_only", "needs_words", "objects"),
     "option": ("id", "name", "says", "picture", "opens", "recommended"),
 }
 

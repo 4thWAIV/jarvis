@@ -22,6 +22,17 @@ seven-day window): stressed is ahead below 0, least stressed is the highest
 ahead. A brain not measured is never called stressed, nor chosen as least.
 An engine he names for one agent ("on Codex") is his choice and is kept.
 
+Tim approved using the main brains' engine selection method for each
+package role on 2026-11-19. The author is `package_author`. The editor,
+the owners, Tim's reader,
+retrieval, marking, classification, extraction and summarization each have
+their own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
+(model_tiers.pick) unless its entry names one. On 2026-11-19 Tim approved the option to run the
+owners (formerly judges) on a different brain from the author.
+This setting (`owners_other_brain`) is ignored while JARVIS has only one brain. A file
+saved before the swarm became cooperative is read with its judges' entry as
+the owners', its Theory of Mind reader's as Tim's reader's (`WAS`).
+
 Kept in `<data>/jarvis/engines.json`, beside brains.json, so the page, the
 brain's tools and make_package (another process) read the same choice. A
 missing or unreadable file is the defaults below: what JARVIS did before
@@ -41,7 +52,15 @@ from jarvis import brain_provider, brains_config, data_paths, usage_store
 
 log = logging.getLogger("jarvis.engines")
 
-KINDS = ("package_author", "run", "build", "agent_package")
+# The roles of a package's making beside its author (sessions.py).
+ROLE_KINDS = ("editor", "owners", "tims_reader", "retrieval", "marking",
+              "classification", "extraction", "summarization")
+KINDS = ("package_author", "run", "build", "agent_package") + ROLE_KINDS
+# The names a kind or the setting had before the cooperative swarm
+# (construction-drafts.md "Cooperative swarm", 2026-11-21), read in their
+# successors' place from a file saved then.
+WAS = {"owners": "judges", "tims_reader": "theory_of_mind_reader",
+       "owners_other_brain": "judges_other_brain"}
 PICKS = ("fixed", "requester", "least_stress")
 ENGINES = brain_provider.ENGINES
 
@@ -50,6 +69,9 @@ DEFAULTS = {
     "run": {"pick": "fixed", "engine": "claude", "model": None},
     "build": {"pick": "fixed", "engine": "claude", "model": None},
     "agent_package": {"pick": "fixed", "engine": "claude", "model": None},
+    # Each role on the engine of whoever asks, as its author is: what the
+    # editors and judges did before (they ran on the author's choice).
+    **{kind: {"pick": "requester"} for kind in ROLE_KINDS},
 }
 
 
@@ -100,8 +122,12 @@ def load() -> dict:
         body = {}
     kinds = body.get("kinds") if isinstance(body, dict) else None
     kinds = kinds if isinstance(kinds, dict) else {}
-    return {"kinds": {k: _setting(kinds.get(k)) or dict(DEFAULTS[k]) for k in KINDS},
-            "override_stressed": bool(body.get("override_stressed")) if isinstance(body, dict) else False}
+    body = body if isinstance(body, dict) else {}
+    def saved(where: dict, key: str):
+        return where[key] if key in where else where.get(WAS.get(key, key))
+    return {"kinds": {k: _setting(saved(kinds, k)) or dict(DEFAULTS[k]) for k in KINDS},
+            "override_stressed": bool(body.get("override_stressed")),
+            "owners_other_brain": bool(saved(body, "owners_other_brain"))}
 
 
 def _save(cfg: dict) -> None:
@@ -154,6 +180,23 @@ def set_override(on: bool) -> dict:
     cfg["override_stressed"] = bool(on)
     _save(cfg)
     return cfg
+
+
+def set_owners_other_brain(on: bool) -> dict:
+    cfg = load()
+    cfg["owners_other_brain"] = bool(on)
+    _save(cfg)
+    return cfg
+
+
+def other_brain_for_owners(kind: str, author_engine: Optional[str]) -> Optional[str]:
+    """The brain the owners run on when Settings puts them on the other
+    brain from the author's, or None: not the owners, the setting off, the
+    author's brain unknown, or only one brain."""
+    if kind != "owners" or not author_engine or not load()["owners_other_brain"]:
+        return None
+    others = [e for e in available() if e != author_engine]
+    return others[0] if others else None
 
 
 # ── token stress ──────────────────────────────────────────────────────────

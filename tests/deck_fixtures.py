@@ -5,6 +5,7 @@ filled in from their files, and `write_yaml` writes it with its pictures."""
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -131,4 +132,349 @@ def write_yaml(folder: Path, deck: dict, svg: str | None = None) -> Path:
     (folder / "pictures" / "plate.svg").write_text(svg or SVG)
     source = folder / "presentation.yaml"
     source.write_text(yaml.safe_dump(presentation_of(deck, folder), sort_keys=False, allow_unicode=True))
+    return source
+
+
+# A content slide of JARVIS's three components, for presentation/1 sources
+# that name the reference "sample-evidence" (as the street example does).
+_EVIDENCE = {"reference": "sample-evidence"}
+COMPONENTS_SLIDE = {
+    "id": "plan", "type": "content", "title": "What the trial costs and how it runs",
+    "layout": "comparison", "notes": "",
+    "objects": [
+        {"id": "plan-callout", "type": "callout", "slot": "first", "source": _EVIDENCE,
+         "label": "Bottom line", "says": "One planted block for a year costs less than a repaving."},
+        {"id": "plan-figures", "type": "figures", "slot": "second", "source": _EVIDENCE,
+         "items": [{"id": "cost-figure", "value": "12 000 €", "label": "a year"},
+                   {"id": "rain-figure", "value": "40 %", "label": "less runoff"}]},
+        {"id": "plan-steps", "type": "steps", "slot": "third", "source": _EVIDENCE,
+         "items": [{"id": "plan-measure", "title": "Measure the runoff", "says": "For one month first."},
+                   {"id": "plan-plant", "title": "Plant the block"},
+                   {"id": "plan-compare", "title": "Compare", "says": "Against the paved block."}]},
+        {"id": "plan-words", "type": "text", "slot": "words", "source": _EVIDENCE,
+         "paragraphs": [{"id": "plan-words-p", "role": "paragraph", "runs": [
+             {"id": "plan-words-r", "text": "Every figure is from the street survey.", "emphasis": "normal"}]}]},
+    ],
+    "readingOrder": ["plan-callout", "plan-figures", "plan-steps", "plan-words"],
+    "narration": [{"id": "plan-cue", "say": "It costs twelve thousand a year, measured over a month first.",
+                   "focus": ["cost-figure", "plan-measure"]}],
+}
+
+
+# A dataset and the slides drawn from it: a bar chart of two series, a line,
+# a scatter and a table, each a view (filtered, sorted, limited) of the same
+# records. For sources naming "sample-evidence", as the street example does.
+DATASET = {
+    "id": "blocks", "source": _EVIDENCE,
+    "columns": [{"id": "block", "label": "Block", "type": "text"},
+                {"id": "kind", "label": "Kind", "type": "text"},
+                {"id": "cost", "label": "Cost", "type": "number", "units": "k€"},
+                {"id": "runoff", "label": "Runoff", "type": "number", "units": "%"},
+                {"id": "trees", "label": "Trees", "type": "number"}],
+    "rows": [{"id": f"b{n}", "values": {"block": block, "kind": kind, "cost": cost, "runoff": runoff,
+                                         "trees": trees}}
+             for n, (block, kind, cost, runoff, trees) in enumerate([
+                 ("North", "planted", 12, 40, 18), ("South", "paved", 8, 85, 2),
+                 ("East", "planted", 15.5, 35, 24), ("West", "mixed", 10.25, 60, 9),
+                 ("Centre", "paved", 9, 90, 0)], 1)],
+}
+
+
+def _chart(ident: str, slot: str, kind: str, x: str, y: list[str], **view) -> dict:
+    return {"id": ident, "type": "chart", "slot": slot, "source": _EVIDENCE, "kind": kind,
+            "data": {"dataset": "blocks", **view}, "x": x, "y": y, "alt": f"A {kind} chart of the blocks"}
+
+
+def _content(ident: str, title: str, layout: str, objects: list[dict], focus: list[str]) -> dict:
+    return {"id": ident, "type": "content", "title": title, "layout": layout, "notes": "",
+            "objects": objects, "readingOrder": [o["id"] for o in objects],
+            "narration": [{"id": f"{ident}-cue", "say": title, "focus": focus}]}
+
+
+DATA_SLIDES = [
+    _content("costs", "What each block costs and keeps", "title-and-body",
+             [_chart("cost-chart", "body", "bar", "block", ["cost", "runoff"])],
+             ["cost-chart-b1-cost"]),
+    _content("trend", "Runoff against trees", "two-pictures",
+             [_chart("runoff-line", "first", "line", "block", ["runoff"], sort={"column": "trees"}),
+              _chart("tree-scatter", "second", "scatter", "trees", ["runoff"])],
+             ["tree-scatter-b3-runoff"]),
+    _content("planted", "The planted and mixed blocks", "table",
+             [{"id": "block-table", "type": "table", "slot": "table", "source": _EVIDENCE,
+               "alt": "The blocks that are not paved", "rowHeads": True,
+               "data": {"dataset": "blocks", "where": [{"column": "kind", "one_of": ["planted", "mixed"]}],
+                        "sort": {"column": "cost", "order": "descending"}, "limit": 2},
+               "columns": ["block", "cost", "runoff"]}],
+             ["block-table-b3-cost"]),
+]
+
+
+def with_data(data: dict) -> None:
+    """The street example (or any source naming sample-evidence) with the
+    dataset and its slides after its first content slide."""
+    data["datasets"] = [json.loads(json.dumps(DATASET))]
+    data["slides"][2:2] = json.loads(json.dumps(DATA_SLIDES))
+
+
+# The hard fixture deck, in Spanish: long words, bullets, a literal table and
+# one from data, two pictures, four columns, the components, two charts, a
+# flow beside words and a decision with pictured options. The CI page test draws it at frames across
+# the range and holds the browser to the proof's model; the release check
+# builds it with the rest of the corpus.
+PICTURE = ('<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">'
+           '<rect width="{w}" height="{h}" fill="{fill}"/></svg>\n')
+
+
+def _text(ident: str, slot: str, *paragraphs: tuple[str, str] | str) -> dict:
+    """A text object: each paragraph plain words, or (role, words), a
+    `**word**` run strong."""
+    out = []
+    for n, item in enumerate(paragraphs, 1):
+        role, words = item if isinstance(item, tuple) else ("paragraph", item)
+        runs = []
+        for m, part in enumerate(words.split("**")):
+            if part:
+                runs.append({"id": f"{ident}-{n}-{m}", "text": part,
+                             "emphasis": "strong" if m % 2 else "normal"})
+        out.append({"id": f"{ident}-p{n}", "role": role, "runs": runs})
+    return {"id": ident, "type": "text", "slot": slot, "source": {"reference": "evidence"},
+            "paragraphs": out}
+
+
+def _slide(ident: str, title: str, layout: str, *objects: dict) -> dict:
+    return {"id": ident, "type": "content", "title": title, "layout": layout,
+            "objects": list(objects), "readingOrder": [o["id"] for o in objects],
+            "narration": [{"id": f"{ident}-cue", "say": title, "focus": [objects[0]["id"]]}],
+            "notes": ""}
+
+
+def _image(ident: str, slot: str, asset: str) -> dict:
+    return {"id": ident, "type": "image", "slot": slot, "source": {"reference": "evidence"},
+            "asset": asset, "alt": "Una imagen de prueba", "fit": "contain"}
+
+
+def hard_deck(folder: Path) -> Path:
+    """The hard fixture set as presentation.yaml, its pictures beside it."""
+    assets = []
+    for ident, (w, h, fill) in {"ancho": (640, 360, "#38bdf8"), "alto": (300, 420, "#f97316"),
+                                "opcion-a": (320, 200, "#22c55e"),
+                                "opcion-b": (320, 200, "#a855f7")}.items():
+        raw = PICTURE.format(w=w, h=h, fill=fill).encode()
+        (folder / f"{ident}.svg").write_bytes(raw)
+        picture = picture_proof.prove_bytes(raw)
+        assets.append({"id": ident, "path": f"{ident}.svg",
+                       "sha256": hashlib.sha256(raw).hexdigest(), "mime": picture.mime,
+                       "width": picture.width, "height": picture.height,
+                       "source": {"reference": "evidence"}})
+    long = ("La internacionalización del electroencefalograma contrarrevolucionario "
+            "desproporcionadamente interdisciplinario")
+    deck = {
+        "version": "presentation/1", "id": "prueba-dificil", "title": "Una prueba difícil",
+        "purpose": "Comprobar que el modelo de altura coincide con el navegador.",
+        "conclusion": "El modelo y el navegador dan la misma altura en cada marco.",
+        "language": "es", "requires": ["presentation-core/1"], "assets": assets,
+        "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
+                        "revision": "1", "description": "Datos inventados para la prueba."}],
+        "datasets": [{"id": "manzanas", "source": {"reference": "evidence"},
+                      "columns": [{"id": "manzana", "label": "Manzana", "type": "text"},
+                                  {"id": "coste", "label": "Coste", "type": "number", "units": "k€"},
+                                  {"id": "escorrentia", "label": "Escorrentía", "type": "number", "units": "%"},
+                                  {"id": "arboles", "label": "Árboles", "type": "number"}],
+                      "rows": [{"id": f"m{n}", "values": {"manzana": name, "coste": cost,
+                                                          "escorrentia": runoff, "arboles": trees}}
+                               for n, (name, cost, runoff, trees) in enumerate([
+                                   ("Norte", 12000.5, 40, 18), ("Sur", 8, 85, 2), ("Este", 15.5, 35, 24),
+                                   ("Oeste", 10.25, 60, 9)], 1)]}],
+        "slides": [
+            _slide("palabras", "Palabras largas y viñetas", "title-and-body",
+                   _text("palabras-texto", "body",
+                         ("heading", "Electroencefalografía"), long,
+                         "Una frase **con negrita** en medio, y acentos: árbol, canción, pingüino.",
+                         ("bullet", "Primera viñeta con desproporcionadamente muchas sílabas."),
+                         ("bullet", "Segunda viñeta, más corta."),
+                         ("numbered", "Un paso numerado."))),
+            {"id": "tabla", "type": "content", "title": "Una tabla con cabeceras",
+             "layout": "table", "notes": "",
+             "objects": [{"id": "tabla-datos", "type": "table", "slot": "table",
+                          "source": {"reference": "evidence"}, "alt": "Costes por ruta",
+                          "head": ["Ruta", "Coste anual", "Mantenimiento"], "rowHeads": True,
+                          "rows": [{"id": f"fila-{n}", "cells": cells} for n, cells in enumerate([
+                              ["Plantada", "12 000", "Riego dos veces por semana"],
+                              ["Pavimentada", "8 000", "Ninguno"],
+                              ["Interdisciplinaria", "15 500", "Contrarrevolucionario"],
+                              ["Mixta", "10 250", "Poda anual"]], 1)]},
+                         _text("tabla-texto", "words", "Las cifras son inventadas.")],
+             "readingOrder": ["tabla-datos", "tabla-texto"],
+             "narration": [{"id": "tabla-cue", "say": "Una tabla.", "focus": ["tabla-datos"]}]},
+            _slide("dos", "Dos imágenes", "two-pictures", _image("dos-a", "first", "ancho"),
+                   _image("dos-b", "second", "alto"),
+                   _text("dos-texto", "words", "Una ancha y una alta, " + long + ".")),
+            _slide("cuatro", "Cuatro columnas", "comparison",
+                   *[_text(f"col-{slot}", slot, ("heading", name), text) for slot, name, text in [
+                       ("first", "Primera", "Interdisciplinar y contraproducente."),
+                       ("second", "Segunda", "Corta."),
+                       ("third", "Tercera", "Una columna con más palabras que las demás juntas."),
+                       ("fourth", "Cuarta", "Desproporcionado.")]],
+                   _text("cuatro-texto", "words", "Cuatro columnas comparadas, una frase debajo.")),
+            _slide("componentes", "Componentes de JARVIS", "comparison",
+                   {"id": "comp-aviso", "type": "callout", "slot": "first", "source": {"reference": "evidence"},
+                    "label": "Conclusión", "says": "La ruta plantada cuesta menos que repavimentar."},
+                   {"id": "comp-cifras", "type": "figures", "slot": "second", "source": {"reference": "evidence"},
+                    "items": [{"id": "cifra-coste", "value": "12 000 €", "label": "al año"},
+                              {"id": "cifra-lluvia", "value": "40 %", "label": "menos agua"}]},
+                   {"id": "comp-pasos", "type": "steps", "slot": "third", "source": {"reference": "evidence"},
+                    "items": [{"id": "paso-medir", "title": "Medir", "says": "Un mes antes."},
+                              {"id": "paso-plantar", "title": "Plantar la manzana interdisciplinaria"}]}),
+            _slide("datos", "Costes y escorrentía por manzana", "two-pictures",
+                   {"id": "datos-barras", "type": "chart", "slot": "first", "kind": "bar",
+                    "source": {"reference": "evidence"}, "alt": "Coste y escorrentía",
+                    "data": {"dataset": "manzanas"}, "x": "manzana", "y": ["coste", "escorrentia"]},
+                   {"id": "datos-puntos", "type": "chart", "slot": "second", "kind": "scatter",
+                    "source": {"reference": "evidence"}, "alt": "Escorrentía según árboles",
+                    "data": {"dataset": "manzanas"}, "x": "arboles", "y": ["escorrentia"]},
+                   _text("datos-texto", "words", "Cifras inventadas para la prueba.")),
+            {"id": "datos-tabla", "type": "content", "title": "Las manzanas con árboles",
+             "layout": "table", "notes": "",
+             "objects": [{"id": "tabla-manzanas", "type": "table", "slot": "table", "rowHeads": True,
+                          "source": {"reference": "evidence"}, "alt": "Manzanas",
+                          "data": {"dataset": "manzanas", "where": [{"column": "arboles", "at_least": 5}],
+                                   "sort": {"column": "coste", "order": "descending"}},
+                          "columns": ["manzana", "coste", "escorrentia"]}],
+             "readingOrder": ["tabla-manzanas"],
+             "narration": [{"id": "datos-tabla-cue", "say": "Una tabla de datos.",
+                            "focus": ["tabla-manzanas-m3-coste"]}]},
+            _slide("imagen", "Una imagen y palabras", "picture-and-words",
+                   _text("imagen-texto", "words", long, ("bullet", "Una viñeta junto a la imagen.")),
+                   _image("imagen-dibujo", "picture", "ancho")),
+            _slide("proceso", "El proceso junto a palabras", "picture-and-words",
+                   _text("proceso-texto", "words", "Cada manzana pasa por tres pasos.",
+                         ("bullet", "Si la medición falla, se vuelve a medir.")),
+                   {"id": "proceso-flujo", "type": "diagram", "slot": "picture", "kind": "flow",
+                    "source": {"reference": "evidence"}, "alt": "Los pasos de cada manzana",
+                    "nodes": [{"id": "p-medir", "label": "Medir la escorrentía"},
+                              {"id": "p-plantar", "label": "Plantar", "shape": "rounded",
+                               "tone": "good"},
+                              {"id": "p-comparar", "label": "¿Retiene más?", "shape": "diamond",
+                               "tone": "warn"}],
+                    "links": [{"id": "p-1", "from": "p-medir", "to": "p-plantar"},
+                              {"id": "p-2", "from": "p-plantar", "to": "p-comparar"},
+                              {"id": "p-3", "from": "p-comparar", "to": "p-medir",
+                               "label": "no"}]}),
+            {"id": "decidir", "type": "decision", "decision": "elegir-ruta"},
+        ],
+        "decisions": [{
+            "id": "elegir-ruta", "question": "¿Qué ruta probamos?",
+            "options": [{"id": "plantada", "name": "La plantada", "says": "Plantas en la calle.",
+                         "picture": "opcion-a"},
+                        {"id": "pavimentada", "name": "La pavimentada", "says": "Como ahora.",
+                         "picture": "opcion-b"}],
+            "recommended": "plantada", "reason": "Retiene más lluvia."}],
+    }
+    source = folder / "presentation.yaml"
+    source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return source
+
+
+# The diagram deck, in Spanish: every kind of diagram JARVIS lays out (a flow
+# in lanes with words on its links, a link that skips a rank and one that
+# runs back; a hierarchy; a cycle; a timeline in phases across and one down),
+# every shape and tone, and node words at the most lines a node allows. The
+# release check builds it with the rest of the corpus and the CI page test
+# draws it and holds every node and group to the proof's model.
+def _node(ident: str, label: str, **chosen) -> dict:
+    return {"id": ident, "label": label, **chosen}
+
+
+def _link(ident: str, start: str, end: str, **more) -> dict:
+    return {"id": ident, "from": start, "to": end, **more}
+
+
+def _diagram(ident: str, slot: str, kind: str, nodes: list, links: list = (), groups: list = (),
+             alt: str = "Un diagrama") -> dict:
+    return {"id": ident, "type": "diagram", "slot": slot, "source": {"reference": "evidence"},
+            "kind": kind, "nodes": list(nodes), "links": list(links), "groups": list(groups),
+            "alt": alt}
+
+
+DIAGRAM_FLOW = _diagram(
+    "flujo-pedido", "body", "flow",
+    [_node("pedido", "Pedido recibido", shape="pill", tone="accent"),
+     _node("stock", "¿Hay?", shape="diamond", tone="warn"),
+     _node("almacen", "Almacén del puerto"),
+     _node("factura", "Factura", shape="document", tone="muted"),
+     _node("envio", "Envío", shape="cylinder", tone="good"),
+     _node("devolucion", "Devolver", shape="ellipse", tone="bad")],
+    [_link("l-pedido-stock", "pedido", "stock"),
+     _link("l-stock-almacen", "stock", "almacen", label="sí"),
+     _link("l-stock-devolucion", "stock", "devolucion", label="no", style="dashed"),
+     _link("l-almacen-factura", "almacen", "factura"),
+     _link("l-almacen-envio", "almacen", "envio", style="both"),
+     _link("l-pedido-factura", "pedido", "factura", style="line"),
+     _link("l-devolucion-pedido", "devolucion", "pedido", label="otra vez")],
+    [{"id": "carril-tienda", "label": "Tienda", "nodes": ["pedido", "stock", "devolucion"]},
+     {"id": "carril-almacen", "label": "Almacén", "nodes": ["almacen", "factura", "envio"]}],
+    alt="Cómo pasa un pedido de la tienda al almacén")
+
+DIAGRAM_SLIDES = [
+    _slide("flujo", "Cómo pasa un pedido", "title-and-body", DIAGRAM_FLOW),
+    _slide("jerarquia", "Quién responde a quién", "picture-and-words",
+           _text("jerarquia-texto", "words", "Cada equipo responde a una sola persona."),
+           _diagram("organigrama", "picture", "hierarchy",
+                    [_node("direccion", "Dirección", tone="accent"),
+                     _node("obras", "Obras"), _node("parques", "Parques y jardines"),
+                     _node("cuadrilla", "Cuadrilla de la internacionalización", shape="rounded"),
+                     _node("vivero", "Vivero", shape="rounded")],
+                    [_link("j1", "direccion", "obras"), _link("j2", "direccion", "parques"),
+                     _link("j3", "obras", "cuadrilla"), _link("j4", "parques", "vivero",
+                                                               label="riega")],
+                    alt="El organigrama")),
+    _slide("ciclo-y-fechas", "Un ciclo y un calendario", "two-pictures",
+           _diagram("ciclo", "first", "cycle",
+                    [_node("planear", "Planear"), _node("hacer", "Hacer", tone="accent"),
+                     _node("medir", "Medir"), _node("ajustar", "Ajustar", tone="good")],
+                    [_link("c1", "planear", "hacer"), _link("c2", "hacer", "medir", label="un mes"),
+                     _link("c3", "medir", "ajustar"), _link("c4", "ajustar", "planear")],
+                    alt="El ciclo de la prueba"),
+           _diagram("fechas-abajo", "second", "timeline",
+                    [_node("t1", "Medir", when="enero"), _node("t2", "Plantar", when="marzo"),
+                     _node("t3", "Comparar", when="junio")],
+                    groups=[{"id": "fase-prueba", "label": "Prueba", "nodes": ["t1", "t2"]}],
+                    alt="Las fechas, de arriba abajo")),
+    _slide("calendario", "El calendario de la prueba", "title-and-body",
+           _diagram("fechas", "body", "timeline",
+                    [_node("f1", "Arranque", when="ene"),
+                     _node("f2", "Diseño aprobado por el ayuntamiento", when="12 feb"),
+                     _node("f3", "Primera manzana plantada", when="mar"),
+                     _node("f4", "Medición", when="abr"),
+                     _node("f5", "Informe", when="jun 2027", tone="good")],
+                    groups=[{"id": "fase-plan", "label": "Planificación", "nodes": ["f1", "f2"]},
+                            {"id": "fase-obra", "label": "Obra", "nodes": ["f3", "f4", "f5"]}],
+                    alt="El calendario")),
+]
+
+
+def diagram_deck(folder: Path) -> Path:
+    """The diagram deck as presentation.yaml in `folder`."""
+    folder.mkdir(parents=True, exist_ok=True)
+    deck = {
+        "version": "presentation/1", "id": "diagramas", "title": "Cuatro diagramas",
+        "purpose": "Comprobar que JARVIS dibuja cada clase de diagrama.",
+        "conclusion": "Cada diagrama cabe en su sitio en cada marco.",
+        "language": "es", "requires": ["presentation-core/1"], "assets": [],
+        "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
+                        "revision": "1", "description": "Datos inventados para la prueba."}],
+        "slides": [_slide("inicio", "Cuatro diagramas", "opening",
+                          _text("inicio-texto", "words", "Un flujo, una jerarquía, un ciclo y un calendario.")),
+                   *json.loads(json.dumps(DIAGRAM_SLIDES))],
+        "decisions": [],
+    }
+    for slide in deck["slides"]:
+        diagrams = [o for o in slide["objects"] if o["type"] == "diagram"]
+        if diagrams:
+            first = diagrams[0]
+            focus = [first["nodes"][0]["id"]] + ([first["links"][0]["id"]] if first["links"] else []) \
+                + ([first["groups"][0]["id"]] if first["groups"] else [])
+            slide["narration"][0]["focus"] = focus
+    source = folder / "presentation.yaml"
+    source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return source

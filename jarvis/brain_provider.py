@@ -60,6 +60,7 @@ class TurnEnded:
     context_tokens: int             # how big the window is now
     output_tokens: int
     error: Optional[str] = None     # the provider's wording, when the turn failed
+    reply: Optional[str] = None     # the turn's final answer, as the provider gave it
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,10 @@ class ProviderSession(Protocol):
     was made with, from the moment it opens; when it ends, for any reason,
     it calls its `ExitSink` once."""
 
+    # When it last wrote anything, by time.monotonic(): the idle bound of a
+    # role session's call is measured from it (sessions.BrainChatSession).
+    heard_at: float
+
     @property
     def alive(self) -> bool: ...
 
@@ -91,8 +96,11 @@ class ProviderSession(Protocol):
         Raises OSError when it cannot start at all."""
         ...
 
-    async def send(self, text: str) -> None:
-        """One user message. Raises OSError when it can no longer be sent."""
+    async def send(self, text: str, answer_format: Optional[dict] = None) -> None:
+        """One user message. Raises OSError when it can no longer be sent.
+        `answer_format` is a schema the answer to this turn must take, where
+        the provider takes one per turn (Codex); Claude takes it per
+        process (roles.Launch)."""
         ...
 
     def kill(self) -> None: ...
@@ -167,7 +175,7 @@ class SignIn:
 class BrainProvider(Protocol):
     name: str                       # "anthropic" or "openai"; also picks the orb's logo
     title: str                      # "Claude", "OpenAI (Codex)"
-    default_model: str              # when brains.json names none
+    default_model: Optional[str]    # when brains.json names none (Codex reads its live list)
 
     def models(self) -> list[str]: ...
 

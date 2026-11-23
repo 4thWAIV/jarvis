@@ -67,12 +67,18 @@ TIMEOUT_SEC = 20.0
 # its own limit, self_update.GIT_TIMEOUT_SEC and GITHUB_TIMEOUT_SEC);
 # update_jarvis checks the same way and leaves the update itself to run after
 # the turn.
-TIMEOUT_FOR = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0,
+TIMEOUT_FOR: dict[str, float | None] = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0,
                "update_status": 90.0, "update_jarvis": 90.0,
                # A download and a check, or a reader's page or render.
                "inspect_attachment": 120.0, "read_bundle_member": 60.0,
                "look_at_bundle_page": 60.0, "add_companion_files": 120.0,
-               "prepare_repair": 120.0}
+               "prepare_repair": 120.0,
+               # A knowledge search runs to the end, however long, and is never
+               # dropped by a timer (construction-drafts "Knowledge search: no
+               # deadline that drops results"): waited for with no timeout.
+               # For him the server answers within a moment either way, saying
+               # it is looking (server.KNOWLEDGE_LOOKING_SEC).
+               "knowledge_search": None, "work_context": None}
 
 # The engine one agent goes on (spawn_run, start_build, run_package_agent).
 _ENGINE_PROPERTY = {
@@ -2239,10 +2245,12 @@ TOOL_SPECS = [
         "name": "engine_settings",
         "description": (
             "Settings, Brains: which engine and model each kind of agent JARVIS starts goes on "
-            "(the package author, agent runs, builds, agent packages): a brain and model, the "
-            "same as the agent asking, or the least in token stress; whether a brain in token "
-            "stress is overridden; and each brain's plus or minus against its pace this week "
-            "(token stress is below zero)."),
+            "(the package author, agent runs, builds, agent packages, and a package's editor, "
+            "owners, reader for Tim, retrieval, marking, classification and "
+            "extraction): a brain and model, the same as the agent asking, or the least in "
+            "token stress; whether a brain in token stress is overridden; whether the owners "
+            "run on the other brain from the author's; and each brain's plus or minus against "
+            "its pace this week (token stress is below zero)."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -2274,13 +2282,16 @@ TOOL_SPECS = [
     {
         "name": "set_engine_setting",
         "description": (
-            "Change one kind of agent's engine setting, or the override, only when he asks. "
-            "It starts nothing; it applies to the next agent of that kind."),
+            "Change one kind of agent's engine setting, the override, or whether the owners "
+            "run on the other brain, only when he asks. It starts nothing; it applies to the "
+            "next agent of that kind."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kind": {"type": "string",
-                         "enum": ["package_author", "run", "build", "agent_package"]},
+                         "enum": ["package_author", "run", "build", "agent_package", "editor",
+                                  "owners", "tims_reader", "retrieval", "marking",
+                                  "classification", "extraction", "summarization"]},
                 "pick": {"type": "string", "enum": ["fixed", "requester", "least_stress"],
                          "description": ("fixed: the engine and model given; requester: the "
                                          "same engine as the agent asking; least_stress: the "
@@ -2293,6 +2304,11 @@ TOOL_SPECS = [
                                       "description": ("Alone, instead of a kind: whether a "
                                                       "chosen brain in token stress gives way "
                                                       "to the least stressed.")},
+                "owners_other_brain": {"type": "boolean",
+                                       "description": ("Alone, instead of a kind: whether a "
+                                                       "package's owners run on the other "
+                                                       "brain from its author's (ignored "
+                                                       "with only one brain).")},
             },
         },
     },
@@ -2516,9 +2532,12 @@ TOOL_SPECS = [
             "Each hit has its text, source and trust; "
             "untrusted ones are other people's words. When he speaks Spanish, also give "
             "query_en, the question in English. include_received false keeps to his own words. "
+            "`under` keeps to the items below one path: a package's evidence "
+            "(/work/<id>/packages/<package id>/evidence) or a Work item's folder (/work/<id>). "
             "The JSON comes a page at a time."),
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string"}, "query_en": {"type": "string"}, "phrase": {"type": "string"},
+            "under": {"type": "string"},
             "include_received": {"type": "boolean"},
             "kinds": {"type": "array", "items": {"type": "string"}},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50},
@@ -2801,6 +2820,26 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "package_run_reports",
+        "description": (
+            "What each package run took and how well it went (the run reports beside each "
+            "run: timing.json and quality.json; a Work item's Overview shows the same): for "
+            "a Work item, every package made for it, or one package by its id; per run, each "
+            "step's seconds (a step over a few minutes is flagged too slow), its calls, pages, "
+            "retries, time-limit and rate-limit hits, app servers and tokens in, cached and "
+            "out; then the swarm's passes, items repeated versus fixed, his reader's "
+            "questions raised versus answered, facts sourced versus unanswered, the sender's "
+            "questions grouped, and his verdict with his Reject words mapped to the labels. "
+            "What was left is the swarm's own words, walled."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "work": {"type": "string", "description": "The Work item's id."},
+                "package": {"type": "string", "description": "The package's id."},
+            },
+        },
+    },
+    {
         "name": "package_inbox",
         "description": (
             "The packages agents have sent him, waiting in his package inbox (the Inbox tab's "
@@ -3066,18 +3105,25 @@ def _image_block(raw) -> dict | None:
     return {"type": "image", "data": data, "mimeType": mime}
 
 
-def _forward(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
+def _forward(tool: str, arguments: dict, role: str = "", endpoint: str | None = None,
+             token: str | None = None) -> tuple[bool, str, dict | None]:
     """Call the server. Every failure becomes a spoken-able sentence, never a
     traceback: the brain has to say something useful either way.
 
     Third element is an MCP image content block when the server sent one.
+    `role` names the role a role's tool server calls for (role_mcp.py);
+    `endpoint` and `token`, the channel when it is not this process's own
+    (a role's call run again in-process, role_mcp.replay).
     """
-    body = json.dumps({"tool": tool, "arguments": arguments}).encode()
-    endpoint = _endpoint()
+    request = {"tool": tool, "arguments": arguments}
+    if role:
+        request["role"] = role
+    body = json.dumps(request).encode()
+    endpoint = endpoint or _endpoint()
     req = urllib.request.Request(
         endpoint, data=body, method="POST",
         headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {_token()}"})
+                 "Authorization": f"Bearer {token if token is not None else _token()}"})
     try:
         with urllib.request.urlopen(
                 req, timeout=TIMEOUT_FOR.get(tool, TIMEOUT_SEC),

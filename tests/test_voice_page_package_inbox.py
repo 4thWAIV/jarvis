@@ -56,8 +56,8 @@ def jarvis_app(monkeypatch, tmp_path):
     raw, stamped = tmp_path / "raw.zip", tmp_path / "deck.zip"
     assert make_package._zipper().main([str(folder), str(raw)]) == 0
     agent = onboarded_auth(session="sess-1").agent
-    from tests.author_fixtures import sign_authored
-    sign_authored(raw, stamped, agent, "sess-1", (package_signature.DECISION_CHECKED,))
+    from tests.signing_fixtures import sign_as_agent
+    sign_as_agent(raw, stamped, agent, "sess-1", (package_signature.DECISION_CHECKED,))
     (tmp_path / "work").mkdir()
     item = work_store.create("Office tea service", "folder", str(tmp_path / "work"))
     from fastapi.testclient import TestClient
@@ -136,13 +136,11 @@ async def test_a_package_arrives_unshown_as_a_message_on_its_item_and_is_opened_
         voice, sessions = _Voice(), _Sessions()
         browser, page = await _page(p, client, voice, sessions)
 
-        # It arrives before the page loads, as make_package sends it.
-        r = client.post("/api/packages/inbox", content=data,
-                        params={"project": "tea", "session": "sess-1", "work": item.id},
-                        headers={"Authorization": f"Bearer {server.data_paths.ensure_tool_token()}",
-                                 "Content-Type": "application/zip"})
-        assert r.status_code == 200, r.text
-        inbox_id = r.json()["inbox"]["id"]
+        # It arrives before the page loads, as the package workflow delivers it.
+        from tests.test_package_inbox import carry
+        status, body = carry(server, data, project="tea", session="sess-1", work=item.id)
+        assert status == 200, body
+        inbox_id = body["inbox"]["id"]
 
         # A page JARVIS shows packages on, its frames going to this page.
         async def emit(frame):

@@ -197,8 +197,11 @@ def story(deck: dict) -> dict:
             beats = [
                 {"say": f"Decision {k} of {len(decisions)}: {spoken(d['question'])}",
                  "actions": [go], "targets": [f"#d-{d['id']} .question"]},
+                # What JARVIS says over it lights what the slide shows
+                # beside its words (its objects), else the recommended option.
                 {"say": spoken(d.get("say") or f"I recommend {rec['name']}. {d['reason']}"),
-                 "targets": [f"#opt-{d['id']}-{rec['id']}"]},
+                 "targets": [f"#d-{d['id']} .shown" if d.get("objects")
+                             else f"#opt-{d['id']}-{rec['id']}"]},
                 {"say": ask, "targets": [f"#d-{d['id']} .options"]},
             ]
             slide = {"title": d.get("short") or d["id"], "target": f"#d-{d['id']}",

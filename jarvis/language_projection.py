@@ -38,9 +38,6 @@ FRESH_AUTHOR = "fresh-author"
 # bound in canonical.json) beside the story composed from it with the
 # standard vote (make_package.STORY_FILE), which is what is told.
 AUTHORED_STORY = "authored-story.json"
-# Where the fresh author writes them (package_author: package/), as the
-# zip's `.jarvis/author/` carries them (author_proof.attach).
-AUTHOR_SOURCE = {MEMBER: "package/" + MEMBER, AUTHORED_STORY: "package/story.json"}
 # A fresh author's binding before the author could write a story and before
 # the handoff's purpose was bound: kept readable exactly as it was.
 LEGACY_BINDING = frozenset({"origin", "member", "markdown_sha256"})
@@ -53,13 +50,9 @@ _checked_projections: OrderedDict[str, None] = OrderedDict()
 _gate_lock = threading.Lock()
 
 
-def gate(read, communication: dict | None, author: dict[str, bytes] | None = None) -> None:
+def gate(read, communication: dict | None) -> None:
     """THE architecture gate, for the factory and every receiver alike:
-    `read(name)` gives a package member's bytes (bounded), `author` the
-    files the zip carries under `.jarvis/author/` by their path there (None
-    where they are not read: a folder, an unpacked package; {} where the zip
-    carries none yet), which must then be exactly the fresh author's bound
-    explanation and story."""
+    `read(name)` gives a package member's bytes (bounded)."""
     if communication is None:
         return
     if not isinstance(communication, dict) or communication.get("kind") not in {"general", "architecture"}:
@@ -146,16 +139,7 @@ def gate(read, communication: dict | None, author: dict[str, bytes] | None = Non
                 or manifest.get("entry") != "index.html" or manifest.get("runs") != "page"
                 or manifest.get("skill")):
             raise docs.DocumentError("The package author-content declaration differs from this canonical projection.")
-        if author:
-            # The source the fresh author's proof covers is this explanation
-            # and story, byte for byte, and nothing else.
-            wanted = {AUTHOR_SOURCE[MEMBER]: readable_bytes[0]}
-            if bound_story:
-                wanted[AUTHOR_SOURCE[AUTHORED_STORY]] = factory_bytes[0]
-            if readable.get("origin") != FRESH_AUTHOR or author != wanted:
-                raise docs.DocumentError("The author's attached source differs from the explanation and story this canonical revision binds.")
-    author_bytes = [part for name in sorted(author or {}) for part in (name.encode(), author[name])]
-    key = kit.sha256(b"\0".join((canonical_bytes, *(part for files in view_bytes for part in files), *readable_bytes, *factory_bytes, manifest_bytes, *author_bytes, json.dumps(communication, sort_keys=True).encode())))
+    key = kit.sha256(b"\0".join((canonical_bytes, *(part for files in view_bytes for part in files), *readable_bytes, *factory_bytes, manifest_bytes, json.dumps(communication, sort_keys=True).encode())))
     with _gate_lock:
         if key in _checked_projections:
             _checked_projections.move_to_end(key)

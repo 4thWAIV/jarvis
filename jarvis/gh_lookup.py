@@ -118,8 +118,9 @@ def gh_path() -> str | None:
     return shutil.which("gh")
 
 
-async def _run_gh(args: list[str], timeout: float) -> tuple[int, str, str]:
-    """(returncode, stdout, stderr) for one `gh` call.
+async def _run_gh(args: list[str], timeout: float | None) -> tuple[int, str, str]:
+    """(returncode, stdout, stderr) for one `gh` call; `timeout` None waits
+    for it to answer (retrieval's lookups, `role_lookups.call`).
 
     THE seam. An argument list, never a command string: `args` carries a
     repository name that came out of speech recognition by way of a language

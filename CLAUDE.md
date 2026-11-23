@@ -182,7 +182,7 @@ Each agent makes its own Ed25519 key pair with the Mac's `ssh-keygen`
 file in `<its config home>/jarvis/agent-keys/<session id>/` and never
 leaves it, never the Keychain or `ssh-agent`, no passphrase. JARVIS keeps
 only public keys (`agent_key_store.py` over `agent_record.py`'s documents:
-an agent's keys, rights, author proofs and steers are its one `agent`
+an agent's keys, rights, author proofs (kept from before) and steers are its one `agent`
 document, `/agents/<session id>.agent`, with its list row as `agent` and
 each key change one version's `events`; a work-item key is
 `/keys/work/<fingerprint>.workkey`; the held things and error package are
@@ -376,7 +376,10 @@ instead of sent (`server._message_must_wait`), and the session watcher sends
 each session's oldest queued message once it is between turns and has
 answered the one before (`SessionWatcher.send_queued`). Sent mid-turn, Claude
 Code would fold it into the turn under way and its one answer would become
-the reply to both. Queued messages survive a restart. A queued message has
+the reply to both. JARVIS's own words to an agent, never a capture of his (a
+package run's Error, told to the agent that asked for it,
+`server._tell_agent`; see "Package requests"), are written `queued` and
+go the same way. Queued messages survive a restart. A queued message has
 his Cancel and Send now on the agent's thread (`AgentThread.tsx`, through
 `RecordItem`'s `queuedActs`; `POST /api/agent-messages/{id}/queued`) and the
 brain's acting `change_queued_message`, both `server._change_queued_message`
@@ -548,7 +551,8 @@ hint: an agent's box counts its new messages (`needs`,
 `conversation_log.new_by_agent`, `server._new_by_agent`).
 Round 3 moved agents over. `/api/messages` is the one route an agent
 reaches him by: `make_package` posts there (`decision_package.deliver`: JSON
-`says`, `--says` or the package's kind and title, and the zip in base64;
+`says`, the package's kind and title (`--says` is gone: no sender text
+reaches him around the package), and the zip in base64;
 `work`, `project`, `workflow`, `source` in the query, `messages_api.Links`),
 and `POST /api/packages/inbox` refuses an agent's signed request
 (`SEND_AS_MESSAGE`), kept as JARVIS's own path. It is the one route a key
@@ -670,7 +674,8 @@ tool token, as the session in `JARVIS_AGENT_SESSION`, else
 `workflow_status`, `run_status`, `knowledge_search`, `knowledge_status`,
 `search_repo`, `repo_overview`, `project_notes`, `project_history`,
 `list_folders`, `browse_folder`, `read_folder_file`, `list_agents`,
-`read_message_reply`, `read_session_reply`; none an acting tool) go to `POST
+`read_message_reply`, `read_session_reply`, and the brain's own past
+conversations, `search_history` and `read_history`; none an acting tool) go to `POST
 /api/agent-tool` (`server.api_agent_tool`): an onboarded agent's signature
 only (the tool token, a page and a work-item key are refused 403), a tool
 its grants for every target name (`agent_rights.allows_tool`), answered by
@@ -685,8 +690,8 @@ tools calling the command's own `main` with the same command line
 `work_answers` are `work_report.py`'s; `workflow_start`, `workflow_event`,
 `workflow_answer` `workflow_report.py`'s; `retrieve_attachment`;
 `language_document`), so each lands through its own route and right; the
-package job tools (`package_start`, `package_status`, `package_answer`) call
-`package_jobs.py`. `agent_key` stays a command. The talk-to-jarvis skill
+package tools (`package_start`, `package_status`, `package_answer`) are the
+sender's signed calls in `package_request.py` (see "Package requests"). `agent_key` stays a command. The talk-to-jarvis skill
 teaches the tools beside the commands.
 
 ## The workflow monitor
@@ -933,24 +938,42 @@ these records, never from an agent's memory: `python -m jarvis.status_briefing
 --work <id> [--work <id> ...] --out <folder> [--since <time>]`
 (`status_briefing.py`, through `work_store.get`, `work_api.needs_of`,
 `need_words`, `is_stalled`, `WhoNames` and `work_store.events`, as
-`work_status` reads them) writes `handoff.json` (a make_package handoff:
-its question, the items, the evidence file first, and one decision,
-`approve-status`: approve, or reject with his words on what is missing or
-wrong) and `status-evidence.json`, and nothing
+`work_status` reads them) writes `handoff.json` (a make_package handoff in the one form,
+`package_request`'s, all but the sender's own `sender_answers`: one
+question, `approve-status`, with the options approve and reject; the
+evidence file first, then each item, then every piece of evidence the facts
+carry, typed, a commit a `label`) and `status-evidence.json`, and nothing
 else: per item, what needs him first (his acts, every held piece and what
 holds it, stalled pieces, the item stalled or answered with no follow-up,
 each with who and since when; or one line that nothing needs him), then
 pieces reported working with their latest note, then what finished since
 `--since` (24 hours by default) from the log, every fact with its piece's
-evidence; items needing him first. The session then sends it with
-`make_package --handoff`. `--check` writes nothing and lists pieces with no
+evidence; items needing him first. The session adds its own
+`sender_answers` and then asks for it with `make_package --start --handoff`. `--check` writes nothing and lists pieces with no
 note, and pieces past planned or ready with no evidence (exit 1 when any).
 The Workflows view stays below the list, under its
 own heading. The record is `work_store.py`: one document per item,
-`/work/<id>.work` (records), its pieces and decisions inline and its events
-the document's versions (`records.history(path, fields=["events"])`;
-`latest` reads only the newest versions); every change and its event one
-write, by `create` and `record`, the only writers. An item wraps a
+`/work/<id>/<id>.work` (records), the first thing in the item's own folder
+`/work/<id>/` (`work_store.folder_of`), its pieces and decisions inline and
+its events the document's versions (`records.history(path,
+fields=["events"])`; `latest` reads only the newest versions); every
+change and its event one write, by `create` and `record`, the only
+writers. Items were at `/work/<id>.work` before; `work_folders.py` moves
+each into its folder at every start, before anything reads one
+(`server._start_on_records`; nothing to move once done): the engine has no
+move, and a transaction has one writer and writes a path once, so
+`records.move` copies every version in order (who wrote it, its change and
+summary, a delete as a delete; read whole however many, a page of history
+at a time, `records.versions`) to the new path, checks the count of
+versions and the newest data, then deletes the old path (its versions
+kept) with any derived links carried; a move stopped part way is taken up
+where it stopped, an engine snapshot is taken first
+(`records_cutover.take_snapshot`), and `python -m jarvis.work_folders
+check|forward|back` says where every item is or moves them (back, with
+JARVIS stopped and the code from before): it opens its own data folder's
+engine in its own process (`records.opened_at`), never one an address file
+names, and is refused while an engine runs there. Project works at `/work/works/`
+are not Work items and never move. An item wraps a
 ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
@@ -1236,7 +1259,8 @@ reachable through its card, at the checker's sizes and a laptop's. For a
 deck the border is its one navigation: the shared deck
 (`examples/packages/decision-deck/`) lays every slide out to the frame's
 own width and height (`deck.css`'s deck unit `--u`, one 880th of the
-width or 640th of the height, the smaller; every word 13 to 25 px), never
+width or 640th of the height, the smaller; each slide's words at the
+largest size at which it fits, 13 to 64 px, deck.js `fitSlide`), never
 a canvas scaled into part of it, and in JARVIS's frame (`html.hosted`)
 draws no strip, Previous, Next or status of its own; it says each slide
 it shows, however it got there (`slide.shown` {opener: "#go-N"}), and the
@@ -1373,13 +1397,81 @@ no decisions) is one `presentation.yaml` (presentation/1,
 words, structure, pictures by path, narration and decisions and names one
 of JARVIS's layouts for each slide and a slot for each object, never a
 theme, rectangle, size or style (`presentation_source.NO_LAYOUT`).
+Besides text, pictures, vectors, bars and tables, the author fills JARVIS's
+own parts with words, which JARVIS draws (salvaged from PR 172, Tim
+2026-11-22, construction-drafts.md "Visuals, the salvage, and sizing";
+`presentation_schema.COMPONENTS`): `callout` (a label above what it says),
+`figures` (one to four key numbers) and `steps` (one to eight numbered
+steps), each item a target; and draws tables and charts from data: a
+deck's `datasets` are records frozen in its source, a table's or a
+`chart`'s `data` a view of one (where, sort, limit), worked out in one
+place (`presentation_data.py`: a data table into rows of words in the
+deck's language; a bar, line or scatter chart into its ticks, labels and
+points as shares of the plot that presentation.js only places; every bar,
+point and named cell a target). And diagrams (deck/0.1's families,
+construction-drafts.md "deck/0.1 families: diagrams, shapes, groups,
+connectors"): a `diagram` of one kind (`presentation_schema.DIAGRAM_KINDS`:
+flow, cycle, hierarchy, timeline, the words the script's visual forms
+use), its `nodes` (words, a `shape` and `tone` chosen from JARVIS's lists,
+a timeline's `when`), `links` (connectors, `from`, `to`, words, a style)
+and `groups` (a flow's lanes, a timeline's phases), each kind's rules
+checked (`diagram_layout.structure`: a tree, a ring, lanes, phases) and an
+authored position, size, colour or font refused
+(`presentation_source.DIAGRAM_DRAWN`); JARVIS lays it out by program
+(`diagram_layout.py`, pure, the one layout the proof checks and the page
+draws: a layered flow with square connectors and links back or skipping a
+rank routed round the outside, a tidy tree, a ring on an ellipse, an axis
+with alternating sides; across a wide slot, down a tall one) where its slot
+holds least for its words across the frame range (`room`), every node,
+label, group and connector point a share of its slot that presentation.js
+places, its words at the deck size never grown by the slide's fit; every
+node, connector and group a target (`node`, `connector` "A to B: words",
+`group`). Left for later, with reasons, in the same entry: themes and
+masters, builds and motion, media, connectors between separate slide
+objects, nested groups of any objects. The author turns dry text into these
+(the system never waits for the evidence to supply a picture): a sequence
+as steps, numbers as a chart or key figures from the evidence's figures, a
+comparison as a comparison or table, a warning or finding as a callout, a
+process, loop, structure or schedule as a diagram, never long paragraphs (`make_package --example visuals`,
+`make_package.VISUALS_EXAMPLE`). Sizing is the language's, never a browser
+measurement of a package: each layout slot's capacity is worked out by
+program from layout-spec.json at the smallest frame (662 x 489) with every
+word at its floor, for every object type (`deck_capacity.py`: a character
+taken as `capacity.char_em`, 0.6 of its size; text by its paragraphs, a
+table by its rows, the components by their parts, a chart by its legend,
+labels and least plot, a diagram by its layout: ranks, nodes side by side,
+leaves, levels, nodes round a ring or along an axis over what its slot
+holds, `diagram_layout.holds`, worked out from the spec, or a node's words
+over `label_lines_max`), and `presentation_source` refuses as the source
+is read (never a built deck arriving) a slot over its capacity, naming the
+slot, the lines needed and held and how much over, a title over its place,
+and a slide of only prose over one paragraph
+(`capacity.prose_paragraph_lines` lines of its widest text slot), and a
+decision's slide and the answers slide over theirs
+(`deck_capacity.decision_problems`, `answers_problems`: the shared deck's
+own layout read from deck.css at 662 x 489, every word at its floor, the
+slide's fit at `scale_min`, in the tight spacing the deck falls back to;
+naming the field, its lines and how much over); each
+object's capacity is in the layout data, and a diagram's every node,
+connector and group with its place, and `presentation_proof.prove_diagrams`
+holds every word of it in its place at every frame. The release check
+(`tests/test_presentation_corpus.py`) builds and proves every shipped and
+fixture deck (the diagram deck, `tests/deck_fixtures.diagram_deck`, among
+them) and proves it again from its built bytes.
 `presentation.compile_deck` lays it out onto the shared deck
 (`new_deck.py`, `decision_package.py` checking it as before) in JARVIS's
 named layouts from one spec (`presentation_assets/layout-spec.json`,
 `layout_spec.py`, which generates the deck's CSS; `--check` fails when they
 differ), its words in a designed system font stack (`presentation.css`:
-the system's interface font, no font shipped or served, so words are not
-measured; `decision_package.CAPS` keeps them within reason), and proves
+the system's interface font, no font shipped or served), each slide's
+words drawn at the largest size at which the slide fits its frame
+(deck.js `fitSlide`: in the page, a binary search on the slide's scale,
+`--fit`, and its title's, within layout-spec.json's `fit`, each style
+clamped between the 13 px floor and its ceiling, body 48 px, headings
+64 px; a slide with pictures in its flow kept at scale 1 for them; a slide
+not fitting at the floor drawn `tight`, else `data-fit="cut"`; run again on
+every resize; every style declared again on `.slide` and
+`.presentation-title` so the slide's own scale sizes it), and proves
 without a browser (`presentation_proof.py`) that every picture is real and
 readable from its bytes at every frame from 662 x 489 to 1600 x 900
 (`picture_proof.py`: PNG, GIF, JPEG, WebP and SVG walked whole, drawn size
@@ -1387,20 +1479,28 @@ and label floor; `--fill-assets` writes each asset's size and hash), that
 the story points only at what is drawn and that the renderer files are
 JARVIS's own; the proof goes in the package (`.jarvis/layout-proof.json`,
 `presentation-proof/2`, with the language it was built in). What the
-slides say, how long and in what order, is the author's: no rule counts
-words or characters or shapes the first slide, and JARVIS draws no slide
-of its own before the author's or before a decision; what stays checked is
-at least two options a decision, every picture readable where drawn (an
+slides say and in what order is the author's: no rule shapes the first
+slide, and JARVIS draws no slide of its own before the author's or before
+a decision; what stays checked is every slot within its capacity and no
+slide of only prose over one paragraph, at least two options a decision, every picture readable where drawn (an
 SVG's size read from its width and height, else its viewBox) and a story of
 about fifteen minutes at most (`decision_package.story_problems`). An architecture package's opening is its
 document's, its explanation opening with the purpose and conclusion; a
 hand-made package's folder (only `purpose` given; read back through
-`work_packages.recognise`) is for a working tool. No package goes through
-a browser on its way to Tim: make_package builds the author's source once
-(no screenshot review), from a briefing that passed its editors and
-judges before the deck was written (`briefing_prep.py`, below). Only then
-is it signed with the session's key and
-delivered unshown to his package inbox. Every unpack
+`work_packages.recognise`) is not policed: nothing refuses a hand-made
+page, which stays usable as a tool, labelled "Layout not checked", and
+docs/making-a-package.md and the talk-to-jarvis skill steer agents to send
+a request for anything Tim reads or decides (workflow.yaml deliver
+`only_way_in`, Tim 2026-11-20). A deck for Tim is a
+briefing, and only the package workflow makes one, from a request (see
+"Package requests"; workflow.yaml deliver `only_way_in`): the old fresh
+author (`make_package --handoff` without `--start`) writes a hand-made
+folder (a working tool's page, an agent's brief, a conversation's skill)
+or an architecture document's explanation, and a deck it writes is refused
+(`package_author.BRIEFING_BY_REQUEST`). make_package puts no package through a browser on its way to
+Tim: it builds the author's source once (no screenshot review),
+signs it with the session's key and delivers it unshown to his package
+inbox. Every unpack
 (`server._decision_problem`) refuses a deck (`deck-data.js` and
 `scripts/decide.py`, the shared deck's, `decision_stamp.MARKS`) not signed
 by an onboarded agent's key, and makes a carried proof again from the
@@ -1408,93 +1508,903 @@ zip's own bytes (`presentation_proof.reprove`), opening none that does not
 prove; a deck from before, with no proof, is admitted on its signer's old
 statement that it passed the end-to-end check
 (`package_signature.DECISION_CHECKED`). What only a browser shows is held
-in CI on fixture decks, never in a package's path: the page tests' isolated
+in CI on fixture decks, never in a package's path (no package is drawn in
+a browser, Tim's decision of 18 November; `tests/deck_measure.py` is CI's
+measure of fixture decks): the page tests' isolated
 JARVIS (`tests/isolated_jarvis.py`, `tests/isolated_jarvis_server.py`,
 seeded with the agent's key, `JARVIS_DECISION_CHECK_SERVER`) proves voting
 by click and by decide.py, the story waiting at every question, Stop within
 1 s from the page and the tool, resume, and the border's Chapters, Next,
 Previous and count over every slide (`test_voice_page_decision_package.py`),
 and `test_voice_page_layout_model.py` draws a hard fixture deck (long
-words, a table, two pictures, four columns, pictured options, Spanish)
-across the frame range and holds every picture's drawn size to the proof's
-model within 0.5 px. A page JARVIS did not lay out (a hand-made page, an
+words, a table, two pictures, four columns, the components, two charts and
+a table from data, a flow beside words, pictured options, Spanish;
+`tests/deck_fixtures.hard_deck`) and the diagram deck across the frame
+range and holds every picture's drawn size to the proof's model within
+0.5 px, every object the capacity model lets through to its slot, nothing
+cut off, every chart keeping its least plot, and every diagram's nodes and
+groups where its layout put them within 0.5 px, no word cut off. A page JARVIS did not lay out (a hand-made page, an
 architecture package's) says "Layout not checked" in its border
 (`Package.layout_checked`, `describe`'s `layout_checked`; `list_packages`
 says the same).
 `python -m jarvis.decision_package` is the command's old name.
-The sender's handoff gives only the question for Tim, its Work item, the
-evidence references and any decisions (`package_author.read_handoff`);
-`purpose`, `conclusion`, `audience`, `questions` and any structure are
-refused with the reason. The fresh author writes the briefing before any
-slide (`briefing_prep.py`): `prep.md` (does Tim care; what he knows, from
-his record; the background he lacks; his first ten questions, sourced or
-UNANSWERED; every fact scored 1-5) and `script.md` (ordered by those
-scores), or `not-for-tim.md`, which sends nothing. At most `ROUNDS` (3)
-rounds: three editors (`EDITORS`: cut, tighten, specifics; each one call
-to the author's engine, each edit held to its rule, applied and logged
-before/after in `edits.md`) then four judges (`JUDGES`: cares, decision
-ready, background, order), each a typed question through `decide(question_id,
-text, context) -> {answer, probability}` (yes/no, choice or 0-10, asked
-`ASKS` times; the probability the share that agreed; every call recorded at
-`/briefing/decisions/<id>.decision` with its input digest and the package by
-its author session); findings go back to the same author session, and a
-script that still fails is refused with them. Each ask is a juror that
-keeps its own session across the rounds (`briefing_prep.Seat`, resumed in
-its own folder): from round 2 it is shown what it said and the author's
-reply, judges first whether its earlier ask was met (`earlier_met`), and
-never fails the script for a problem that would reverse its own earlier
-ask, quoting it instead (`reverses`), which goes back to the author as an
-ask it may keep its answer to. Only then is the deck
-written, from the script alone; `prep.md`, `script.md` and `edits.md` go in
-the zip under `.jarvis/briefing/` (`briefing_prep.carry`, from
-`make_package.with_author`).
-An agent's package proves a fresh author wrote it (Tim's decision
-`receiver-check`, `author_proof.py`): make_package's fresh author
-(`package_author.py`) ends with its own `--check-only`, which prints the
-source's digest (`author_proof.MARK`); the factory puts that source in the
-zip (`.jarvis/author/`) and the signature names the claim (`author`:
-engine, author session, digest), checked first by make_package itself
-(`make_package.with_author`). `server._admit_agent_package` is the one
-admission check for an onboarded agent's signed package, on every route
-that admits one (the inbox, a held package released or looked at again,
-a zip on this Mac through `_local_package_problem`): the digest
-recomputed from the zip's own bytes, the author session's own transcript
-(Claude Code's `projects/*/<id>.jsonl` or Codex's rollout, no link
-followed, read whole, a line at a time) begun with the author prompt
-(`author_proof.PROMPT_HEAD`), not the sender, and its own check-only call
-printing exactly that digest within `WINDOW_SEC` (6 h) before arrival; one
-author session vouches for one package's bytes
-(`agent_key_store.bind_author`, migration 4), so a new revision needs a new
-author. A person's package, JARVIS's own, the same bytes already here and
-the isolated check JARVIS are not asked.
-A package is also made as a job (`package_jobs.py`; `make_package --start`,
-`--status`, `--answer`, and the agent MCP server's `package_start`,
-`package_status`, `package_answer`): one `job` document,
-`/packages/jobs/<id>.job` (records), each step a version (`queued`,
-`researching`, `writing`, `checking`, `waiting_on_sender`, `delivered`,
-`refused`), its process detached (`python -m jarvis.package_jobs run <id>`,
-`SPAWN`), a process that ended without finishing read as refused. The
-author is started with the agent MCP server alone (`author-mcp.json`,
-`package_author.agent_mcp_config`: `python -m jarvis.agent_mcp`, signed as
-the sending session by `JARVIS_AGENT_SESSION`). An author that needs facts
-only its sender has writes `author-blocked.json`
-(`package_author.read_questions`); the job waits on the sender, who answers
-by question id, and resumes the SAME author session (`BrainConfig.resume`:
-Claude's `--resume`, Codex's `thread/resume`), so `author_proof` reads the
-transcript it began; after `MAX_ROUNDS` (2) the author writes the package
-with what is still unanswered marked UNANSWERED. Without a job, its
-questions refuse the package.
+The sender's handoff is the one form a package request takes (see
+"Package requests"), read and checked by the same code
+(`package_author.read_handoff` over `package_request.read` and `check`).
+The fresh author writes its package in its first turn. The old briefing
+pipeline (its editors and judges, their wording and pass mark) is gone,
+replaced by the cooperative swarm (see "Package requests"), and so is the
+transcript-reading author proof: by construction the sender cannot write
+a briefing, since it only asks (workflow.yaml deliver, decided "proof that
+a fresh author wrote it"). A signature made with an author claim before
+still checks, and an agent's documents keep the `author_proofs` they
+recorded, which nothing reads.
+## Package requests
+The package system's new way in (`.agents` design, workflow.yaml steps
+`request` and `record_and_start`; the steps that make the package come
+after it): the sending agent asks and writes nothing of the package.
+`make_package --start --handoff <file> --session <id>` and the agent MCP
+server's `package_start` send the handoff signed with the session's own key
+(`package_request.start`, `POST /api/packages/requests`, the `packages`
+right, at most once by `report_keys`); `--status` / `package_status` and
+`--answer` / `package_answer` are `GET /api/packages/requests/<job>` and
+`POST .../answer`, the asking agent's alone (`package_jobs_api.py`). The
+handoff (`package_request.check`, the one reader, run as JARVIS takes it)
+is `sender_answers` (the two questions every sender answers,
+`package_request.QUESTIONS`, Tim's wording word for word: `plainly` and
+`why_now`), `questions` (one or several, each `id`, `text` and the
+sender's `options`; questions and decisions are one list), `evidence`
+(typed entries of the 14 types, `evidence_types.FIELDS`: a `file` checked
+to be there and its SHA-256 and size recorded as it is taken; `label` the
+one type a model resolves; the situation is one of them), optional
+`purpose` and `recommendation`, `work` (one Work item id or a list: the
+items the package is about, kept as a list of ids on the request as the
+gather step's material, never where the package goes) and `approval` as
+before. The package's Work item is `--work` alone; `--general`, or no
+`--work`, is none (his Inbox);
+everything from the sender is kept labelled as the sender's
+(`from_the_sender`, `options_from_the_sender`). `conclusion`, `audience`
+and any structure are refused, `question`, `decisions` and `situation` say
+where they went, and a bad request is refused at once, every problem
+listed (400 `problems`), nothing recorded; beside the handoff only what
+record_and_start checks (not both `--work` and `--general`, the engine)
+and that the `--work` item, the Work items the handoff's `work` is about
+and the `--workflow` named exist (`server._missing_links`, each one missing
+named in the one refusal; a closed item is not refused, its run's Error is
+told by message). Taken
+(`server._accept_package_request`), JARVIS records who asked from the signature
+(`requested_by`, `agent:<session id>`), makes the package id and its first
+run id and records the job, one job one run, with its run
+(`package_jobs.accept`): `/work/<id>/packages/<package id>/runs/<run
+id>/run.job`, or `/packages/<package id>/runs/<run id>/run.job` with no
+Work item, the run's files at `data/work/<id>/packages/...` or
+`data/package/<package id>/runs/...` (`package_jobs.folder_of`), JARVIS's
+own record. It runs the job itself, in a process of its own
+(`python -m jarvis.package_jobs run <job>`, `SPAWN`, in the run's folder):
+the steps `package_jobs.STEPS` (gather, mark, research, swarm, deck,
+deliver), each the program `PRODUCERS` names; a step not built yet is an
+Error, never a silent stop. A step may ask the sender (`package_jobs.ask`,
+`waiting_on_sender`, at most `MAX_ROUNDS`, five rounds of questions,
+`question_rounds`), told to it once in a message to its session (each
+question by its id and how to answer, `server._package_questions_to_sender`
+from the same look, `to_tell_sender`); its answers queue the run again. A swarm that fails
+sends the sender its findings the same way (`package_jobs.failed_swarm`, a
+round of kind `findings`, never one of the five): the server's look tells
+it once (`server._package_swarm_failed`, `to_tell_sender`,
+`told_sender`): JARVIS's message to its session with each finding to
+answer by its id, and the findings on the Work item as JARVIS's message
+there (proof `jarvis`, source `package_failed`; for no Work item in his
+Inbox), with one update (`package_job`, `failed`); its answer ends the run
+`failed` and starts the package's next run (`_answer_package_job`), which
+goes on from where it failed; no answer within 2 hours is Error as any.
+A package's next run (`server._new_package_run`,
+`package_jobs.new_run`) keeps the package id and names the run before it
+(`after`). Every run goes through one mechanism, the step cache
+(`step_cache.py`, construction-drafts.md "Step cache keyed by inputs", Tim
+2026-11-22: the standard design, make and Bazel): every unit of a step is
+`step_cache.Unit` (kind, name, inputs), its key the SHA-256 of its inputs
+in canonical JSON, its output (files and a value) kept with its seconds and
+who made it in the package's own cache (`step_cache.root`: `<package
+folder>/.step-cache/<kind>/<key>`, beside its `evidence/` and `runs/`;
+never indexed, `knowledge_content.run_bookkeeping`), and reused
+(`step_cache.reuse`, restored into the run's folder) when kept. The cache
+is one package's (Tim, 2026-11-22: reusing work across two different
+packages has no value, they are two different problems): every run of
+the same package (findings answered, an Error run again, the sender's
+change, his Reject) reuses whatever its changes did not touch, and a new
+package always starts fresh, whatever its handoff; the shared
+`<data>/package-cache` of before is removed at start.
+Model answers are not deterministic, so a key is of the inputs, never the
+output, and a unit that reads another names that unit's output digest
+(`Entry.digest`); only finished work is kept (a stage that failed or waits
+on the sender keeps nothing until it finishes). Every key covers the tool
+as well as the material: the source of the code that shapes the output
+(`step_cache.code`: each named module and every jarvis module it imports
+at any depth, read from its source with `ast`, never imported
+(`step_cache.closure`), by its SHA-256; never a hand-raised version),
+and for a model step each role's approved prompt, tier, effort, release
+and the engine and the model that runs it (`step_cache.role_tool`,
+`roles_tool`: `model_tiers.pick`'s model, the tier resolved on the chosen
+brain, on Codex the newest of its live list read once a process,
+`step_cache._listed`), the labels whole (`step_cache.labels_key`), the
+concerns and, where meaning groups what is put together (mark's pages,
+the swarm's asks and what is left), the embedding model
+(`step_cache.embedding_key`). A model a session's sweep found refused is
+kept in the package's cache (`refused.json`: `sessions.BrainChatSession.
+_refused` -> `run_report.refused` -> `step_cache.note_refused`) and passed
+over by every later pick of the package (`model_tiers.pick`'s `refused`,
+from `package_mark.pick_args` and `step_cache.role_tool` alike), so a key
+names the model the sweep ends on. The units: `gather` reads everything
+at the package's first run, since its inputs are live (the files, each
+reference, the Work item, the PRs and CI runs recorded against it, the
+sending session's transcript, Tim's record); its key is the hash of what
+was read (`package_gather.unit_of`), noted computed and never kept; its
+one model call is `gather-lookups` (`package_gather.lookups_unit`: the
+labels, the retrieval role and code, and everything the program read
+before it; kept under it the lookups retrieval made, logged by its tool
+server to `gather-lookups.jsonl`) and `gather-labels` (`labels_unit`: that
+key and what those lookups find, made again now through
+`role_mcp.replay`, `found_digest`), whose typed entries are always
+fetched again; `mark-file`, one a gathered file
+(`package_mark.unit_of`: its bytes, row type, knowledge state, the
+questions, `tool_of` (the reading roles, the labels, the code) and, for
+prose, Tim's material; only files whose key is not kept are marked,
+together, each one's time its share of the batch); `research`
+(`package_swarm.research_unit`: the request, the evidence as gathered,
+`package_mark.marks_digest`, the author's role, model and the code: the
+run's own inputs, so within the package its research is reused unless
+the sender's answers, his words at the check, Tim's Reject, the code, a
+prompt or the model change, never for what the program's searches or the
+Work item's research folder find now); the swarm's
+stages `swarm-outline`, `swarm-fill`, `swarm-passes` and one
+`swarm-revision` a revision, each keyed by the output of the unit before
+it, the answers to an earlier run's findings on it and `package_swarm.
+tool_of` (every participant's role, prompt and model, the concerns, the
+labels, the embedding model, the code) (`stage_unit`, `findings_for`), what each
+did in this folder in swarm.json's `units`, a stage waiting on the sender
+its `pending`; a stage restored from another run starts every participant,
+on either brain, in a new session given the whole conversation
+(`_fresh_sessions`), so no session carries what was said after the stage
+and no two runs resume one thread; `deck-header`, `deck-source` (one a
+slide: the deck slide, its decision and the pictures and references it
+names, keyed by its script slide, `package_deck.writing_tool` (the
+author's role, the format, the code) and the sender's answers to a deck
+that never built, findings filed under `package_deck.WRITE_LABEL` and said
+to the author before it writes, `package_deck.Plan`), `deck-build` (the
+source, its files, the script, `pipeline_digest`: the Python that lays
+out, sizes, builds and proves a deck, `PIPELINE_CODE`, the shared
+deck's files and the presentation assets, and the build language,
+`make_package.built_language`), `deck-review` (one a slide: its part, its
+layout data, script slide,
+`review_tool` and the findings answered on it), `deck-script` (one a
+script slide the deck step changed or split, the slides it became after
+the script stage, their outline slides and their marks, keyed by the slide
+the swarm passed, the writing and review tools,
+the findings and the revisions, `package_deck.script_change_unit`), `deck` (the slides'
+review keys, the source and the build's key, since the review's record
+carries the build's verdict) and `deliver` (the deck, the briefing, the
+message, who asked, the fingerprint of JARVIS's signing key,
+`package_deliver.signer_fingerprint`, and its code; the check is asked
+every run). A kept deck source that no
+longer builds is given up (`Plan.release`): the author writes it all and
+what it writes replaces the kept entries (`step_cache.computed(...,
+replace=True)`, outcome `replaced`), so no later run restores the broken
+parts. Each unit, reused or computed, is in the run's `timing.json`
+(`run_report.unit`: kind, name, key, `reused`, `computed` or `replaced`,
+seconds, `made_by`; each step's and the totals' `cache`), and one computed
+with its key already kept is `recomputed`, never expected
+(`tests/test_step_cache.py` fails on any). A new run carries the run
+before's `inputs` (`package_jobs.inputs_after`: `revisions`, each
+`{run, by, words}`, and `findings`, each `{run, stage, questions,
+answers}`, the stage from `failed_swarm`'s `stage`) and adds its own: an
+Error rerun or `--rerun` adds none and reuses everything up to the step
+that stopped; a findings answer recomputes only the failed stage onward; a
+change at the check or Tim's Reject (`by` `sender` or `tim`, from
+`server._answer_package_job` and `_rejected_starts_new_run`) is one more
+stage after the passed script: the words said into the conversation, the
+author revises the script naming in `changed` the slides it changes
+(`revision_note`), every slide not named is put back exactly
+(`_put_back`), only the changed slides are marked and re-checked
+(`flow["slides"]`, `revision_given`), and only their deck source, fit and
+review are done again with the build and the delivery; the job's
+`revision` says the slides changed, kept, named and put back,
+`research_redone` and its `searches`, and the deck's `slides_reviewed`.
+What the gather step did not make (the sender's answers, his Reject words
+in `jarvis/tim-rejected.md`) is never material for mark, research or the
+swarm (`package_evidence.gathered_rows`): it reaches the run as what it is
+(his Reject words as the revision, in the `swarm-revision` key), and a
+later package's gather reads them into `jarvis/tim.md` (Part 1: the Work
+item's package runs, or with no Work item every earlier package the same
+session asked with the same handoff, `package_jobs.rejections_of_request`).
+Each cache entry's `used` file is touched when it is reused; entries
+unused for 30 days (`step_cache.PRUNE_AFTER_SEC`) are removed from every
+package's cache (`step_cache.caches`) at server start
+(`server._prune_step_cache`, `step_cache.prune`). The sender
+asks for its package again, without new answers, after a run that ended in
+Error or failed (`make_package --rerun <job> --session <id>`, the agent
+tool `package_rerun`, `POST /api/packages/requests/<job>/rerun`, the
+`packages` right): `package_jobs.rerun` checks it is its own, refused while
+a later run of the package is still going (a run waiting on its findings
+ends `failed`, unanswered), and `server._rerun_package_job` starts the next
+run resumed. A new run clears the Error every earlier run of its package
+left (`package_jobs.errored_work`: a run in Error counts until any later
+run of its package). JARVIS signs the packages it makes with its own key
+(`agent_keys.jarvis_key`, made once in `<data>/jarvis/agent-keys/jarvis/`;
+`package_jobs.sign`, `package_signature.sign_as_jarvis`: session `jarvis`,
+`requested_by` the asking agent), never an agent's: `_package_signer` reads
+a signature `Signed.by_jarvis` (JARVIS's own public key,
+`agent_keys.jarvis_public_key`, never the one the file names) as
+`_JARVIS_SIGNER`, its sender the agent `requested_by` names; the unpack
+checks take it (`_decision_problem`'s `vouched`, `_VOUCHED`). A relative `file` path
+is taken from the handoff file's folder (`package_request.read`). The old
+`make_package --handoff` without `--start` (the fresh author in the
+sender's process, "Work packages") reads the same one form; this replaces
+it for every briefing, which it refuses.
+The Error state (design: deliver `error_state`): a run that cannot go on
+(a sender that does not answer within `SENDER_WAIT_SEC`, 2 hours, swept by
+`package_jobs.overdue`; a step's `Blocked`; a step that fails; a run whose
+process ended; a run queued, by its request or the sender's answer, by a
+server that stopped before starting its process, `queued_by` not this
+server's `records_move.BOOT`) is `error`, with the step, the reason in plain words, what
+was tried and what would fix it (`package_jobs.error`). The server's look
+(`_watch_package_jobs`, every `PACKAGE_JOBS_LOOK_SEC`) tells everyone once
+(`server._package_job_errored`, `told`): the Work item is set to Error
+(`work_store.ERROR_RAISED` naming the run, `package_run`), which is Tim's
+notice, or with no Work item (or one closed or gone, which takes no
+Error, the message saying so) a message to him in his Inbox from JARVIS
+(proof `jarvis`, source `package_error`); JARVIS has it as one update
+(`package_job`, `error`, the step in its facts and the reason, what was
+tried and the fix walled); and the asking agent is
+told: JARVIS's own message to its session (`server._tell_agent`, a
+`queued` message on record, sent by `SessionWatcher.send_queued` once the
+session is between turns and followed as every message is; its id kept
+on the job, `told_agent_message`) saying the step, the reason, what was
+tried, the fix and what it may do (`PACKAGE_ERROR_NEXT`: fix it and ask
+again, or message Tim why it cannot; never go around the package); it
+reads the same on its job. A run whose process cannot be started is in
+Error the same way (`package_jobs.start`). The Work item's Error stays until no package run of it is left
+in Error that no later run followed (`package_jobs.errored_work`,
+`_clear_work_errors`).
+
+## A package's evidence
+The gather step (`package_gather.gather`, `PRODUCERS["gather"]`; design:
+workflow.yaml gather) resolves the handoff's evidence, gathered once per
+package at the package level and reused by every run of it (a new package reads it all again, its inputs being live; see the step cache above)
+(`package_evidence.gathered`): `/work/<id>/packages/<package id>/evidence/`
+in the engine, its bytes at `data/work/<id>/packages/<package id>/evidence/`
+(or `/packages/<package id>/evidence/` and `data/package/<package
+id>/evidence/` with no Work item; `package_evidence.Place`, the content root
+mapping each), holding `handoff.json` (as submitted, hashed), `files/` (each
+file entry copied, its name kept), `given/<n>.md` (each content entry as
+given), `retrieved/<type>-<id>.md` (each reference fetched), `jarvis/` and
+`sender-answers/<n>.md`, and `manifest.json`, one row per stored file
+(`package_evidence.Row`: type, source, stored file, hash, size, resolved ok,
+not_found or failed with the reason, and Tim's knowledge state). Every type
+but `label` is read by its program (`evidence_readers.py`: a url by one
+standard fetch, plain then the page reader, a GitHub address as its own
+type; JARVIS's own readers for a Work item, package, message, workflow and
+run; `gh` for a PR with its diff, a CI run with its failed logs, an issue
+and a branch's commits not on main; `git show` in a checkout of the
+repository on this Mac for a commit), and a reference named twice is one
+file. The labels go to RetrievalSession in one call, with no deadline; each
+typed entry it gives is handled as one of its type, a label it names
+nothing for is not_found with what it searched. JARVIS's own material
+(`gather_jarvis_material`): the Work item (`--work`, and the Work items the
+handoff is about) as `jarvis/work-item.md` (its pieces, notes, evidence,
+decisions and every event), the PRs and CI runs recorded against it (its
+pieces' evidence), the sending session's commands with their results and
+each turn's final message from its own transcript
+(`session_transcript.py`) as
+`jarvis/sender-session.md`, and Tim's record as `jarvis/tim.md`
+(`package_gather.tim_record`, the one writer, gather's;
+written with or without a Work item), from everything he has said (Tim's
+decision, construction-drafts.md), in two parts kept apart. Part 1
+(`OWN_PART`), first and weighted higher, on the package's own Work items:
+his messages on it, his answers to its decisions, his own acts on it
+(`work_store.HIS_KINDS`: his review, a hold he released, work he added),
+his note, his answers on every package sent for it, open or closed
+(`package_inbox.every_for_work`; a signed-off package's answers are his
+record too), and his Reject of its package runs with his words
+(`package_jobs.rejections_on_work`); with no Work item, his Reject of the
+package's earlier runs. Part 2 (`ELSEWHERE_PART`, `said_elsewhere`), what
+he said anywhere else that bears on the package: each of the handoff's
+questions and its evidence's words (`tim_terms`) searched by words and
+meaning in each of his records (`HIS_RECORDS`: turn, message, work,
+package), every search at once (`work_research.at_once` over
+`engine_search` with the run's own wall clock, no deadline that drops
+results), and of each record found only his own words (`_his_words`: his
+heard and typed turns, his messages to agents, his answers and note on
+another Work item, his answers in a package), none of Part 1's Work items,
+each with the terms it was found for. The file's knowledge state is knows.
+Each row's knowledge state is set by program from where it came
+(`package_evidence.knowledge_state`: knows, had access, probably does not
+know). The evidence is then read into the engine at once by the content
+child's own reader (`package_evidence.index_now`, `knowledge_content.
+Indexer`), its vectors ahead of the background build and going on while the
+pace holds it (`vectors.build_rank`'s `URGENT`, `knowledge.paths.
+is_package_evidence`; `VectorIndex.set_held`), and waited for, every item's
+text and every vector (the item's vectors stream `complete`), at most
+`INDEX_WAIT_SEC` (10 minutes) before the run is in Error (with no
+embedding model the Error says so). Indexed, the package's own record
+(`<package id>.evidence` in its folder) names every stored file and every
+record gathered (`gathered`, `records`), which the engine makes its
+reference links (`package_evidence.link`). The sender's answers to a round
+join the evidence as they arrive (`package_evidence.add_sender_answers`,
+from `package_jobs.answer`). `knowledge_search` takes `under`, so a search
+keeps to one path (a package's evidence, a Work item's folder): the
+brain's, a role's, the route's (`POST /api/knowledge/search`) and
+`knowledge_api.search` alike.
+The mark step (`package_mark.mark`, `PRODUCERS["mark"]`; design: workflow.yaml
+mark) reads what gather collected, one file at a time as far as its inputs
+go (the step cache's `mark-file`: a file whose key is kept is reused, the
+rest marked together; the package's record's `marked_at`). `type_files`: each stored file gets a type by program from its
+content and name (`evidence_structured.type_of`: test_results, build_log,
+ci_run, diff, session_transcript, data, prose; anything else `no reader`,
+never guessed), written into its manifest row (`Row.file_type`).
+`read_structured`: each structured file parsed by program for its type's
+facts (`evidence_structured.read_structured`: failed tests with their
+error, file and line from pytest, JUnit XML, go, cargo and jest or vitest
+output; build errors and the failed step, a gh failed-steps log read after
+each line's job, step and time; a CI run's jobs with result and times and
+its failed steps; the files a diff changes; the commands a session ran and
+their outcome; the named fields of JSON, JSON lines, YAML, CSV and TSV),
+each fact the file's own characters at its position. Markdown is read by
+its fenced blocks (`json`, `diff`, else a log); the text outside them is
+the file's prose (`evidence_structured.prose_of`: a prose file whole; the
+prose parts of the rest, without the headings and `Source:` line JARVIS
+wrote; the sender's own words in `handoff.json`, its two answers, purpose
+and recommendation, mapped back through the JSON's escapes), one
+`ProseView` a file whose pieces map every offset back to the file
+(`spans`: a stretch running from one piece into the next is in the file in
+two places, kept as both, `position`'s `spans`).
+`extract_prose`: the prose parts of each log and transcript to
+ExtractionSession (tier 4), one call a file, for that type's facts
+(`evidence_structured.TYPE_FACTS`, read_structured's: a failed test with
+its error, file and line; a build error and the failed step; a CI job with
+its result and times; a command and its outcome), a value kept only
+verbatim at its position. A prose file is not extracted: the design names
+no facts for one, and its marks say so (`extraction`,
+`package_mark.NO_PROSE_FACTS`), waiting on Tim. The files are first put
+in the order they are marked (`package_mark.grouped`, `pages.grouped`):
+the same type together, then the same folder, then each followed by the
+one closest in meaning (the engine's own embeddings, where it has them).
+`mark_prose`: every prose file in full (`evidence_structured.is_prose_file`:
+a prose-typed file, the sender's words in `handoff.json`, a retrieved pull
+request's description; never the prose parts of a log or a transcript; no
+file left out) to MarkingSession (tier 3) at once
+(`sessions.BrainMarkingSession.mark_files`), each whole sentence (never
+its phrases) given at most its top 3 of the 28 labels at 0.5 or more,
+none when none reaches 0.5 (smart passes, Tim 2026-11-21; `sessions.TOP`,
+`FLOOR`) (`briefing_labels.py`, the one list: name, meaning, action, kind
+keep, fix or remove, origin and example), with Tim's material: every item
+he knows or had access to, whole, each with its state, and every item he
+probably does not know named by its source and state only
+(`package_mark.tim_known`); a file on the page is named there by its
+state alone, its words given once. Pages (`pages.py`, Mark rebuilt for
+speed, Tim 2026-11-21; it replaced the 40-part batches): packed by the
+program to a budget from the model's own context window (`pages.Budget`,
+`model_tiers.context_window`: Codex's own `models_cache.json` in JARVIS's
+Codex home, else `model_tiers.WINDOW`; the smallest of the models its
+sweep may take): the instructions (system prompt, labels, Tim's material,
+the form and the brain's starting context) and the page at most half the
+window, and with them the answer's reserve and a margin of a quarter of
+the window, all inside it; the answer never more than the brain gives in
+one turn (`model_tiers.ANSWER_MOST`). The reserve is the expected sparse
+answer measured on the smart passes' proof of 2026-11-21
+(`pages.EXPECTED_ANSWER`: 0.22 output tokens per input token for
+marking, 0.3 for classification) times `pages.SAFETY` (2), never more
+than the most the page's answer can take (each sentence with its top 3),
+so pages fill toward half the window; and since the pages are asked in
+parallel the answers are shared evenly across the workers that ask them
+(`pages.pack`'s `spread`, `pages.share`): no page's answer bound more
+than an even share of all of them, or one atom's, the budget still
+bounding every page (the 2026-11-21 proof: two pages filled to half the
+window were each answered with a few hundred tokens that did not check,
+and their halves took six minutes each; shared across ten workers the
+same marking took 137 s). Tokens are counted cheaply and high
+(`pages.tokens`, three bytes a token). Several files to a page, each given
+whole beside its parts; a file too long for one page split across pages,
+a piece ending at a section break (a heading, else a paragraph) where one
+falls in its later half, each piece keeping its file and positions and
+given with its whole file. The answer is sparse (`sessions._sparse_form`):
+each sentence by its id with at most 3 labels, each scored 0.5 or more;
+a part's `scores` holds only those; the program checks every id is the
+page's, each once and none missing, every label one of the 28, at most 3
+to an id, each between 0.5 and 1 (`_check_sparse`); a page that does not
+check (a cut-off answer among them) is asked again once, then split in
+half, each half the same way, down to one sentence. The pages are asked
+at once, at most the brain's own number (`model_tiers.PARALLEL`: Claude
+3, Codex 10; a call Codex refuses as rate-limited, `sessions.RateLimited`
+from its blocked usage report or its error's words, pauses every worker
+until its reset time, else for a doubling wait, never past the run's wall
+clock, and the page is asked again, each hit counted), each worker keeping one
+session across its pages (`pages.run`; `BrainChatSession.fresh`: on Codex
+a new thread on the same app server, `CodexSession.new_thread`; on Claude,
+whose one-shot process answers one turn, started again); what it took is
+logged and kept in the run's timing report (`pages.Report`: pages, calls,
+asked again, halved, rate-limit hits and the wait, seconds and tokens;
+`run_report.pages`). `extract_prose` asks one file a call, by the same
+workers each keeping one session, a new conversation a file
+(`BrainExtractionSession.extract_many`, `_PagedRole.each`, each file's
+form with its turn). Retrieval and summarization hold their session
+across their calls (`sessions._Held`, `keep`): the server's Work item
+research is one worker keeping one summarization session across the
+items it summarises (`work_research.Refresher`), closed when it stops;
+retrieval is one call a run.
+`relate_to_questions`: every fact and marked sentence of every file, in
+the same order, to ClassificationSession (tier 3) at once, packed and
+asked the same way (an item never split), each given at most its top 3
+of the handoff's questions plus background at 0.5 or more, every one with
+its place in the file, never told what Tim knows. Each call
+that finds no model or cannot answer puts the run in Error
+(`package_jobs.asked`, which the gather step's retrieval uses too). What it
+read goes beside the evidence, `mark/<stored file>.json` for each file (its
+type, facts, parts and their scores against the questions, each with its
+position) and `mark/marked.json` (the labels, the questions, the files),
+indexed with the raw files, its words waited for, never its vectors (gather
+waited for every vector of the evidence: every later wait,
+`wait_indexed(vectors=False)`, the mark step's, gather reused, the swarm's,
+waits only until what was written since is read; but a reused gather whose
+evidence (its record's `gathered`) has lost vectors since, an engine rebuild
+or the model installed again, waits for them as a fresh gather does,
+`package_evidence.wait_lost_vectors`, named in timing.json as an
+`indexing` wait with the count, never researching without them);
+`package_mark.marked(place)` reads it all back. What the research step
+writes (research.md, prep.md, research-searches.md) is read into the
+engine at once, words only (`package_evidence.index_files`, under the
+content child's own rule, `knowledge_content.wanted`), its meaning
+following in the background; nothing waits on it.
+A Work item's own research (`work_research.py`; design: research
+work_item_research) is made again on every change of the item
+(`work_store.on_changed`, `REFRESHER`, started with the session watcher):
+the key searches a package's research runs, its title the key terms, all
+at once (`work_research.at_once`): `knowledge_search` under its own folder, under its source's registered
+folder, across the whole record and in the conversation's turns; the PRs
+and CI runs recorded against it looked up as they are now; his messages on
+it (`conversation_history`) and the agents' (`messages_to_him`); his memory
+(`recall`); the brain's own past conversations (`search_history`, then
+`read_history` for each turn found, `history_read.Hits.found`). What was
+looked up is written to `data/work/<id>/research/` (`queries.json`,
+`queries.md`) with a SummarizationSession's summaries of it
+(`summaries.md`, `sessions.SummarizationSession`: `summarize(sources,
+purpose)`, each `Summary` citing the hit paths it rests on, one citing a
+path not in its own source rejected by `sessions.cited_in_sources`), and
+read into the engine at once (`package_evidence.index_folder`). The brain's
+(`BrainSummarizationSession`, Tim 2026-11-20: its prompt role-prompts.md
+Summarization word for word, the role `summarization`, tier 3, effort low,
+one call, no tools, its own Settings, Brains entry `summarization`
+defaulting as the other roles do) writes them; one that cannot be made
+leaves what was looked up written, logged, and the next change tries
+again.
+The research step (`package_swarm.research`, `PRODUCERS["research"]`;
+design: workflow.yaml research, reorganized by construction-drafts.md
+"Research and prep reorganized", Tim 2026-11-21) runs every research search
+at once first, by program (`first_searches`, `work_research.at_once`, one
+thread a search): for each of the handoff's questions the key searches
+(`work_research.key_searches`: words and meaning under the package's
+evidence path, each Work item's folder and the whole record, the
+conversation's turns, `recall` and the brain's own past conversations),
+and each Work item's own lookups (`item_searches`: its PRs and CI runs as
+they are now, his words and the agents' messages on it), straight on the
+engine with the run's own patience (`work_research.engine_search`,
+Settings' `run_timeout_sec`, never the brain's short search deadline;
+`SEARCH`). Then the author's first turn in its own long-lived ChatSession
+(tier 1, at medium effort for that turn alone, `RESEARCH_EFFORT`, through
+`build`'s `effort`), in the run's folder: its approved prompt
+(`package_swarm.system_of`) and its material (`_Firsts`,
+`working_set.build`; construction-drafts.md "The author works from a
+prioritized working set and calls back for more", Tim 2026-11-21): the
+sender's two answers, the handoff's questions with the sender's options
+labelled, a legend of the marks (`working_set.legend`: the handoff's
+questions as q1, q2 ...), a table of contents of the evidence (each stored
+file, its type, size, Tim's knowledge state and its first heading or
+sentence, `working_set.contents`, no model call), the program's searches
+as short hits (`short_hits`; whole in `research-searches.md`,
+`work_research.markdown`), and the evidence: every file whole, named once,
+each marked sentence's mark short and in place before it (`in_place`,
+`[s4 q1 .9 evidence .8]`: its id, each of the handoff's questions it bears
+on and each label at `working_set.BEARS` (0.5) or more; a fact's at the
+start of its line; no position repeated) while that fits the room the
+model's window leaves (`working_set.room` over `pages.Budget`: never over
+half the window, the answer's most and the margin inside it, less the
+system prompt, the brain's starting context and the turn's words); only
+when it does not, the working set: for each question the sentences and
+facts bearing on it at 0.5 or more (only the handoff's own questions
+count, never classification's `background`), highest first, then by their
+label scores, under the file each is in, each with its mark and its words
+once (`prioritized`), the lowest priority cut first, the set saying how
+much was left out and how to read it (`<left_out>`). Measured on
+package-870e45145b2d's evidence (253 KB whole): the working set had come
+to 296 KB with background counted as a question and each sentence's
+positions and scores as attributes; whole with marks it is 330 KB (110,586
+tokens, past the 100,000 of room), so it gets the working set, 179 KB
+(59,610 tokens) holding all 1,204 sentences that bear on its question. Then the program's words saying where it
+starts from (`research_note`: the Work item's research folder, the marked
+evidence, the evidence path, its tools) and that `research.md` and
+`prep.md` are written together in that turn. When it needs more it calls
+back during that turn through its own tool server: `read_package_file`
+and `search_package_files`, `knowledge_search` under the evidence, the
+research tools and `search_at_once` (`role_search.py`, `roles.BATCH_SEARCH`:
+at most 12 searches at once, `work_research.at_once` over
+`engine_search` with the run's patience, each hit short). What it was
+given is kept in `swarm.json`'s `given` and logged. A turn that leaves
+either file unwritten is the step's Error. Each part is timed in
+`swarm.json`'s `times` (`research-searches`, `research`), each search by
+`at_once` (its `seconds`), and the step as
+a whole in the run's `timing.json` with its searches (`run_report.step`),
+where over five minutes it is `too_slow`, a failure of the step with its
+numbers (construction-drafts.md "Every step five minutes at most"). The
+program's searches go in the run's search log as `jarvis` with their
+seconds, and every call a role
+makes on its own tool server is logged there (`role_mcp.py --log`,
+`research_log.record`: one line a search in
+`research-log.jsonl`, the role, the tool, its arguments, its `seconds`, the hits by
+program, `research_log.hit_paths`: a history search's sources without
+their line numbers, so a fact citing the source is matched, and the
+answer), and once the script
+passes, `research_log.mark_used` records each hit whose path the script
+cites (`research-used.json`). The research right holds `search_history`
+and `read_history` (`agent_rights.TOOLS`), and so do the roles that have
+the research tools (`roles.RESEARCH_TOOLS`).
+The swarm step (`package_swarm.swarm`, `PRODUCERS["swarm"]`; design:
+workflow.yaml swarm, made cooperative by construction-drafts.md
+"Cooperative swarm", Tim 2026-11-21) is a team in one `BrainSwarmSession`
+(`package_swarm.build`: the author picked first, each participant on its
+role, or resumed on the session it had; `CHAT`, `PICK`): the author;
+Tim's reader (`tims_reader`: does Tim care about each part, and what would
+he ask; the cares judge and the Theory of Mind reader in one); the context
+owner (`context_owner`: is the background right); the structure and
+decision owner (`structure_owner`: is the most relevant information
+first, is the decision properly prepared); and the editor (the language).
+Each owner's prompt is owner-prompts.md's word for word (`role_prompts`,
+pre-approved first round), and its concerns are `package_swarm.concerns`
+(Tim's four judge questions word for word, read from the prompts, and the
+editor's language). Nobody votes: each owner fixes its concern by editing
+what it touches (each edit at its slide and field with its offsets, its
+reason and source, applied by the program only where its old text is
+exactly there: at its offsets, else the one place its field holds it,
+`sessions.apply_edits`, `package_script.apply_edits`; never Tim's own words, never
+leaving it not checking; what was applied and refused said as JARVIS's
+own turn), asks the sender only what only the sender knows
+(`ask_sender`), and signs its concerns off in the same turn
+(`sessions.owner_form`, `BrainSwarmSession.sign`: resolved with a quoted
+reason, or `not_yet` with what is left, the fix it suggests and any
+evidence missing; one that says neither is not yet, the program saying
+why). The flow (`flow` in `swarm.json`, each stage timed in `times` by
+`Clock`): the outline (from its research and prep the author gives the outline
+in its answer, `outline.yaml`, outline/1, `package_script.OutlineFile`:
+each slide's id, title, one point, the question it answers or is
+background for, its evidence by source path, and its `visual`, the form
+that shows its point (`script_visuals.FORMS`: text, steps, figures,
+callout, comparison, table, bar, line or scatter chart, a flow, cycle,
+hierarchy or timeline diagram, picture), with `why` that form carries it, both
+required; the three owners work on
+it in parallel, `owners_turn` over `BrainSwarmSession.together`; the
+author settles conflicts, saying why; the owners sign the outline off);
+the fill (the author writes the script from the agreed outline; the
+program marks it; the author revises once against the marks,
+`role_prompts.AUTHOR_REVISE` word for word; marked again); then fix passes
+(`fix_passes`): the owners and the editor in parallel edit and sign off;
+what is left is merged by meaning into one numbered list
+(`merged_left`, `meaning_groups` over the engine's embeddings, each item
+with who raised it, each fix suggested and any evidence named missing,
+`list_text`, said as JARVIS's turn); the author works the list (`close_note`:
+it researches only what an item names as missing evidence; research and
+the prep are never redone otherwise), the script is marked again, and
+each owner with items re-checks only its own and signs off. Done when
+every concern is signed off; at most two fix passes (`ROUNDS_MAX`), then
+what is left goes to the sender (`findings_questions`,
+`package_jobs.failed_swarm`). An author answer that does not check is said
+back with every problem and asked again, at most `ROUNDS_MAX` times, then
+the swarm ends not passed with them. The script is structured YAML,
+`script.yaml` (`package_script.py`, script/1; Tim 2026-11-20): a list of
+slides in order, each with an id (its deck slide's), a title, what is on
+screen (an ordered list of pieces: `text`, `his_words` with its source, a
+`picture` by path, a `table`, or a typed visual with its content,
+`script_visuals.PIECES`, the same types as presentation/1's objects:
+`steps`, `figures` each with its source and position, `callout`,
+`comparison`, `chart` with its columns and rows, every number with its
+source path and position, `diagram` with its nodes, links and groups,
+checked by diagram_layout.structure), what JARVIS says over it (`narration`), the
+source path and position of every fact (`facts`), the questions it
+answers and the decision it asks if any. The script describes each slide
+and how it will look, with the information to fill it, for the deck to
+build later (construction-drafts.md "The script describes each slide's
+visual", Tim 2026-11-22): `package_script.problems` checks each visual by
+program as it is written (`script_visuals`: each piece's content; every
+number a chart or key figure shows, and every chart word that names a
+source, found in its source at its position,
+`line N`, `lines N-M` or `characters A-B`, read by `Sources` from the
+evidence, the run folder and a Work item's or package's files, the
+swarm's `Run.sources`; every picture piece a file `Sources` reads and a
+picture JARVIS draws, `picture_problems` over `picture_proof.prove`; every
+content slide laid out in the first of
+JARVIS's layouts in which each object fits its slot by deck_capacity,
+`fit_problems`, and a slide asking a decision held to what its decision
+slide holds as the deck will draw it, its question, short name, options,
+words and objects, its lead-in decision k of n among the script's
+decisions, and the author's recommendation, reason and options' pictures
+from the deck source once there is one (`ScriptFile`'s `deck`), else a
+recommendation on the longest option with a one-line reason and its
+options sized pictured and not, the worse kept (`decision_fits` over
+`deck_capacity.decision_problems`);
+each slide showing the visual its outline slide names, a decision
+slide's too (its decision's words counting as text), `plan_problems`), so
+a script that cannot be drawn is refused before the deck. A slide's form
+may change after the outline is signed off: a script turn of the author's
+names it in `forms` with why (`package_script.ScriptFile`,
+`change_forms`), JARVIS changes the outline and checks the script against
+it, keeping the change only when the script checks, says it into the
+conversation and opens the structure owner's `shows_point` again until it
+signs off the new form (`package_swarm.forms_changed`, and in a close the
+owner's item on the recheck list, `form_item`). The structure and decision owner's third question, "Does each slide
+show its point?" (`shows_point`, in the outline and the fix passes), and
+every owner's and the author's first-round wording to plan and review
+visuals are owner-prompts.md's; the program's words at the fill are
+`role_prompts.AUTHOR_VISUALS`. Marked slide by slide
+(`mark_slides`: packed into pages as the evidence is, a page never part
+of two slides, the whole script with each, every part at its slide and
+field, `package_script.units`, each visual's words and data too; the 28
+labels, Tim's material by `package_mark.tim_known`). Each participant's
+first message is made at its first turn (`_Firsts`): its share of the
+evidence (`sessions.SHARES`: Tim's reader what he knows and had access
+to, kept apart; everyone else everything, marked), given as the author's
+is (`material_set`): every file of the share whole with its marks in place
+while it fits the participant's window with what goes with it, else the
+working set of that share (Tim's reader's knows and had access each its
+own), the
+prep for the context and structure owners and the editor (`gets_prep`;
+again in a later turn when it changed, `_work_text`), the editor its share
+marked and the script marked part by part, and where the evidence is for one that searches it
+(`evidence_note`). What the participants ask the sender, every ask since
+it was last asked, is grouped by meaning into one list (`group_by_meaning`;
+Tim 2026-11-20): embedded by the engine's own model (`EngineUDS.embed`,
+`POST /v1/items/embed`, `EMBED`), an ask joins the first group it is
+`SAME_MEANING` (cosine 0.85, measured on multilingual-e5-small) to every
+member of, each group keeps its wording nearest the rest, the groups
+ordered by how many asked, each `ask-<n>` with the asks it holds; no model
+is the step's Error. The sender is asked once the outline is signed off
+and after each fix pass and re-check (`_ask_sender`, `package_jobs.ask`,
+at most five rounds of questions); its answers are said into the
+conversation as the sender's, each in its own element (`_take_answers`);
+once a round of answers leaves the same concerns unresolved, asking stops
+(`asking`'s `stopped`). Passed: the result and the conversation word for
+word (`swarm-result.json`: each concern's state, every sign-off, what was
+asked, each turn's time and tokens, `turns`, and the stages' `times`;
+`conversation.md`), the hits used (matched against the script's sources,
+`package_script.sources`), and the job's `swarm`. What the swarm holds is
+kept in `swarm.json` (`BrainSwarmSession.saved`, `restore`, the session,
+engine and model of each participant that has answered a turn; what was
+sent is taken as given only once it answers, `_heard`) between the run's
+processes.
+The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
+workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
+`DECK_CONCERNS`, each of `DECK_QUESTIONS` for each owner and the editor). The
+program builds every slide from the script (`script_visuals.built_slides`):
+each content slide's visuals (each piece its presentation/1 object, a chart
+its dataset, laid out in the first layout that fits), and each decision
+slide's decision (`Built.decision_part`: its question and options the
+script's decision's, its `short` (its name in the border's Chapters and on
+the answers slide) the slide's title, its context the slide's text pieces, its `say` the
+slide's narration, and what else it shows, a visual, a picture, a table, his
+words, its `objects`, presentation_schema `Decision.objects`, slot `shown`,
+drawn by the shared deck on the decision slide itself in its context area,
+the band above its options: deck.js `renderShown` through presentation.js,
+deck.css `.shown`, sized with the slide by `deck_capacity.decision_problems`
+in `shown_box`, laid out, proved and each a target narration lights); given
+to the author with `BUILT_NOTE`, and before every build put back on each
+slide (`package_deck.from_script`, `script_visuals.apply`: on a content
+slide the author's layout and slots kept where it gave every object one,
+matched by id else by type in order, its narration cues kept, lighting only
+what the slide shows; on a decision its recommendation, reason,
+`needs_words` and options' pictures kept, its own `picture` dropped,
+`merged_decision`); `script_problems` says anything that is not the
+script's (`script_visuals.unmatched`, a decision's words too), and
+`SHOW_NOTE` stays as a backstop. A round: the author writes `deck/presentation.yaml`
+(presentation/1) from the passed script alone, one script slide to one
+deck slide, in order and with the same id (a script slide that asks a
+decision is the deck's decision slide asking it, its visuals on it), in JARVIS's named layouts,
+told so by the program (`write_note`, carrying the script,
+docs/making-a-package.md's "A deck" section word for word,
+`make_package.EXAMPLE` and `make_package.VISUALS_EXAMPLE`, and
+`SHOW_NOTE`: turn dry text into visuals, show what can be shown, never
+long paragraphs; later rounds `revise_note`); where the script gives
+Tim's own words (a `his_words` piece) they are runs of emphasis
+`his-words` (`presentation_schema.HIS_WORDS`), drawn highlighted bright and
+vibrant (presentation.css `mark.his-words`), and narrated. The program
+builds and proves it with the existing pipeline (`build_and_prove`:
+`make_package.fill_assets`, `make_presentation`, the standard vote in its
+package.json) and checks it against the script (`script_problems`: its
+slides the script's, by id, in order; every piece of his words on its
+slide in the `his-words` style and said in its narration, word for word,
+a slide asking a decision a decision slide and every other a content slide,
+`spoken_words.folded_words`: the his-words check, a program's, no vote;
+Tim 2026-11-20); what does not build or check is said into the
+conversation as JARVIS's own turn (`PROGRAM`, `jarvis`). Built, the
+program posts as its own turn, slide by slide, each script slide beside
+its deck slide's layout data (`presentation_proof.layout_data`, in the
+proof as `slides`: the title, each object in reading order with its slot,
+box and size in px at the smallest and largest frame, `sizes`, each word
+with its style and the range its slide's fit may draw it at
+(`text_px_range`, `layout_spec.style_range`), each picture's drawn size,
+the narration; a decision slide's question, context, options, reason and
+`say`, each word's range as the shared deck may draw it,
+`presentation_proof.deck_words_px` read from its deck.css, and what JARVIS
+says on it from the story; each object's `capacity`, the lines its slot
+holds at the floor and the lines it needs), and the questions
+(`review_turn`: does each slide say what the script says for it, is it
+visual where the script calls for it, does the narration say the
+substance, is what can be shown shown, `deck-shown`, first-round wording
+pre-approved, owner-prompts.md; is every word readable at its size,
+`deck-readable`, is the program's, `PROGRAM_QUESTIONS`, answered by the
+build, every slot within its capacity, `package_deck.readable`, the
+review's `program`, never a reviewer's concern, finding or a question for
+the sender, Tim 2026-11-22). The deck review is run by
+the same owners, the same way (`package_swarm.fix_passes` with the `deck-`
+stages): Tim's reader, the context owner, the structure and decision owner
+and the editor, in parallel, each edit the deck source (`DeckSource`: each
+edit by its offsets in presentation.yaml, applied only where its old text
+is exactly there and only while the deck still builds and proves with it;
+an edit of anything built from the script, an object's words or data or a
+slide's title, is made in script.yaml by each built word's origin in it,
+`script_visuals.script_edits` over `Built.origins`, through
+`package_script.ScriptFile.edit`, and applied only once it is in the
+script, the slide then built from it again; an edit of the arrangement
+stays the deck's, and one that needs a change of the script slide itself,
+a part added or removed, is said with `script_visuals.SCRIPT_ITEM`: an
+item, never a dead end)
+and sign off each of its other questions (`DECK_CONCERNS`); what is left is merged
+into one list, the author revises the deck, and each owner re-checks its
+own items; never the author on its own deck. Every author turn at the deck
+(`author_form`) may give script slides, whole, in `slides`, changed visual
+forms in `forms`, and a split: each new slide in `slides` right after the
+one it comes from, with its outline slide in `outline`. What only a change
+of a script slide gives (another step, a node, a piece, a different form,
+fewer words, a split) goes back to the script stage for that slide only:
+`script_change` puts it in script.yaml (a new slide after the one given
+before it, its outline slide in outline.yaml after that one's) and checks
+it whole through `ScriptFile.take` (each decision slide sized with the
+author's part of it from the deck source), the outline's form changed;
+then `ScriptStage` (its state `deck_script_stage` in swarm.json, so a run
+that waits on the sender goes on from there): the outline's new slides
+signed off by the owners (`deck-script-outline`, an edit standing only
+while the script still checks), the stage's slides marked against the 28
+labels (`mark_slides` for them only, the rest's marks kept), and every
+owner's script concern re-signed for them in the same swarm
+(`package_swarm.fix_passes` over `SCRIPT_CONCERNS` with the `deck-script-`
+stages: owners' edits only on the stage's slides, what is left to the
+author as one list, its close giving those slides again, the owners
+re-checking, the sender asked as in the swarm; not signed off after two
+passes, its findings go to the sender). Then their deck slides are written
+again (`rewrite_note`) and reviewed in full: in the write, by the review's
+first pass (their keys changed); in a close of the review, by every owner
+and the editor for every deck concern (`deck-slides-<n>`), before the
+owners re-check their items. The step re-reads script.yaml after every edit
+written into it (`Plan.refresh`: only a slide whose script changed is
+written again; `review_units` and `_final`'s keys from the script as it
+stands), and keeps each script slide it changed or split under
+`deck-script`, keyed by the slide the swarm passed (`script_change_unit`,
+`keep_script_changes`: the slides it became, their outline slides and
+marks), which a later run takes back before it plans
+(`restore_script_changes`), so only that slide's script, deck source and
+review are made again. In a close what the author revised stands (nothing
+put back). Passed
+(the job's `deck`: the zip, the built folder, `deck-review.json`), or after
+two fix passes, or a deck the author could not make build,
+its findings go to the sender as a failed swarm's do; but a deck still
+over a capacity after the author's rounds is the run's Error
+(`package_deck.NOT_FIT_FIX`, the slot, the lines and the fix, told to the
+Work item as every Error is), never findings for the sender. The proof also holds
+every text style at least the text floor at both sizes (`prove_text`).
+No build is drawn in a browser (Tim 2026-11-22: `deck_fit.py`'s headless
+Chromium and its callers are removed): a slot over its capacity
+(`deck_capacity`) does not build and is told to the author with the slot
+and how much over and only what can be done at the deck
+(`deck_capacity.at_the_deck`, `AT_DECK_WAYS`: say less or show it in
+another form through `slides` and `forms`, or a larger slot; a slide that
+needs splitting goes back to the script stage), and an owner's edit
+that puts one over is not applied. The shared deck fits every slide as it
+draws it (deck.js `fitSlide`, deck.css "the program's own fit": its words
+as large as it allows, down to the 13 px floor, then `tight`;
+`data-fit`); in CI, on fixture decks (`tests/deck_measure.py`),
+`tests/test_voice_page_deck_fit.py` holds a decision as long as the first
+real one at every frame and `test_voice_page_text_fit.py` a sparse slide's
+words well past the floor and a dense one's never under it.
+The deliver step (`package_deliver.deliver`, `PRODUCERS["deliver"]`;
+design: workflow.yaml deliver) adds `.jarvis/briefing/` to the deck's zip
+(`briefing_files`: research.md, prep.md, outline.yaml, script.yaml,
+conversation.md and signoffs.json, each concern's state, every sign-off and
+what the sender was asked), writes the message that carries it from slide 1 of the passed
+script (its title and what is on screen, `package_script.opening`) and the
+question the request gave, its questions' text in order (`message_of`, no
+sender text), signs it with JARVIS's own key
+(`package_jobs.sign`) in the run's `package/` and sends it back to its
+sender to check (`package_jobs.ask_check`: a round of kind `check`, its one
+question `check` with `SENDER_CHECK` word for word; the server's look
+tells it once, `server._package_check_to_sender`, with where the package
+and its deck are, the message and how to answer). Its answer is
+structured, no free text parsed (`package_jobs.check_answer`; Tim
+2026-11-20): `{"check": "approve"}` (`APPROVE`; `package_jobs.checked`,
+recorded `approved_by`) delivers it at once (`server._deliver_package_run`, from the now async
+`_answer_package_job`): through `_send_message`, as a message from the
+agent that asked, on the Work item's Messages tab (his Inbox with none),
+the job `delivered` with its inbox id and message (`result`); what stops it
+is the run's Error on the Work item. `{"check": "change", "what_is_wrong":
+<its words>}` ends the run `failed` and starts the next as a revision of
+it with its words (see "Package requests"), which are also kept in the
+package's evidence (`sender-answers/<n>.md`, n counting across the
+package's runs); any other answer is refused, saying the form. His Reject
+of a delivered package (the standard vote, at sign-off) starts the
+package's next run too, a revision with his words
+(`server._rejected_starts_new_run`, `package_jobs.delivered_as`,
+`rejected`): his words are kept on the run and
+in the evidence as a file of its own written after it was gathered
+(`package_gather.refresh_tim`, `jarvis/tim-rejected.md`, "His Reject of this
+package's earlier runs"; a later package's gather has them in
+`jarvis/tim.md`'s Part 1, which every step reading it then redoes), so
+what read this package's gathered evidence is reused.
+Each run's reports (`run_report.py`, work-list item 38; no new judge, no
+new model) are written beside it by the program. `timing.json`: each step
+of `package_jobs.run` timed (`run_report.step`; a step run again after
+waiting is one more entry, `resumed`), with every role call made in it
+(`BrainChatSession._record`: role, engine, model, tier, effort, seconds,
+tokens in, cached and out, and how it ended: answered, refused by the
+model sweep, time limit, rate limited, failed), each paged role's pages
+(`pages.Report`), the app servers started, every search a role made in it
+with its seconds (`searches`, `search_seconds`, from research-log.jsonl)
+and the swarm's stages; every wait in it timed and named (`waits`,
+`run_report.wait`: `indexing`, `session_open` per role, `embedding`,
+each with its seconds and the seconds the Mac slept in it, `asleep`), the
+seconds the Mac slept in the step (`asleep`, `awake.Clock`: wall time
+less time awake, since `time.monotonic` stops while the Mac sleeps) and
+the seconds no wait, call or search covers (`unaccounted`, what runs at
+once counted once), so no gap is unexplained; and every wait on the
+sender (`sender`: each round, its kind, asked and answered, seconds). The
+run's process keeps the Mac from idle sleep, and from system sleep on
+mains power, while it runs (`awake.held`, `caffeinate -i -s -w <pid>`,
+from `package_jobs.main`): one assertion held with no gap for the run's
+whole life, never a renewing `-t`. Measured on package-9a8f7c72f87b run-1,
+another program's renewing caffeinate was held and the Mac slept in a gap
+between two, from 11:13 to 12:07, the run moving only in the Mac's
+45-second maintenance wakes. A step
+over `STEP_FAILS_AFTER_SEC` (five minutes; Tim 2026-11-21: more than a
+few minutes a step is a failure) is flagged `too_slow`, and `totals` sums
+them. `quality.json` (`run_report.quality`, written after the swarm and
+the deck steps, timed as a `quality-report` step): per stage the concerns
+signed off and left, each item left mapped to the 28 labels by the
+marking role (each sentence's top labels; each finding once, a later
+write keeping what an earlier one mapped), repeated in the next pass by
+the same concern (by meaning at `package_swarm.SAME_MEANING`) versus
+fixed, passes to done, Tim's reader's questions raised versus answered,
+the script's facts checked by the program (`run_report._facts`: its
+source a file the run holds and its stated position, lines, characters
+or a section by its heading, in that file, `located`; of those, the ones
+whose words are there, `quoted`) versus a position not found, a source
+not found and unanswered, the
+sender's questions asked and grouped with every merge at the 0.85 line
+(both wordings and their score, kept by `group_by_meaning` in
+`swarm.json`'s `asking.groups`), and the deck review's stages and
+findings; then his verdict (`run_report.verdict`, from
+`server._rejected_starts_new_run`: Approve, or Reject with his words,
+mapped to the labels by the next run's process, `map_pending`).
+`run_report.package` sums a package's runs; `of_work` lists each package
+of a Work item with its runs, read by `GET /api/work/{id}/package-runs`
+(the item's Overview, `PackageRuns.tsx`) and the brain's
+`package_run_reports` alike.
 
 ## The package inbox
 Every package an agent sends Tim arrives one way: `python -m
-jarvis.make_package` checks, builds and proves it (a deck laid out and
-proven by JARVIS from a judged briefing, see "Work packages"), then sends it as a message
+jarvis.make_package` checks and builds it (an agent's or conversation's
+folder, or an architecture package; a briefing is made only by the
+package workflow, see "Package requests"), then sends it as a message
 carrying it, `POST /api/messages?work=&project=&workflow=&source=`
 (`decision_package.deliver`, signed with the sending session's key; see
 "One channel"), whose route hands the bytes to `_receive_inbox_package`;
 the `packages` right is what lets a key carry one. `POST
 /api/packages/inbox` is JARVIS's own path (the tool token) and refuses an
-agent's signed request. Its sender is its
+agent's signed request, and a briefing (a deck) from anyone
+(`package_inbox_api.BRIEFING_REFUSED`, `_receive_package_zip`'s `direct`):
+only the package workflow makes one and delivers it as a message. Its sender is its
 signature's (`agent-signature.json`, `package_signature.py`;
 `server._package_signer`): the onboarded agent whose key signed it, its
 answers going to that session (`from_session`, `sender_evidence`
@@ -1502,11 +2412,9 @@ answers going to that session (`from_session`, `sender_evidence`
 running make_package on that `source`, `subagent:<name>`, shown "name
 (parent)"). One signed by a key that is not an onboarded
 agent's, or sent unsigned on a request signed by one, is held
-(`_unrecognised_key`), never unpacked, until he onboards it; one an
-onboarded agent signed without a fresh author's proof
-(`_admit_agent_package`) is held the same way, its reason in the hold and
-on the error package, released once the proof checks within
-`author_proof.RECHECK_SEC` (`_recheck_author_holds`) or dropped by his Drop
+(`_unrecognised_key`), never unpacked, until he onboards it; a hold kept
+from before with a reason of its own (an onboarded agent's package once
+held for its author's proof) is shown with that reason and offers his Drop
 (`key_error_package.DROP`, the key kept). One unsigned
 on the tool token keeps `?session=` as a claim that only the signed request
 proves (`server._package_sender`: the calling agent's own session);
@@ -2325,7 +3233,52 @@ words' postings intersected, then checked in each section
 (`lexical.phrase_in`). `POST /v1/items/search` (`EngineUDS.search`) takes
 meaning and words (they rank) and where, phrase, linked_to, under and
 types (conditions), one hit an item with `matched_by` and the sections
-where it matched. AccessRights (`knowledge/rights.py`, family `RIGHTS`):
+where it matched (a word's sections read only for the hits it answers
+with). It reads only what it answers with (the search's second part,
+construction-drafts "Knowledge search"): each index's candidates are
+judged first from the resident key column (place, type, the conditions,
+the reader's rights at the path; `placed`), the lists are fused, and only
+the fused top's documents are read, in one batched multi-get
+(`DocumentStore.get_many` over `Store.newest_many`: the keys sorted, each
+segment once, newest first, each block read once,
+`Segment.newest_many`) and checked in full; one that fails leaves its
+lists and they are fused again, so the answer is the one a check of every
+candidate gives. An exact phrase is that same batched check
+(`SEARCH_READ_BATCH` documents a read): beside words, on the fused top;
+beside meaning, on the nearest, more asked for while too few hold it;
+alone, in path order, stopping at the first `limit` hits, which are the
+answer. Every answer carries each stage's seconds (`stages`: conditions,
+phrase, words, embed, meaning, fuse_and_read, sections). Measured on a
+copy of the owner's records: a search's document reads went from 0.1 to
+1 s to under 0.04 s, and a phrase from 80 to 110 s to under 0.4 s, with
+the same hits. No search has a deadline (Tim's yes, 2026-11-21, construction-drafts
+"Knowledge search: no deadline that drops results"): `items.search`,
+`query.run` and a graph walk run to the end and answer in full, never
+partial for time, and a search ends early only when its caller no longer
+needs it: the engine's HTTP handler sees the caller's connection closed
+(`serve._caller_gone`, a route's `Request.gone`, `items.Cancelled`, answered
+`CANCELLED` and never sent). The client waits for a search with no timeout
+(`uds.NO_DEADLINE`) and closes its connection on `knowledge_client.Cancel`;
+`knowledge_api.until_unneeded` is the one waiter, cancelling once the task
+awaiting it is cancelled or its request has gone (the page's route, looked
+at every `CALLER_LOOK_SEC`; the brain's, a role's and an agent's tool calls
+through `server._until_caller_leaves`, and their tool servers wait for
+`knowledge_search` and `work_context` with no timeout,
+`jarvis_mcp.TIMEOUT_FOR`). A search runs in the fast lane
+(`Engine.searching`: its request thread at normal priority, and while any
+search runs the background lane is held, the build, compaction,
+maintenance and the linker's next topic, `wait_for_searches`), and a
+question is embedded on the searching thread itself
+(`VectorIndex.embed_query`; onnxruntime runs one session's calls side by
+side), never queued behind the build's batch on the embedding thread,
+which measured 1.3 to 1.7 s of the searches' seconds on the owner's
+records. Its time is in the engine's route times and the answer's
+`took_sec`. By voice it never blocks: a search for him not back within
+`server.KNOWLEDGE_LOOKING_SEC` goes on, the brain is told to say it is
+looking, and its answer comes to the brain in a turn of its own
+(`server._look_on`, `_handle_utterance` origin `system`), cancelled only
+when that brain is stopped or its conversation replaced (its generation
+moved). AccessRights (`knowledge/rights.py`, family `RIGHTS`):
 grants on a path (person or `*`; data, content, write; hidden fields),
 inherited below it and only added to; the owner (`OWNER`, tim) has
 everything and alone sets rights (`/v1/items/rights`). Every items route
@@ -2340,8 +3293,19 @@ person, model and time) until the owner accepts one
 (`knowledge_content.py`): every file under a registered folder (FILES
 reader, local, available, under its projects' widest index scope; off on
 every link keeps it out; in no project, docs) at
-`/folders/<folder id>/<rel>`, and JARVIS's answers, packages and received
-files at `/jarvis/<area>/<rel>`; data holds the path entry (`file`,
+`/folders/<folder id>/<rel>`, JARVIS's answers, packages and received
+files at `/jarvis/<area>/<rel>`, and a Work item's files on disk
+(`data_paths.work_dir()`, `data/work/<id>/`) at `/work/<id>/<rel>` and a
+package's made for no Work item (`data_paths.package_dir()`,
+`data/package/<package id>/`, apart from `data/packages`) at
+`/packages/<package id>/<rel>`, both text scope, untrusted, under prefixes
+that also hold records (`Root.shares`: the content child writes and removes
+only its own file items, those with `file`, never a record at a file's
+path; `forget_root` likewise leaves records), a package run's bookkeeping
+in them never indexed (`knowledge_content.run_bookkeeping`:
+`run_report.BOOKKEEPING` directly in a `runs/<run id>/` folder, and the
+role servers' `.jarvis-role/`), one indexed before removed on the next
+scan; data holds the path entry (`file`,
 `size`, `mtime`, `inode`, `sha256`), `state` (pending, indexed,
 unreadable with `reason`), `trust` and what the reader found; content the
 text and sections from `content_sections.py` (bundle_readers for PDF,
@@ -2486,7 +3450,8 @@ proposes topics, each a silent attention item acted on only on his yes. The
 page's /api/knowledge routes (`knowledge_routes.py`, the Knowledge view) and
 the brain's knowledge tools call the same `knowledge_api` functions.
 `context_service.pack` is the context pack: tier 0 from notes and topics,
-tier 1 with the engine's search; `work_context` gives it to the brain
+tier 1 with the engine's search, waited for to the end (no deadline);
+`work_context` gives it to the brain
 (walled), and a run gets it, his own words only, ahead of the prompt when
 Settings, Knowledge's `run_context` is on, kept in `run_context_dir()` with
 `runs.context_sha256`.
@@ -2548,7 +3513,13 @@ listing the versions. It finds the server by the one reader,
 port and pid to `data_paths.server_address_path()` (`server-address.json`
 in its data folder; the same address the brain's tool channel dials,
 `server_address.own()`) and removes it on a clean shutdown; a record whose
-pid is dead is stale and ignored. With a live record the command asks that
+pid is dead is stale and ignored. The same record keeps a second JARVIS off
+one data folder (Tim, 2026-11-20): a start refuses, before anything
+starts, while it names a live pid other than its own (the restart's
+`os.execv` keeps it; a parent's pid is another JARVIS), saying which
+process and address (`server_address.refusal`,
+`server._refuse_second_start`, from `main()` and `lifespan` alike), so a
+second start never ends the first one's knowledge engine. With a live record the command asks that
 address with the tool token, and a refused connection there stops it
 without updating. With none it looks at `JARVIS_URL`, else
 `JARVIS_TOOL_URL`'s address, else 127.0.0.1:8340; only a refused connection
@@ -3042,16 +4013,199 @@ selected agent is in token stress", which moves a choice off a stressed brain
 to the least stressed one. Token stress is the brain board's plus/minus,
 `usage_store.week`'s `ahead` (expected use minus actual, points, seven-day
 window): stressed below 0, least stressed the highest; a brain not measured
-is neither. An engine he names for one agent (the tools' `engine`, or a model
+is neither. Each role of a package's making is a kind too
+(`engine_choice.ROLE_KINDS`: editor, owners, Tim's reader (`tims_reader`),
+retrieval, marking, classification, extraction, summarization; the author
+is `package_author`), each on the requester's engine by default, its model
+its tier's (model_tiers.pick); and "Run the owners on the other brain from
+the author's" (`owners_other_brain`, `other_brain_for_owners`; the judges'
+option, carried to the owners who took their place) moves the owners off
+the author's brain, ignored while there is only one brain. A file saved
+before reads its judges' and Theory of Mind reader's entries as the
+owners' and Tim's reader's (`engine_choice.WAS`). An engine he names for one agent (the tools' `engine`, or a model
 that names its engine: "opus" is Claude's, "gpt-..." Codex's,
 `server._engine_for`) is kept, override or not. The defaults are what JARVIS
 did before (the author on the requester's engine, the rest on Claude). Kept
 in `<data>/jarvis/engines.json` beside brains.json, so make_package (another
 process) reads the same. Settings, Brains shows each kind and the override
 with each brain's plus/minus (`BrainsSection.tsx` `EngineChoices`,
-`GET`/`POST /api/settings/engines`); the brain's `engine_settings` and acting
-`set_engine_setting` call the same `engine_choice.view` and
+`GET`/`POST /api/settings/engines`, the owners' option beside the
+override); the brain's `engine_settings` and acting `set_engine_setting`
+(`owners_other_brain` too) call the same `engine_choice.view` and
 `server._change_engine_setting`.
+
+## The sessions a package is made with
+The new package system's sessions (`sessions.py`, the design's
+sessions.yaml, approved 2026-11-18 and 2026-11-19), built for its later
+steps (gather, mark, research, the swarm) to use; the gather step calls
+RetrievalSession and the mark step ExtractionSession, MarkingSession and
+ClassificationSession (see "A package's evidence"), the rest wait for theirs.
+Composition, each type with its own interface (Tim, 2026-11-18): every
+session type is a `Protocol` its callers depend on (`ChatSession`,
+`SwarmSession`, `DecisionSession`, `ClassificationSession`,
+`ExtractionSession`, `MarkingSession`, `RetrievalSession`), each with its Brain implementation on the brain
+providers (`BrainChatSession`, `BrainSwarmSession` ...); the Team ones come
+later. A `ChatSession` is one role's conversation on the brain's own transport
+(`ClaudeSession`, `CodexSession`: one transport per brain, the voice brain
+and every role alike), one-shot (one item in, one answer out, nothing
+kept) or long-lived (its session id kept and resumed, never started
+fresh), its prompt the system prompt, a turn's answer parsed where it has
+a form (`json_answer`; Claude takes a one-shot's form for the process,
+`--json-schema`, and a long-lived turn's in the message, `SCHEMA_GIVEN`;
+Codex per turn, `outputSchema`); `TurnEnded.reply` is a turn's final
+answer. A model the brain refuses by name (`model_refused`: Claude Code
+says so on the first turn, Codex at the thread or the turn) is logged and
+the session opened again on the sweep's next model, its first turn sent
+again there; a new long-lived Claude session takes a new id on each try,
+never `--resume` of a refused one; after an answer nothing is swept.
+`BrainSwarmSession` is long-lived ChatSessions in one conversation, working
+cooperatively (`package_swarm.build` for a package run), every participant
+opened at once (`open`, each its own process or thread; the first that
+cannot open raised once all have tried): each participant
+sent every new message of the others word for word, with who said it, and
+on its first turn its first message (given, or made then by a callable);
+a turn is one participant's (`answer`) or several in parallel
+(`together`: each sent the conversation as it stood when they began,
+their messages put in it in the order given), each answering in the form
+its turn gives; each given exactly its share of what Tim knows (`SHARES`,
+`share`, `share_values`, workflow.yaml tim_knowledge who_gets_what carried
+to the new roles: Tim's reader knows and had access only, kept apart; the
+author, the editor and the context and structure owners every item with
+its state). Each concern (`Concern`: its id, its sign-off question, its
+owner) is signed off in its owner's turn (`sign`, `SignOff`: resolved or
+not yet with what is left, kept with the stage), its state its latest
+sign-off (`state`, `resolved`, `not_resolved`, `left`); what a turn asks
+the sender is kept until sent (`ask`, `to_send`, `sent`); each turn's time
+and tokens (`turns`, from `BrainChatSession.last_turn`: engine, model,
+seconds, its context window and output tokens, also logged, and on Codex
+the turn's whole use, `turn_tokens`: the change in the thread's running
+total, input, cached input and output, `CodexSession.turn_usage`) are in
+its `result`. Nobody votes. `BrainDecisionSession` asks each question `ASKS` (3) times in
+one-shot sessions of its own with no tools, the answer most gave and the
+share that agreed (`agreement`); `BrainClassificationSession` gives each
+item at most its top 3 questions (with `background`) at 0.5 or more; `BrainExtractionSession`
+keeps only values the program finds verbatim at their offsets, a field
+not found empty and its context the sentence around it;
+`BrainMarkingSession` splits the text by program (`text_parts.py`: speech.py's
+sentence rule, `speech.sentence_end`, extended for headings, list items
+and paragraphs, and phrases cut at commas, semicolons, colons, dashes,
+brackets and the joining words) and gives each whole sentence (its
+phrases are not marked) at most its top 3 labels at 0.5 or more, in
+pages that fit the model (`pages.py`: several files to a page, each file
+given whole beside its sentences; the answer sparse and checked; one that does not check asked again
+once, then halved; the pages asked in parallel, one session a worker; a
+script slide by slide, `mark_slides`), Tim's material with its knowledge
+states; `BrainClassificationSession` is paged the same way;
+`BrainRetrievalSession`
+answers each free-text reference as typed entries of
+`evidence_types.NAMED_BY_LABEL` or not found; the program applies only
+edits whose old text is at their offsets (`apply_edits`; `EDIT`, and
+`located` for an edit at a slide and field).
+A session that cannot answer raises
+`SessionFailed`, the step's Error. Every call of a role session ends: its
+start and each turn are held to the run's own bounds
+(`run_executor.bounds`: Settings' `run_timeout_sec` as the wall clock,
+unless the caller names one, and `run_idle_sec` measured from the last line
+its brain wrote, `heard_at` on the provider session), and a call past
+either is `SessionFailed` naming the setting, its process closed, so a
+package run always reaches a terminal state (a marking call of a real run
+once waited all night on an open connection).
+Each role (`roles.py`) has its tier, effort, engines.json kind, lifetime
+and its `Release`: every role on either brain starts locked down (no tool,
+no server, no shell, no file) and is released for its run to exactly
+its release, the one definition both brains read (Tim, 2026-11-20; no role
+is exclusive to one brain, and no role has exec or a shell on either): its
+own tool server's tools and, for a writer, Write and Edit in its run
+folder (`roles.WRITE_TOOLS`); no role reads a file with a built-in tool.
+A role that reads files reads them with its file tools
+(`roles.FILE_READ_TOOLS`, `role_files.py`: `list_package_files`,
+`read_package_file`, `search_package_files`), read only, on its own tool
+server, through folder_readers (no link followed, every page and window
+bounded), inside its run folder and the folders it reads (`Launch.reads`,
+given to the server as `--read`), hidden, credential and key files never
+shown; in the run folder only the package's working files
+(`package_swarm.WORKING`, given as `--show`: research.md, prep.md,
+outline.yaml, script.yaml, research-searches.md and the deck's source),
+never the run's bookkeeping (`run_report.BOOKKEEPING`: timing.json,
+quality.json, swarm.json, run.job, job.log, research-log.jsonl,
+research-used.json), which is neither listed, found nor read, nor indexed
+by the content child, so no search returns it. The author has the research tools (`roles.RESEARCH_TOOLS`, the
+research right's with `search_history` and `read_history`), the file tools,
+the batch search (`search_at_once`) and Write and Edit; the editor the evidence search (`knowledge_search`) and
+the file tools; the context owner and the structure and decision owner
+the research tools and the file tools; Tim's reader nothing (its material,
+only what Tim knows and had access to, is in its prompt); retrieval its read tools for Work items, packages,
+messages, workflows and runs and its GitHub lookups (`role_lookups.py`:
+lists and searches of pull requests, CI runs, issues and commits, one pull
+request, CI run or issue by its number and a commit by its hash, each
+enough to say which it is, and a repository's branches; each one fixed
+read-only `gh` argument list with what the role gives passed only as data,
+checked by shape, never a shell string, and no deadline of its own). They
+find what a reference names and never fetch it: a pull request's
+description and diff, a CI run's jobs and failed logs, a commit's diff and
+a branch's commits are gather's own fetch (`evidence_readers.py`, the same
+checks of shape), never a role's tool; marking, classification,
+extraction and summarization nothing. A role's tools are its own tool
+server (`role_mcp.py`, `python -m jarvis.role_mcp --role <role> [--read
+<folder> ...]`, server name `jarvis_role`), which offers only them: a
+GitHub lookup and a file tool run there, and every other call
+goes to `/internal/tool` with the tool token naming the role;
+the server answers a role only for its own tools and as a call that is
+never his turn (`_tool_caller` `role:<name>`). Claude launches a role on
+JARVIS's own settings (`claude_provider.role_command`: `--restricted
+--strict-mcp-config --system-prompt`, its `--tools`, `--allowedTools`,
+`--permission-prompts none`, no `--add-dir`, and for a writer
+`acceptEdits`, so it writes in its run folder only; never `--safe-mode`,
+`--bare` or skipped permissions). Codex runs a role in JARVIS's own Codex home
+(`CodexSession._open_role`, `codex_provider.role_release`, measured on
+Codex 0.171.0): the lockdown is every feature off but
+`ROLE_KEEP_FEATURES` (no `code_mode_host`, so `exec` refuses to run),
+subagents off (`agents.enabled`), the role's prompt as `baseInstructions`,
+personality none, no project docs or web search, every MCP server the
+home's config.toml names (the brain's own among them) switched off for its
+app server as `-c mcp_servers.<name>.enabled=false` (`servers_off`;
+the same switch in the thread's own config does not take, and config.toml
+is never changed, since the brain runs on it), read-only, ephemeral for one-shot; a role with tools has the
+code-mode host on and its own tool server, the only one added (with the
+shell off, `exec` runs JavaScript with no file, process or network access
+and reaches only that server's tools, Codex's clock and MCP resource
+listing beside them), its file tools among them; the shell
+(`shell_tool`) stays off for every role, and a writer has the file-editing
+tool under the `ROLE_PROFILE` permission profile (reads denied everywhere
+but `:minimal` and its run folder, writes in its run folder only, no
+network). The exec probe (`codex_role_probe.py`, `JARVIS_DATA_DIR=<a
+temporary folder with its own Codex login> python -m
+jarvis.codex_role_probe`) proves it for every role: one real turn each,
+launched as it ships, asked through `exec` to run a shell command (a
+marker file), read a file outside its tools (a secret looked for in the
+reply, every app-server message and its transcript) and make a network
+call (a loopback recorder, which also stands in for JARVIS behind its tool
+server); the verdict is the program's, and a role that reaches anything
+but its own tool server's tools, or is offered a tool by any other server,
+fails. Codex's own `list_mcp_resources` (an MCP call) counts as allowed
+only when what it named and listed is the role's own server alone
+(`listed_servers`; a listing not completed or not readable fails). Run on
+JARVIS's own Codex home (a temporary data folder whose `codex` is a link to
+it), every role passes.
+Retrieval runs on Codex as on Claude, with the code-mode host and its own
+tool server only. On Codex
+0.171.0 the live list holds every tier's model (GPT-6.2 Astra and Sol,
+GPT-6.1 Terra, GPT-6 Luna) and each tier resolves. The approved
+prompts are `role_prompts.py`, word for word, each split into its system
+prompt and its closing material, every `{...}` filled by `fill`.
+Models come from the four tiers (`model_tiers.py`, a code file: Fable /
+Astra, Opus / Sol, Sonnet / Terra, Haiku / Luna, one line a family): a
+Claude family is its alias, the latest; a Codex family the newest in the
+live `model/list` by the version in its name (`PINNED` names an older one
+in full). `pick` takes the role's brain from engines.json (the main
+brains' method, the override included) and its tier's model there, unless
+its entry names a model; the sweep (`sweep`) goes down the family newest
+to oldest, then up to the next model, its versions oldest to newest, and
+no further; none is `NoModel`, the job's Error. Claude's models are the tiers' families
+(Fable among them); Codex's fallback is the sweep's first for the
+default tier (`DEFAULT_TIER`, 3) over its live list
+(`codex_provider.fallback_model`), Codex's own default when it lists
+nothing, never a fixed name.
 
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
@@ -3067,9 +4221,59 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   forwards `tools/call` to `POST /internal/tool`
 - `agent_mcp.py` — Stdio MCP server exposing JARVIS's tools to agents:
   the brain's reading tools through the signed `POST /api/agent-tool`, the
-  agent commands' own `main`s, the package job tools (see "Agent tools")
-- `package_jobs.py` — A package as a job: start, status and answer, the
-  functions the agent's package tools call
+  agent commands' own `main`s, the package request tools (see "Agent tools")
+- `package_request.py` / `package_jobs.py` / `package_jobs_api.py` — A
+  package request: the sender's typed handoff and its signed calls; each
+  run's job, run by JARVIS, and its Error; the routes (see "Package
+  requests")
+- `package_gather.py` / `package_evidence.py` / `evidence_readers.py` /
+  `session_transcript.py` / `work_research.py` — The gather step, a
+  package's evidence (its place, manifest, Tim's knowledge states, urgent
+  index and links), each typed entry's reader, a session's own transcript
+  read by id, and a Work item's own research (see "A package's evidence")
+- `package_mark.py` / `evidence_structured.py` / `briefing_labels.py` — The
+  mark step, what a program reads in the evidence (each file's type, its
+  structured facts, its prose), and the 28 labels a briefing is marked with
+  (see "A package's evidence")
+- `run_report.py` — Each package run's timing.json and quality.json, the
+  collector the run's process records every role call into, and their sums
+  per package and Work item (see "A package's evidence")
+- `awake.py` — The Mac kept from idle sleep while a package run works
+  (`held`, caffeinate), and how long it slept in a span (`Clock`)
+- `pages.py` — A role's material packed into pages that fit its model's
+  window with room for the answer, files grouped by type, folder and
+  meaning, and the pages asked in parallel, one session a worker (marking,
+  classification and the script's marking; see "A package's evidence")
+- `working_set.py` / `role_search.py` — What a swarm participant is
+  given of the evidence (every file whole with short marks in place when
+  it fits its window, else the working set), and the author's batch search
+  (see "A package's evidence")
+- `package_swarm.py` / `research_log.py` — The research and swarm steps:
+  the author's research turn, the cooperative swarm's outline, fill and
+  fix passes, its sign-offs, questions to the sender and what is left,
+  kept between the run's processes; every search a
+  role makes logged, and the hits the passed script used (see "A package's
+  evidence")
+- `step_cache.py` — One package's cache of its steps, keyed by their
+  inputs and their tool (code by source hash, roles, prompts, the model
+  that runs them): each
+  unit's key, its kept output and timing, reuse, replacing a rejected
+  output, pruning, and the run's timing.json units (see "Package requests")
+- `deck_capacity.py` — How much each layout slot holds at 662 x 489 with
+  every word at its floor, for every object type, a decision's slide with
+  its objects in the band above its options (`shown_box`) and the answers
+  slide, and what a deck over it is refused for (see "Work packages"); `presentation_data.py` — datasets,
+  their views, and tables and charts drawn from them; `diagram_layout.py` —
+  a diagram's kind rules, its layout by program, what a slot holds of each
+  kind and its words checked in place at a frame
+- `script_visuals.py` — The script's visuals: the outline's forms, the
+  script's typed visual pieces, each number found at its source, every
+  picture a file JARVIS draws, every slide laid out within its slots'
+  capacity as the script is written, the deck's content slides and each
+  decision slide's words and objects built from the script by program, and
+  a deck owner's edit of a built word turned into the same edit of the
+  script, what needs the script slide itself said as an item (see "A
+  package's evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
@@ -3153,6 +4357,13 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   server (see "The Run Pipeline")
 - `engine_choice.py` — Which engine and model each kind of agent goes on,
   token stress and the override (see "Which engine each kind of agent goes on")
+- `sessions.py` / `roles.py` / `role_mcp.py` / `role_prompts.py` /
+  `model_tiers.py` / `text_parts.py` / `evidence_types.py` — The sessions a
+  package is made with, each role's launch and tools, a role's own tool
+  server, the approved prompts, the four tiers and the sweep (with each
+  model's window, its most answer and each brain's parallel calls), the written
+  text splitter and the evidence types (see "The sessions a package is
+  made with")
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
 - `builds.py` — The spec/brief/plan pipeline behind real, phased,
   multi-session builds (see "The Run Pipeline" above)
@@ -3216,13 +4427,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `legacy_access.py` — The cut-over guard: old access keys accepted until
   none has been used for seven days, then never again
 - `package_signature.py` / `key_error_package.py` — A package's signature
-  (who sent it, what it vouches for, a work-item key grant, its fresh
-  author), and the error package for something held
-- `author_proof.py` — Proof that a fresh author session wrote an agent's
-  package: the source digest, the claim and the author's own transcript
-- `briefing_prep.py` — The forced briefing pipeline: the typed questions
-  (`decide`), the editors, the judges and their rounds over the author's
-  prep.md and script.md, and carrying them in the package
+  (who sent it, what it vouches for, a work-item key grant), and the error
+  package for something held
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
   the one way to reach Tim (a signed message, every decision a package)
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
@@ -3358,7 +4564,7 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   with (see `docs/making-a-package.md`); `presentation.py` /
   `presentation_source.py` / `presentation_proof.py` / `layout_spec.py` /
   `picture_proof.py` compile, lay out and prove a deck without a browser;
-  `briefing_prep.py` the briefing before it; `decision_package.py` reads,
+  `decision_package.py` reads,
   expands, checks, builds and delivers the shared deck's data
 - `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
   record, a deck's questions and answers read as data, and its routes (see
@@ -3445,6 +4651,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   the server answering while it runs: its status, the 503 gate and the
   `/api/records/move` route; `frontend/src/RecordsMove.tsx` is the page's
   side
+- `work_folders.py` — Every Work item moved into its own folder,
+  `/work/<id>/<id>.work`, with its whole history (`records.move`), at start
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live

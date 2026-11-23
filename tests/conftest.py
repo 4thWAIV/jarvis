@@ -106,6 +106,20 @@ def _never_start_the_engine_s_process(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_report_as_the_session_running_the_suite(monkeypatch):
+    """An agent's commands read who they are and where JARVIS is from the
+    environment (env_names WIRING: JARVIS_ACCESS_KEY, JARVIS_AGENT_SESSION,
+    CLAUDE_CODE_SESSION_ID, JARVIS_URL). Run from an agent's own session the
+    suite inherits that agent's, so a report command under test sent its
+    real access key in place of failing for want of a key
+    (test_agent_keys's report commands test). Every test starts with none;
+    one that wants them sets them itself."""
+    for name in ("JARVIS_ACCESS_KEY", "JARVIS_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",
+                 "JARVIS_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _never_watch_this_mac_s_real_sessions(monkeypatch, tmp_path):
     """The session watcher started by the app's lifespan reads every Claude
     config root's rosters and transcripts (session_watch.DEFAULT_ROOTS, which
@@ -545,23 +559,16 @@ async def page_playwright(request, _chromium_for_the_session):
 def authored_package_source(monkeypatch):
     """Exercise factory rendering/delivery after authorship in existing tests.
 
-    test_package_author separately exercises the mandatory gate and both real
+    test_package_author separately exercises the fresh author and both real
     provider adapters. This fixture is opt-in, never a global author bypass:
-    the source is left as a fresh author leaves it, its receipt beside it
-    and its own transcript showing its last check, with its briefing's
-    prep, script and edits (tests/author_fixtures); what the factory asks
-    the author again is in the list this returns.
+    the given source is handed to the build as a fresh author's; what the
+    factory asks the author again is in the list this returns.
     """
     from jarvis import package_author
-    from tests.author_fixtures import authored
 
     asked: list[str] = []
 
     def prepare(handoff, engine, out, **kw):
-        try:
-            authored(kw["source"], engine or "claude")
-        except ValueError:
-            pass        # a source its own check refuses: the build says why
         if kw.get("finish"):
             import asyncio
 
@@ -571,15 +578,3 @@ def authored_package_source(monkeypatch):
         return kw["source"]
     monkeypatch.setattr(package_author, "prepare", prepare)
     return asked
-
-
-@pytest.fixture
-def briefing_passes(monkeypatch):
-    """Every editor of a briefing proposes nothing and every judge passes
-    (briefing_prep.ASK): for tests of what happens after the briefing. The
-    stand-in, with the prompts it was given, is what this returns."""
-    from jarvis import briefing_prep
-    from tests.author_fixtures import passing_judges
-    ask = passing_judges()
-    monkeypatch.setattr(briefing_prep, "ASK", ask)
-    return ask

@@ -11,26 +11,49 @@ what can be computed is proven here:
 - Story targets. Every target the story points at (its beats' targets and
   actions, each waiting slide's question) is in the target index or one of
   the shared deck's own selectors.
+- Diagrams. Every diagram as diagram_layout laid it out, at every frame
+  layout_spec.frames gives: each node's words within its box, each
+  connector's, group's and when's words within their places, at that
+  frame's sizes (`prove_diagrams`).
+- Words' size. Every text style a deck draws in (layout_spec styles) is
+  at least the text floor at the smallest and the largest frame, at the
+  least the slide's fit may scale it to.
 - Templates. The renderer files in the built folder are byte for byte
   JARVIS's own (`template_hashes`), so no package carries a changed
   renderer.
 
-Words are drawn in a system font stack, so how much room they take is not
-computed: the character caps (decision_package.CAPS) keep a slide's words
-within reason.
+Words are drawn in a system font stack. How much room they take is held
+by the language, not measured: every slot's content is within its
+capacity, worked out from the layout spec at the smallest frame with every
+word at its floor (deck_capacity, refused by presentation_source as the
+deck is written), and each slide's words are then drawn at the largest size
+at which the slide fits its frame (deck.js fitSlide, within
+layout-spec.json's "fit"). The proof records the range each style may be
+drawn in (`text_px_range`) and each object's capacity (`capacity`: the
+lines its slot holds and the lines it needs, at the floor).
 
 `record` is the proof, written as .jarvis/layout-proof.json in the
-built package; each `Failure` is said in the author's terms.
+built package; each `Failure` is said in the author's terms. It carries
+the layout data (`layout_data`): each slide as JARVIS lays it out, its
+title, its objects in reading order with their slot, box and size at the
+smallest and largest frame, each word with its style and the range of sizes
+its slide's fit may draw it at there, each
+picture's drawn size there, and its narration. The deck review of a
+package run reads it beside the passed script, with no browser
+(workflow.yaml deck deck_review).
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import layout_spec, picture_proof
-from jarvis.presentation_schema import ContentSlide, ImageObject
+from jarvis import data_paths, deck_capacity, diagram_layout, layout_spec, picture_proof
+from jarvis.presentation_schema import (BarObject, CalloutObject, ChartObject, ContentSlide,
+                                        DiagramObject, FiguresObject, ImageObject, StepsObject,
+                                        TableObject, TextObject, VectorObject)
 
 PROOF_FILE = ".jarvis/layout-proof.json"
 VERSION = "presentation-proof/2"
@@ -45,24 +68,88 @@ class Failure:
 
 # -- the proof ------------------------------------------------------------------------
 
-def prove_pictures(source, pictures: dict[str, picture_proof.Picture]) -> list[Failure]:
-    """Every picture of every content slide, drawn in its slot at every
-    frame; one failure a picture is enough to act on."""
-    failures: list[Failure] = []
-    seen: set[str] = set()
+def ordered_objects(slide: ContentSlide):
+    """The authored reading order governs every generated human traversal."""
+    objects = {obj.id: obj for obj in slide.objects}
+    return (objects[ident] for ident in slide.readingOrder)
+
+
+def placed_objects(source):
+    """Every object the deck draws with the box it is laid out in: each
+    content slide's in its slot, and each decision's in its place in the
+    band above its options (deck_capacity.shown_box)."""
     for slide in source.document.slides:
-        if not isinstance(slide, ContentSlide):
-            continue
-        boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
-        for frame in layout_spec.frames():
+        if isinstance(slide, ContentSlide):
+            boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
             for obj in slide.objects:
-                if not isinstance(obj, ImageObject) or obj.id in seen:
-                    continue
-                problem = picture_proof.drawn_problem(pictures[obj.asset],
-                                                      layout_spec.frame_box(boxes[obj.slot], frame))
-                if problem:
-                    seen.add(obj.id)
-                    failures.append(Failure(obj.id, frame, f"Picture {obj.id}: {problem}."))
+                yield obj, boxes[obj.slot]
+    decisions = source.document.decisions
+    for n, decision in enumerate(decisions):
+        if decision.objects:
+            box = deck_capacity.shown_box(decision, n, decisions)
+            for obj in decision.objects:
+                yield obj, box
+
+
+def sizes() -> dict[str, tuple[float, float]]:
+    """The two sizes a deck is drawn at, at the ends of the frame range."""
+    frame = layout_spec.spec()["frame"]
+    return {"smallest": tuple(frame["min"]), "largest": tuple(frame["max"])}
+
+
+def _style_px(style: str) -> dict[str, list[float]]:
+    """The least and the most a style may be drawn at at both sizes: the
+    slide's fit (deck.js fitSlide) chooses within it."""
+    return {name: [round(px, 1) for px in layout_spec.style_range(style, layout_spec.unit(frame))]
+            for name, frame in sizes().items()}
+
+
+def prove_text() -> list[Failure]:
+    """Every text style at least the text floor at both sizes, at the least
+    the slide's fit may scale it to."""
+    floor = layout_spec.spec()["text"]["min_px"]
+    return [Failure(style, frame, f"Words in the {style} style are drawn at {px:g} px at "
+                                  f"{frame[0]:g} x {frame[1]:g}, under {floor} px.")
+            for style in layout_spec.spec()["styles"]
+            for name, frame in sizes().items()
+            if (px := layout_spec.style_range(style, layout_spec.unit(frame))[0]) < floor]
+
+
+def prove_pictures(source, pictures: dict[str, picture_proof.Picture]) -> list[Failure]:
+    """Every picture a slide or a decision shows, drawn in its place at
+    every frame; one failure a picture is enough to act on."""
+    failures: list[Failure] = []
+    placed = [(obj, box) for obj, box in placed_objects(source) if isinstance(obj, ImageObject)]
+    seen: set[str] = set()
+    for frame in layout_spec.frames():
+        for obj, box in placed:
+            if obj.id in seen:
+                continue
+            problem = picture_proof.drawn_problem(pictures[obj.asset],
+                                                  layout_spec.frame_box(box, frame))
+            if problem:
+                seen.add(obj.id)
+                failures.append(Failure(obj.id, frame, f"Picture {obj.id}: {problem}."))
+    return failures
+
+
+def prove_diagrams(source) -> list[Failure]:
+    """Every diagram's words in their places at every frame, as its layout
+    (diagram_layout, read with the source) placed them; one failure a
+    diagram is enough to act on."""
+    failures: list[Failure] = []
+    for obj, box in placed_objects(source):
+        if not isinstance(obj, DiagramObject):
+            continue
+        drawn = deck_capacity.drawn_diagram(obj, box)
+        if drawn["problems"]:
+            failures.append(Failure(obj.id, None, f"Diagram {obj.id}: {drawn['problems'][0]}."))
+            continue
+        for frame in layout_spec.frames():
+            problems = diagram_layout.frame_problems(drawn, box, frame)
+            if problems:
+                failures.append(Failure(obj.id, frame, f"Diagram {obj.id}: {problems[0]}."))
+                break
     return failures
 
 
@@ -116,11 +203,193 @@ def prove_templates(folder: Path) -> list[Failure]:
     return failures
 
 
-def record(source, failures: list[Failure]) -> dict:
+# -- the layout data -------------------------------------------------------------------
+
+def _box_px(box) -> dict[str, list[float]]:
+    return {name: [round(v, 1) for v in layout_spec.frame_box(box, frame)]
+            for name, frame in sizes().items()}
+
+
+def _paragraph_style(role: str) -> str:
+    return "heading" if role == "heading" else "body"
+
+
+def _object_layout(obj, box, pictures: dict) -> dict:
+    out = {"id": obj.id, "type": obj.type, "slot": obj.slot, "box": list(box),
+           "size_px": _box_px(box)}
+    if isinstance(obj, TextObject):
+        out["paragraphs"] = [{"id": p.id, "role": p.role, "style": _paragraph_style(p.role),
+                              "text_px_range": _style_px(_paragraph_style(p.role)),
+                              "runs": [{"id": r.id, "text": r.text, "emphasis": r.emphasis}
+                                       for r in p.runs]} for p in obj.paragraphs]
+    elif isinstance(obj, ImageObject):
+        picture = pictures[obj.asset]
+        out.update(asset=obj.asset, alt=obj.alt, natural_px=[picture.width, picture.height],
+                   drawn_px={name: [round(v, 1) for v in picture_proof.drawn(
+                       picture, layout_spec.frame_box(box, frame))]
+                       for name, frame in sizes().items()})
+    elif isinstance(obj, TableObject):
+        out.update(alt=obj.alt, style="cell", text_px_range=_style_px("cell"), head=obj.head,
+                   rows=[{"id": r.id, "cells": r.cells} for r in obj.rows])
+    elif isinstance(obj, BarObject):
+        out.update(alt=obj.alt, units=obj.units, domain=obj.domain,
+                   bars=[{"id": b.id, "label": b.label, "value": b.value} for b in obj.bars])
+    elif isinstance(obj, VectorObject):
+        out.update(alt=obj.alt, members=[{"id": m.id, "type": m.type, "alt": m.alt}
+                                         for m in obj.members])
+    elif isinstance(obj, CalloutObject):
+        out.update(style="body", text_px_range=_style_px("body"), label=obj.label, says=obj.says)
+    elif isinstance(obj, FiguresObject):
+        out.update(style="figure", text_px_range=_style_px("figure"),
+                   items=[{"id": i.id, "value": i.value, "label": i.label} for i in obj.items])
+    elif isinstance(obj, StepsObject):
+        out.update(style="body", text_px_range=_style_px("body"),
+                   items=[{"id": i.id, "title": i.title, "says": i.says} for i in obj.items])
+    elif isinstance(obj, ChartObject):
+        drawn = obj._drawn or {}
+        out.update(alt=obj.alt, kind=obj.kind, dataset=obj.data.dataset, x=obj.x, y=list(obj.y),
+                   categories=drawn.get("categories"),
+                   series=[{"label": s["label"], "points": [p["name"] for p in s["points"]]}
+                           for s in drawn.get("series") or []])
+    elif isinstance(obj, DiagramObject):
+        out.update(alt=obj.alt, **_diagram_layout(obj, box))
+    room = deck_capacity.object_capacity(obj, box)
+    if room is not None:
+        out["capacity"] = room
+    return out
+
+
+def _diagram_layout(obj, box) -> dict:
+    """A diagram as JARVIS laid it out: its kind and orientation, its words'
+    sizes at both sizes (drawn at the deck size, never grown by the fit),
+    every node (with the lines its words take), connector (with its words'
+    lines) and group with its place as a share of the slot (`at`, [x, y,
+    width, height]; a connector's `points`) and in px at both sizes (each
+    word's place too: a node's when, a connector's and a group's words), a
+    timeline's axis in shares and px, and what its slot holds."""
+    drawn = deck_capacity.drawn_diagram(obj, box)
+    d = diagram_layout.spec()
+    frames = sizes()
+    slot = {name: layout_spec.frame_box(box, frame) for name, frame in frames.items()}
+
+    def px(share):
+        return {name: [round(share[0] * w, 1), round(share[1] * h, 1), round(share[2] * w, 1),
+                       round(share[3] * h, 1)] for name, (w, h) in slot.items()}
+
+    out = {"kind": obj.kind, "orientation": drawn.get("orientation"), "room": drawn["room"],
+           "holds": drawn["holds"],
+           "text_px": {style: {name: round(layout_spec.style_px(d[style], layout_spec.unit(frame)), 1)
+                               for name, frame in frames.items()} for style in ("node", "link")}}
+    def point_px(share):
+        return {name: [round(share[0] * w, 1), round(share[1] * h, 1)] for name, (w, h) in slot.items()}
+
+    out["nodes"] = [{**{k: n[k] for k in ("id", "label", "shape", "tone", "when", "lines")},
+                     "at": n["box"], "box_px": px(n["box"]),
+                     **({"when_at": n["when_box"], "when_px": px(n["when_box"])}
+                        if n.get("when_box") else {})}
+                    for n in drawn.get("nodes") or []]
+    out["connectors"] = [{**{k: link[k] for k in ("id", "from", "to", "style", "label", "points")},
+                          "points_px": [point_px(p) for p in link["points"]],
+                          **({"label_at": link["label_box"], "label_px": px(link["label_box"]),
+                              "label_lines": link["label_lines"]}
+                             if link.get("label_box") else {})}
+                         for link in drawn.get("links") or []]
+    out["groups"] = [{"id": g["id"], "label": g["label"], "nodes": g["nodes"], "at": g["box"],
+                      "box_px": px(g["box"]), "label_at": g["label_box"],
+                      "label_px": px(g["label_box"]), "label_lines": g["label_lines"]}
+                     for g in drawn.get("groups") or []]
+    if drawn.get("axis"):
+        axis = drawn["axis"]
+        out["axis"] = {**axis, "from_px": point_px(axis["from"]), "to_px": point_px(axis["to"]),
+                       "markers_px": [point_px(p) for p in axis["markers"]]}
+    return out
+
+
+# Where the shared deck draws a decision slide's words, and the rule in its
+# deck.css that sizes each: the question its heading, the option names
+# their own, every other word the deck's body size.
+DECK_CSS = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "deck.css"
+DECISION_WORDS = {"question": "h2", "option_name": ".option h3", "context": "--body",
+                  "reason": "--body", "says": "--body"}
+_CLAMP = (r"\s*clamp\(([\d.]+)px,\s*calc\(([\d.]+) \* var\(--u\) \* var\(--fit, 1\)\),"
+          r"\s*([\d.]+)px\)")
+
+
+def deck_words_px(rule: str) -> dict[str, list[float]]:
+    """The least and the most px size at the smallest and the largest frame
+    of the words a deck.css rule sizes (a selector's font-size, or a custom
+    property), as the shared deck may draw them: clamp(min, units x the deck
+    unit x the slide's fit, max), the fit within layout-spec.json's."""
+    css = DECK_CSS.read_text(encoding="utf-8")
+    found = (re.search(re.escape(rule) + r":" + _CLAMP, css) if rule.startswith("--") else
+             re.search(r"(?m)^" + re.escape(rule) + r"\s*\{[^}]*?font-size:" + _CLAMP, css))
+    if found is None:
+        raise ValueError(f"deck.css sizes no words by {rule!r}")
+    low, units, high = (float(g) for g in found.groups())
+    fit = layout_spec.spec()["fit"]
+    return {name: [round(min(max(units * layout_spec.unit(frame) * k, low), high), 1)
+                   for k in (fit["scale_min"], fit["scale_max"])]
+            for name, frame in sizes().items()}
+
+
+def _story_of(story: dict | None, decision: str) -> list[dict]:
+    """What JARVIS says on a decision's slide: the story's beats on the
+    slide that waits for it."""
+    for slide in (story or {}).get("slides") or []:
+        if slide.get("waits") == decision:
+            return [{"say": b.get("say", "")} for b in slide.get("beats") or []]
+    return []
+
+
+def layout_data(source, story: dict | None = None) -> list[dict]:
+    """Each slide as JARVIS lays it out (layout_spec), worked out from the
+    source, its pictures and the spec alone: a content slide's title with
+    the range of its size, its layout, its objects in reading order (each with its slot,
+    its box in deck units and its size in px at both sizes; a text's words
+    with their style and the range of their size; a picture's own and drawn size; a table's
+    cells; a bar's values) and its narration; a decision's question,
+    options and recommendation, the range of sizes the shared deck may draw
+    each of its words at (`deck_words_px`) and, given the deck's `story`, what
+    JARVIS says on its slide."""
+    decisions = {d.id: d for d in source.document.decisions}
+    out = []
+    for n, slide in enumerate(source.document.slides, 1):
+        if not isinstance(slide, ContentSlide):
+            d = decisions[slide.decision]
+            out.append({"slide": n, "id": slide.id, "type": "decision", "decision": d.id,
+                        "question": d.question, "context": d.context,
+                        "options": [{"id": o.id, "name": o.name, "says": o.says,
+                                     "picture": o.picture} for o in d.options],
+                        "recommended": d.recommended, "reason": d.reason, "say": d.say,
+                        # What it shows beside its words, each object in
+                        # its place in the band above the options.
+                        "objects": [_object_layout(obj, deck_capacity.shown_box(
+                            d, source.document.decisions.index(d), source.document.decisions),
+                            source.pictures) for obj in d.objects],
+                        "text_px_range": {k: deck_words_px(rule)
+                                    for k, rule in DECISION_WORDS.items()},
+                        "narration": _story_of(story, d.id)})
+            continue
+        boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
+        out.append({"slide": n, "id": slide.id, "type": "content", "title": slide.title,
+                    "title_box": list(layout_spec.spec()["title"]),
+                    "title_px_range": _style_px("heading"),
+                    "title_size_px": _box_px(layout_spec.spec()["title"]),
+                    "layout": slide.layout,
+                    "objects": [_object_layout(obj, boxes[obj.slot], source.pictures)
+                                for obj in ordered_objects(slide)],
+                    "narration": [{"id": c.id, "say": c.say, "focus": list(c.focus)}
+                                  for c in slide.narration]})
+    return out
+
+
+def record(source, failures: list[Failure], story: dict | None = None) -> dict:
     return {"version": VERSION, "source_sha256": source.digest,
             "spec_sha256": hashlib.sha256(layout_spec.PATH.read_bytes()).hexdigest(),
             "frames": [list(f) for f in layout_spec.frames()], "templates": template_hashes(),
-            "language": source.language, "proven": not failures}
+            "language": source.language, "proven": not failures,
+            "sizes": {name: list(frame) for name, frame in sizes().items()},
+            "slides": layout_data(source, story)}
 
 
 def write(folder: Path, proof: dict) -> None:
@@ -146,6 +415,6 @@ def reprove(folder: Path) -> list[str]:
         return [f"Its layout proof cannot be made again: {error}"]
     if recorded.get("source_sha256") != source.digest:
         return ["Its layout proof is for another source than the one it carries."]
-    failures = prove_pictures(source, source.pictures)
+    failures = prove_pictures(source, source.pictures) + prove_text() + prove_diagrams(source)
     failures += prove_targets(story, targets, deck) + prove_templates(folder)
     return [failure.message for failure in failures]

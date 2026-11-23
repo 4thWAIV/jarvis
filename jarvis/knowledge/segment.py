@@ -449,6 +449,33 @@ class Segment:
             return newest
         return _first_in_records(self._records(index), key, at, live)
 
+    def newest_many(self, keys: list[bytes], at: Optional[int] = None,
+                    live: bool = False) -> dict[bytes, Version]:
+        """`newest` of each of `keys` (sorted) in one pass over the
+        segment: keys falling in one block share its one read and decode,
+        held here for the pass whatever the pool keeps, and the blocks are
+        read in file order. A key absent here is left out."""
+        out: dict[bytes, Version] = {}
+        if not self.first_keys:
+            return out
+        held_index, held = -1, None
+        for key in keys:
+            if not self.might_have(key):
+                continue
+            index = max(0, bisect.bisect_right(self.first_keys, key) - 1)
+            if index != held_index:
+                held_index, held = index, self._decoded(index)
+            if held is None:
+                found = self.newest(key, at, live)        # an oversized block: streamed
+            else:
+                versions, held_keys = held
+                lo = bisect.bisect_left(held_keys, key)
+                hi = bisect.bisect_right(held_keys, key, lo)
+                found = next((v for v in versions[lo:hi] if _wanted(v, at, live)), None)
+            if found is not None:
+                out[key] = found
+        return out
+
     def _raw_size(self, index: int) -> int:
         size = self._raw_sizes.get(index)
         if size is None:

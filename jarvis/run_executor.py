@@ -199,6 +199,15 @@ def _resolve_idle(explicit: float | None) -> float:
                           _IDLE_OUTPUT_SEC, "a silent run")
 
 
+def bounds(timeout: float | None = None) -> tuple[float, float]:
+    """A run's two bounds, (wall clock, idle): Settings' run_timeout_sec and
+    run_idle_sec, resolved as every run's are (`timeout` in place of the
+    first where a caller names one). A package run's role session calls are
+    held to the same two (sessions.BrainChatSession): a run always reaches
+    a terminal state, so no call of it waits without end."""
+    return _resolve_default_timeout(timeout), _resolve_idle(None)
+
+
 class _IdleTimeout(Exception):
     """The child held stdout open and said nothing for too long.
 
@@ -395,7 +404,7 @@ class RunExecutor:
         coro = None
         try:
             runner = self._engine_of({"engine": engine})
-            resolved_model = runner.resolve_model(model)
+            resolved_model = await asyncio.to_thread(runner.resolve_model, model)
             # A caller that names no bound (every production caller does not)
             # gets the default one. See _resolve_default_timeout.
             bound = timeout_sec if timeout_sec and timeout_sec > 0 \

@@ -273,31 +273,6 @@ def test_each_bound_part_changed_alone_is_refused(draft, tmp_path, tamper, said)
         language_projection.folder_gate(folder, communication)
 
 
-@pytest.mark.parametrize("attached, ok", [
-    ("exact", True), ("none", True), ("other-markdown", False), ("other-story", False),
-    ("missing-story", False), ("extra-file", False),
-])
-def test_the_attached_author_source_must_be_the_bound_explanation_and_story(
-        draft, tmp_path, attached, ok):
-    folder, manifest, raw = authored_projection(draft, tmp_path)
-    author = {"package/UNDERSTANDING.md": MARKDOWN, "package/story.json": raw}
-    if attached == "none":
-        author = {}
-    elif attached == "other-markdown":
-        author["package/UNDERSTANDING.md"] = MARKDOWN + b"x"
-    elif attached == "other-story":
-        author["package/story.json"] = raw + b" "
-    elif attached == "missing-story":
-        del author["package/story.json"]
-    elif attached == "extra-file":
-        author["package/notes.md"] = b"notes"
-    if ok:
-        language_projection.gate(folder_read(folder), manifest["communication"], author)
-    else:
-        with pytest.raises(language_documents.DocumentError, match="attached source differs"):
-            language_projection.gate(folder_read(folder), manifest["communication"], author)
-
-
 def test_a_legacy_fresh_author_package_still_opens_with_the_vote_alone(draft, tmp_path):
     """Packages made before the author could write a story: their binding
     has no purpose or story, and they stay readable exactly as they were."""
@@ -306,8 +281,7 @@ def test_a_legacy_fresh_author_package_still_opens_with_the_vote_alone(draft, tm
     edit_json(folder / "package.json", lambda m: m.update(
         purpose="Inspect the checked architecture and discuss its exact canonical source revision."))
     language_projection.folder_gate(folder, manifest["communication"])
-    language_projection.gate(folder_read(folder), manifest["communication"],
-                             {"package/UNDERSTANDING.md": MARKDOWN})
+    language_projection.gate(folder_read(folder), manifest["communication"])
     story = folder / make_package.STORY_FILE
     edit_json(story, lambda s: s["slides"].insert(0, {"title": "x", "beats": [{"say": "x"}]}))
     with pytest.raises(language_documents.DocumentError, match="unchanged factory-generated standard vote"):

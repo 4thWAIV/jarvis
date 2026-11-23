@@ -136,6 +136,11 @@ EXEMPT = {
         "purpose: it is searching a stored multi-line build prompt for the "
         "one line naming the spec file. `fullmatch` is the wrong tool for "
         "that question, and `.search` is the right method for it"),
+    ("evidence_structured.py", "_SECTION_END"): (
+        "compiled with `re.MULTILINE`, where `$` means END OF LINE on "
+        "purpose: it searches a pytest log for the next `=== ... ===` line "
+        "after a failure's section, which ends that section; `fullmatch` is "
+        "the wrong tool for that question"),
 }
 
 
@@ -276,6 +281,7 @@ SAMPLES = {
     "FULL_NAME_RE": "owner/name",
     "_MODEL_ID_RE": "claude-sonnet-5",
     "_CODEX_MODEL_RE": "gpt-5.6-terra",
+    "_CODEX_MODEL": "gpt-6.2-sol",
     "_URL_RE": "https://github.com/owner/name",
     "_INDEX_LINE_RE": "- [a fact](a-fact.md) — the hook",
     "_NOTE_LINE_RE": "_2026-11-05 14:02_ — the store is Postgres",
@@ -283,6 +289,8 @@ SAMPLES = {
     "_JOURNAL_NAME_RE": "2026-09-04-133912-123456-manual.md",
     "_TABLE_ROW": "|zeltar pro|99|",
     "_HEADING": "# Title",
+    "_LINES": "lines 1-2",
+    "_CHARS": "chars 0-4",
     "_TASK_HEADING": "## Task 1: wire the executor",
     "_CHECKBOX": "- [x] done",
     "_UUID": "01a0ca40-0ae3-7452-893a-87da26c01453",
@@ -295,6 +303,10 @@ SAMPLES = {
     "_TEXT": "jref:1:node-1:folder:01a0ca40@3/docs/a.md#sha256=" + "0" * 64,
     "_WINDOWS_DRIVE_PATH_RE": "C:\\Users\\someone\\src\\jarvis",
     "KEY_PATTERN": "Zx3_kQ9-pL2mN8rT4vW6yA1b",
+    "_GITHUB": "https://github.com/owner/name/pull/1",
+    "_GH_LOG": "test\tRun pytest\t2026-11-20T10:00:00.0000000Z FAILED tests/a.py::t",
+    "_JOB": "jobs[0].conclusion",
+    "_STEP": "jobs[0].steps[2].name",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"

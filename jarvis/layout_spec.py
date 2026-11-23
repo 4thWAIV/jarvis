@@ -46,10 +46,18 @@ def corners() -> list[tuple[int, int]]:
     return [(w0, h0), (w0, h1), (w1, h0), (w1, h1)]
 
 
-def style_px(style: str, u: float) -> float:
-    """A text style's size in px at deck unit `u`: its units, clamped."""
+def style_px(style: str, u: float, scale: float = 1.0) -> float:
+    """A text style's size in px at deck unit `u` and the slide's fit
+    `scale`: its units times both, clamped to its floor and ceiling."""
     s = spec()["styles"][style]
-    return min(max(s["units"] * u, s["min_px"]), s["max_px"])
+    return min(max(s["units"] * u * scale, s["min_px"]), s["max_px"])
+
+
+def style_range(style: str, u: float) -> tuple[float, float]:
+    """The least and the most a text style can be drawn at at deck unit
+    `u`, whatever the slide's fit (the page chooses within it)."""
+    fit = spec()["fit"]
+    return style_px(style, u, fit["scale_min"]), style_px(style, u, fit["scale_max"])
 
 
 def picture_box(role: str, count: int = 1) -> tuple[float, float]:
@@ -133,10 +141,12 @@ def frame_box(box, frame: tuple[float, float]) -> tuple[float, float]:
 
 def generated_css() -> str:
     s = spec()
-    lines = [GENERATED_BEGIN, ":root {"]
+    # Every style is declared again on each slide and its title, so the
+    # slide's own fit (--fit, set by deck.js fitSlide) sizes its words.
+    lines = [GENERATED_BEGIN, ":root, .slide, .presentation-title {"]
     for name, style in s["styles"].items():
-        lines.append(f"  --deck-{name}: clamp({style['min_px']}px, {_length(style['units'])}, "
-                     f"{style['max_px']}px);")
+        lines.append(f"  --deck-{name}: clamp({style['min_px']}px, calc({style['units']:g} * "
+                     f"var(--u) * var(--fit, 1)), {style['max_px']}px);")
         lines.append(f"  --deck-{name}-line: {style['line']:g};")
     lines += ["}",
               ".presentation-canvas { position: absolute; inset: 0; }",
@@ -152,8 +162,98 @@ def generated_css() -> str:
                 for slot, box in boxes(layout, filled).items():
                     lines.append(_box(f'.presentation-slot[data-layout="{layout}"][data-columns="{count}"]'
                                       f'[data-slot="{slot}"]', box))
+    lines += _components_css() + _chart_css() + _diagram_css()
     lines.append(GENERATED_END)
     return "\n".join(lines) + "\n"
+
+
+def _components_css() -> list[str]:
+    """JARVIS's own components (callout, figures, steps): their lengths,
+    the ones deck_capacity counts."""
+    c = spec()["components"]
+    callout, figures, steps = c["callout"], c["figures"], c["steps"]
+    return [
+        f".presentation-callout {{ border-left: {callout['border_px']}px solid var(--accent); "
+        f"padding: {_length(callout['pad'][1])} {_length(callout['pad'][0])}; }}",
+        f".presentation-figures {{ display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); "
+        f"gap: {_length(figures['gap'])}; }}",
+        f".presentation-figure {{ padding: {_length(figures['pad'][1])} {_length(figures['pad'][0])}; }}",
+        ".presentation-figure-value { font-size: var(--deck-figure); line-height: var(--deck-figure-line); }",
+        f".presentation-steps {{ display: flex; flex-direction: column; gap: {_length(steps['gap'])}; }}",
+        f".presentation-step {{ display: grid; grid-template-columns: {steps['marker']:g}em minmax(0, 1fr); "
+        f"column-gap: {steps['marker_gap']:g}em; align-items: start; }}",
+        f".presentation-step-marker {{ width: {steps['marker']:g}em; height: {steps['marker']:g}em; }}",
+    ]
+
+
+def chart_px(u: float) -> float:
+    """A chart's words in px at deck unit `u`: its style at the deck size,
+    never grown or shrunk by the slide's fit, so its plot keeps its room."""
+    return style_px(spec()["chart"]["style"], u)
+
+
+def _chart_css() -> list[str]:
+    """A chart: legend over the plot, y labels at its left, x labels under
+    it; marks placed by presentation.js as shares of the plot, so the only
+    lengths are these and the words (deck_capacity.chart_needs)."""
+    c = spec()["chart"]
+    style = spec()["styles"][c["style"]]
+    size = f"clamp({style['min_px']}px, {_length(style['units'])}, {style['max_px']}px)"
+    half = f"calc(var(--deck-chart) * {style['line']:g} / 2)"
+    return [
+        f".presentation-chart {{ --deck-chart: {size}; display: grid; grid-template-columns: auto minmax(0, 1fr); "
+        f"grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; font-size: var(--deck-chart); "
+        f"line-height: {style['line']:g}; }}",
+        f".presentation-chart-legend {{ grid-column: 1 / 3; display: flex; flex-wrap: wrap; "
+        f"column-gap: {c['legend_gap']:g}em; }}",
+        f".presentation-chart-swatch {{ display: inline-block; width: {c['swatch']:g}em; height: {c['swatch']:g}em; "
+        f"margin-right: {c['swatch_gap']:g}em; }}",
+        f".presentation-chart-y {{ grid-row: 2; grid-column: 1; position: relative; padding-right: {c['axis_gap']:g}em; }}",
+        f".presentation-chart-y > .presentation-chart-ticks {{ position: absolute; inset: {half} {c['axis_gap']:g}em {half} 0; }}",
+        f".presentation-chart-plot {{ grid-row: 2; grid-column: 2; position: relative; margin: {half} 0; }}",
+        ".presentation-chart-x { grid-row: 3; grid-column: 2; position: relative; }",
+        ".presentation-chart-x.categories { display: grid; grid-template-columns: repeat(var(--count), minmax(0, 1fr)); "
+        "text-align: center; }",
+        f".presentation-chart-x.ticks {{ height: calc(var(--deck-chart) * {style['line']:g}); }}",
+        f".presentation-chart-dot {{ width: {c['dot']:g}em; height: {c['dot']:g}em; }}",
+    ]
+
+
+def _fixed(style: str) -> str:
+    """A text style at the deck size, never grown by the slide's fit."""
+    s = spec()["styles"][style]
+    return f"clamp({s['min_px']}px, {_length(s['units'])}, {s['max_px']}px)"
+
+
+def _diagram_css() -> list[str]:
+    """A diagram (diagram_layout places every box as a share of its slot,
+    presentation.js draws it): its words' sizes, a node's border and
+    padding, the share of each shape's box that holds its words, the words
+    on links, groups and a timeline's when, and the tones an author
+    chooses among. Lengths are em of the node style; a label's padding is
+    the node style's em too, as the layout counts it."""
+    d = spec()["diagram"]
+    node, link = spec()["styles"][d["node"]], spec()["styles"][d["link"]]
+    lpad = f"calc(var(--deck-node) * {d['link_pad']:g})"
+    out = [
+        f".presentation-diagram {{ --deck-node: {_fixed(d['node'])}; --deck-link: {_fixed(d['link'])}; "
+        f"position: relative; width: 100%; height: 100%; font-size: var(--deck-node); "
+        f"line-height: {node['line']:g}; }}",
+        f".presentation-diagram-node {{ border: {d['stroke_px']:g}px solid var(--tone); }}",
+        f".presentation-diagram-text {{ padding: {d['pad'][1]:g}em {d['pad'][0]:g}em; }}",
+        f".presentation-diagram :is(.presentation-diagram-label, .presentation-diagram-when, "
+        f".presentation-diagram-group-label) {{ font-size: var(--deck-link); line-height: {link['line']:g}; "
+        f"padding: 0 {lpad}; }}",
+        f".presentation-diagram-marker {{ width: {d['marker']:g}em; height: {d['marker']:g}em; }}",
+        f".presentation-diagram-connector {{ stroke-width: {d['stroke_px']:g}px; }}",
+        f".presentation-diagram-axis {{ stroke-width: {d['axis_px']:g}px; }}",
+    ]
+    for shape, (fx, fy) in d["shapes"].items():
+        out.append(f'.presentation-diagram-node[data-shape="{shape}"] > .presentation-diagram-text '
+                   f'{{ inset: {100 * (1 - fy) / 2:.4f}% {100 * (1 - fx) / 2:.4f}%; }}')
+    for tone, colour in d["tones"].items():
+        out.append(f'.presentation-diagram [data-tone="{tone}"] {{ --tone: {colour}; }}')
+    return out
 
 
 def _with_generated(css: str) -> str:

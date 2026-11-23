@@ -360,6 +360,15 @@
     // leave: they size to the space, never to a fixed thumbnail.
     var pictured = (d.options || []).some(function (o) { return o.picture; });
     if (pictured || d.picture || d.compare) section.classList.add("fill");
+    // What the slide shows beside its words (its presentation/1 objects,
+    // built from its script slide): a band above the options, drawn by
+    // presentation.js, taking the height the rest of the slide leaves.
+    if ((d.objects || []).length && window.JarvisPresentation && window.JarvisPresentation.renderShown) {
+      section.classList.add("fill");
+      var band = body.appendChild(el("div", "shown"));
+      band.id = "d-" + d.id + "-shown";
+      window.JarvisPresentation.renderShown(d.id, band);
+    }
     if (d.picture) {
       body.classList.add("with-context");
       var side = body.appendChild(el("div", "context"));
@@ -422,7 +431,7 @@
       var said = words.value.trim();
       change(function () { if (record[d.id]) record[d.id].note = said; });
     });
-    var recorded = section.appendChild(el("p", "recorded"));
+    var recorded = vote.appendChild(el("p", "recorded"));
     recorded.setAttribute("role", "status");
     views[d.id] = { section: section, options: options, buttons: buttons, later: later, none: none, words: words, recorded: recorded };
     if (window.JarvisPresentation) window.JarvisPresentation.decorateDecision(section, d);
@@ -443,6 +452,7 @@
     v.recorded.classList.add("problem");
     v.recorded.classList.remove("done");
     say(words);
+    refitSoon();
   }
 
   function choose(d, answer) {
@@ -600,6 +610,15 @@
     var tally = answered + " of " + DECISIONS.length + " answered";
     document.getElementById("tally").textContent = tally;
     [].forEach.call(document.querySelectorAll(".tally-here"), function (t) { t.textContent = " · " + tally; });
+    refitSoon();
+  }
+
+  // What is recorded can take another line: the slides are fitted again.
+  var refitting = 0;
+  function refitSoon() {
+    if (typeof layOut !== "function") return;
+    cancelAnimationFrame(refitting);
+    refitting = requestAnimationFrame(layOut);
   }
 
   // ── moving between slides ─────────────────────────────────────────────
@@ -643,7 +662,7 @@
   window.addEventListener("resize", function () {
     fit();
     cancelAnimationFrame(refit);
-    refit = requestAnimationFrame(shrinkPictures);
+    refit = requestAnimationFrame(layOut);
   });
 
   // A decision slide's voting area is always in sight: its pictures give up
@@ -655,46 +674,155 @@
     return img.naturalWidth * img.naturalHeight * k * k;
   }
 
-  function cut(section) {
-    if (section.scrollHeight > section.clientHeight + 1) return true;
-    return [].slice.call(section.querySelectorAll(".option")).some(function (c) {
+  // Every box on a slide that can hold more than it shows: the slide, each
+  // part that clips or scrolls, a presentation slide's title, whose box is
+  // fixed and whose words would run out of it, and every other part of the
+  // slide, whose content may be larger than its box and spill out of it
+  // (an option card shorter than its words and its Choose bar). Form
+  // fields (their value is theirs to scroll), pictures, inline words,
+  // table rows and parts a pixel or less across (a heading for screen
+  // readers) hold nothing of their own to measure.
+  var NO_PART = /^(INPUT|SELECT|TEXTAREA|IMG|BR|OPTION)$/;
+  var NO_BOX = /^(inline|contents|none|table|table-row|table-row-group|table-header-group|table-footer-group|table-column|table-column-group)$/;
+  function boxesOf(scope) {
+    return [scope].concat([].slice.call(scope.querySelectorAll("*")).filter(function (e) {
+      if (!(e instanceof HTMLElement) || NO_PART.test(e.tagName)) return false;
+      if (e.classList.contains("presentation-title")) return true;
+      if (NO_BOX.test(getComputedStyle(e).display)) return false;
+      return e.offsetWidth > 1 && e.offsetHeight > 1;
+    }));
+  }
+
+  function over(boxes) {
+    return boxes.some(function (c) {
       return c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1;
     });
   }
 
-  // Try each way in turn and keep the one that shows the smallest picture
-  // on the slide largest, with nothing cut off.
-  function arrange(section, box, ways) {
+  function cut(section) { return over(boxesOf(section)); }
+
+  // The program's own fit (deck.css, "the program's own fit"; the bounds
+  // are layout-spec.json's "fit"): each slide's words drawn at the largest
+  // size at which nothing on it is clipped or needs scrolling, found by a
+  // binary search on the slide's scale (--fit) between FIT_MIN, where every
+  // word is at the 13 px floor, and FIT_MAX (1 for a slide with pictures in
+  // its flow, so they keep the room). A presentation slide's title has a
+  // scale of its own, in its own box, and its words are never drawn larger
+  // than its title. What does not fit at the floor is drawn tight and
+  // searched again; what still does not says so (data-fit="cut").
+  var FIT_MIN = 0.5, FIT_MAX = 3, FIT_STEPS = 12;
+  var BODY_UNITS = 18, HEADING_UNITS = 26;
+
+  function search(holder, boxes, hi) {
+    function fits(k) { holder.style.setProperty("--fit", String(k)); return !over(boxes); }
+    if (fits(hi)) return hi;
+    if (!fits(FIT_MIN)) return null;
+    var lo = FIT_MIN;
+    for (var i = 0; i < FIT_STEPS; i++) {
+      var mid = (lo + hi) / 2;
+      if (fits(mid)) lo = mid; else hi = mid;
+    }
+    fits(lo);
+    return lo;
+  }
+
+  function fitSlide(section) {
+    section.classList.remove("tight");
+    section.style.removeProperty("--fit");
+    var title = section.querySelector(".presentation-title");
+    if (title) title.style.removeProperty("--fit");
+    if (document.documentElement.classList.contains("presentation-linear")) {
+      section.setAttribute("data-fit", "linear");   // one column that scrolls: nothing to fit
+      return;
+    }
+    var pictured = section.classList.contains("fill") ||
+      (!title && !!section.querySelector(".picture img"));
+    var hi = pictured ? 1 : FIT_MAX;
+    var titleScale = title ? search(title, [title], FIT_MAX) : null;
+    var boxes = boxesOf(section).filter(function (b) { return b !== title; });
+    var scale = search(section, boxes, hi);
+    if (scale === null) {
+      section.classList.add("tight");
+      scale = search(section, boxesOf(section).filter(function (b) { return b !== title; }), hi);
+    }
+    if (scale !== null && titleScale !== null && scale * BODY_UNITS > titleScale * HEADING_UNITS) {
+      scale = titleScale * HEADING_UNITS / BODY_UNITS;
+      section.style.setProperty("--fit", String(scale));
+    }
+    section.setAttribute("data-fit", scale === null || titleScale === null && title ? "cut" :
+                         section.classList.contains("tight") ? "tight" : "fits");
+    if (scale === null) section.style.setProperty("--fit", String(FIT_MIN));
+    if (title && titleScale === null) title.style.setProperty("--fit", String(FIT_MIN));
+  }
+
+  // Try each way in turn (each with what is inside it arranged again,
+  // `within`) and keep the one that shows the smallest picture on the
+  // slide largest, with nothing cut off and no part spilling out of its
+  // box; a picture the way does not show at all counts as none.
+  function arrange(section, box, ways, within) {
     var imgs = [].slice.call(section.querySelectorAll(".picture img"));
     var best = ways[0], bestArea = -1;
     ways.forEach(function (way) {
       ways.forEach(function (w) { box.classList.remove(w); });
       box.classList.add(way);
+      if (within) within();
       if (cut(section)) return;
       var area = Math.min.apply(null, imgs.map(shown));
       if (area > bestArea) { best = way; bestArea = area; }
     });
     ways.forEach(function (w) { box.classList.remove(w); });
     box.classList.add(best);
+    if (within) within();
+    return bestArea >= 0;
   }
 
-  function shrinkPictures() {
-    DECISIONS.forEach(function (d) {
-      var section = views[d.id].section;
-      // Pictured options try each arrangement (picture above its words,
-      // beside them, or, for two options, one option a row) and keep the one
-      // that shows the smallest picture largest with nothing cut off.
-      var opts = section.querySelector(".options.has-pictures");
+  function shrinkPictures(section) {
+    // Pictured options try each arrangement (picture above its words,
+    // beside them, or, for two options, one option a row) and keep the one
+    // that shows the smallest picture largest with nothing cut off. A
+    // decision's own picture yields to them: beside the options, or above
+    // them with its words beside it, whichever leaves every part whole.
+    var opts = section.querySelector(".options.has-pictures");
+    function options() {
       if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
-      var compare = section.querySelector(".compare");
-      if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
-      if (section.classList.contains("fill")) return;   // pictures already fit the space
+    }
+    var withContext = section.querySelector(".decide.with-context");
+    function all() {
+      if (withContext) return arrange(section, withContext, ["context-side", "context-above"], options);
+      options();
+      return !cut(section);
+    }
+    // What is whole at the deck size is chosen there; what is whole only
+    // with the words at their floor, drawn tight, is chosen there.
+    if (!all()) {
+      section.classList.add("tight");
+      section.style.setProperty("--fit", String(FIT_MIN));
+      all();
+      section.classList.remove("tight");
+      section.style.removeProperty("--fit");
+    }
+    var compare = section.querySelector(".compare");
+    if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
+    if (!section.classList.contains("fill")) {   // a filled slide's pictures already fit the space
       var pics = [].slice.call(section.querySelectorAll(".picture img"));
       var limit = 220;
+      pics.forEach(function (img) { img.style.maxHeight = ""; });
       while (section.scrollHeight > section.clientHeight + 1 && pics.length && limit > 48) {
         limit -= 12;
         pics.forEach(function (img) { img.style.maxHeight = limit + "px"; });
       }
+    }
+  }
+
+  // Every slide laid out for the frame as it is now: a decision's pictures
+  // arranged first (at the deck size), then every slide's words fitted.
+  function layOut() {
+    slides.forEach(function (s) {
+      var section = s.el;
+      section.style.removeProperty("--fit");
+      section.classList.remove("tight");
+      if (section.classList.contains("decision")) shrinkPictures(section);
+      fitSlide(section);
     });
   }
 
@@ -704,8 +832,9 @@
   fit();
   show(0);
   render();
-  shrinkPictures();
-  window.addEventListener("load", shrinkPictures);   // once pictures have their sizes
+  layOut();
+  window.addEventListener("load", layOut);   // once pictures have their sizes
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(layOut);
   if (DECISIONS.length) loadRecorded().then(function (start) {
     if (start) { record = clean(start); render(); }
     say(inFrame ? (start ? "Read the answers recorded." : "Answers are saved in results.")

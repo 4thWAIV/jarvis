@@ -32,7 +32,8 @@ real sandboxed package frame at each size (the two smaller centre sizes,
   names;
 - every slide fits and fills the frame: each slide spans the frame,
   nothing outside its slide, nothing scrolled or cut off, and every word
-  from 13 to 25 px;
+  within the layout spec's floor and ceiling (13 to 64 px: each slide's
+  words are drawn as large as it allows, deck.js fitSlide);
 - every decision slide has its vote row in view;
 - `tell_package_story` tells the story through JARVIS's real speech path
   (a silent stand-in voice), and it brings every decision slide up and
@@ -65,7 +66,7 @@ from pathlib import Path
 from typing import Optional
 
 from jarvis import env_names
-from jarvis import agent_key_store, data_paths, package_signature, package_story
+from jarvis import agent_key_store, data_paths, layout_spec, package_signature, package_story
 
 FRONTEND = data_paths.SOURCE_ROOT / "frontend"
 # The frame sizes the deck is checked at: the browser's inner size to start
@@ -75,7 +76,8 @@ FRONTEND = data_paths.SOURCE_ROOT / "frontend"
 # is checked once, at the first.
 SIZES = (((1440, 813), (809, 589)), ((1280, 713), (662, 489)),
          ((1700, 1100), (1600, 900)), ((1380, 913), (1280, 713)))
-TEXT_MIN_PX, TEXT_MAX_PX = 13.0, 25.0
+TEXT_MIN_PX = float(layout_spec.spec()["text"]["min_px"])
+TEXT_MAX_PX = float(layout_spec.spec()["text"]["max_px"])
 PORTS = range(19000, 29000)
 STAND_IN_KEY = "stand-in-for-the-check"
 READY_SEC = 90
@@ -1128,26 +1130,15 @@ AWAKE_FLAGS = ("-i", "-s", "-d", "-u")
 
 @contextlib.contextmanager
 def _awake():
-    """The Mac kept from sleeping while the check runs: `caffeinate` (part of
-    macOS) holds the assertions for as long as this process lives. A Mac that
-    sleeps mid-check stops the stand-in voice's playback, the server's
-    timers and the check's own, so a story never reaches its wait. The
-    display too (`-d`, and `-u` to wake one already asleep): while it sleeps
-    under a locked screen the browser's audio clock stops (measured
+    """The Mac kept from sleeping while the check runs (jarvis.awake.held). A
+    Mac that sleeps mid-check stops the stand-in voice's playback, the
+    server's timers and the check's own, so a story never reaches its wait.
+    The display too (`-d`, and `-u` to wake one already asleep): while it
+    sleeps under a locked screen the browser's audio clock stops (measured
     2026-11-14: 0.005 s of audio time in 3 s), so no chunk ever plays."""
-    tool = shutil.which("caffeinate")
-    held = None
-    if tool:
-        held = subprocess.Popen([tool, *AWAKE_FLAGS, "-w", str(os.getpid())],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
-    try:
+    from jarvis import awake
+    with awake.held(AWAKE_FLAGS):
         yield
-    finally:
-        if held is not None and held.poll() is None:
-            held.terminate()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                held.wait(5)
 
 
 # How many window sizes the fit tries before it gives the frame size it has.

@@ -29,6 +29,8 @@ on is used, as Claude Code is from its minimum (preflight). See
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -38,6 +40,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -46,7 +49,9 @@ from jarvis import env_names
 from jarvis import claude_env
 from jarvis import data_paths
 from jarvis import preflight
+from jarvis import model_tiers
 from jarvis import private_files
+from jarvis import roles
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, SessionInfo, SignIn, TextDelta,
                             ToolFailed, ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
@@ -64,7 +69,6 @@ SERVICE = "openai"
 # tuple of ints, never as a string.
 MIN_VERSION = (0, 154, 0)
 MIN_VERSION_STR = "0.154.0"
-DEFAULT_MODEL = "gpt-5.6-terra"
 
 # The features left on. Everything else Codex has switched on is switched off
 # at every start. `code_mode_host` is the host Codex calls MCP tools through:
@@ -78,6 +82,21 @@ KEEP_FEATURES = frozenset({
     "item_ids", "sqlite", "steer", "resize_all_images",
 })
 
+# Package roles start in lockdown (approved by Tim 2026-11-19): the
+# code-mode host is disabled, so `exec` is listed
+# but refuses to run and a role session can neither read a file nor call a
+# tool. Each role is then released for its run to exactly its
+# `roles.Release` (Tim, 2026-11-20), the definition Claude reads too
+# (`role_release`).
+ROLE_KEEP_FEATURES = KEEP_FEATURES - {"code_mode_host"}
+
+# The permission profile a writer runs under, measured on Codex 0.171.0:
+# reads denied everywhere (`:root`, and the temp folders, which `:minimal`
+# would otherwise leave readable) but the platform's own paths (`:minimal`)
+# and its run folder; writes only in its run folder; no network. Measured
+# with a shell: its home folder and ~/.zshrc refused, a write outside its
+# run folder refused, curl could not resolve.
+ROLE_PROFILE = "jarvis_role"
 # Never inherited by the Codex child: with one of these set, Codex would bill
 # an API key instead of the ChatGPT plan. The plan is the whole point.
 SCRUBBED_ENV_KEYS = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID",
@@ -253,12 +272,91 @@ def write_config(mcp_config: Optional[Path]) -> Path:
     return path
 
 
-def features_to_disable(listing: str) -> list[str]:
+def home_servers() -> list[str]:
+    """Every MCP server JARVIS's Codex home's config.toml names (the brain's
+    own and the user's connections, `write_config`), or none when it cannot
+    be read."""
+    try:
+        text = (data_paths.codex_home() / "config.toml").read_text(encoding="utf-8")
+        servers = tomllib.loads(text).get("mcp_servers") or {}
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as e:
+        log.warning(f"codex: could not read the Codex home's config.toml: {e}")
+        return []
+    return sorted(str(name) for name in servers) if isinstance(servers, dict) else []
+
+
+def servers_off(names: list[str]) -> list[str]:
+    """Each named server switched off for one app server, as `-c` overrides
+    (`mcp_servers.<name>.enabled=false`): the server is never started and
+    offers no tool. Measured on Codex 0.171.0: the same switch in a
+    thread's `config` does not take, the server already started by the app
+    server and its tools offered to the thread (the exec probe found the
+    brain's server offered to every role); config.toml is never changed,
+    since the brain runs on it."""
+    argv: list[str] = []
+    for name in names:
+        argv += ["-c", f"mcp_servers.{_toml_key(name)}.enabled=false"]
+    return argv
+
+
+def role_release(launch: "roles.Launch", run: Path) -> tuple[frozenset, dict, list[str]]:
+    """A role on Codex: the lockdown, then exactly its `roles.Release`, as
+    (the features kept on, the thread's config, the app server's `-c`
+    overrides). Measured on Codex 0.171.0:
+
+    - the lockdown, every role: `ROLE_KEEP_FEATURES`, subagents off
+      (`agents.enabled`: Codex 0.171.0 offers spawn_agent and its
+      companions whatever `multi_agent` says, and a long-lived thread's
+      subagent runs), no project docs, web search or file-editing tool, the
+      sandbox read-only;
+    - no server of the home's: every MCP server JARVIS's Codex home names
+      (the brain's own among them) switched off for its app server
+      (`servers_off`), so a role is offered no tool server but its own;
+    - its tools: the code-mode host on, its own tool server the only one
+      added. With it on and the shell off, `exec` is to reach the
+      configured servers' tools and nothing else of the Mac, which the exec
+      probe (codex_role_probe.py) proves for every role with a real turn;
+      a role that reads files reads them with its file tools on that
+      server (role_files.py), as it does on Claude;
+    - a writer: the file-editing tool, under `ROLE_PROFILE`, so a write is
+      confined to its run folder and nothing reaches the network.
+
+    The shell is `shell_tool` alone, and it stays off for every role (Tim,
+    2026-11-20: never exec or a shell; Codex's code-mode exec only as the
+    way its MCP tools are called). `unified_exec` cannot be switched off
+    on Codex 0.171.0 (`--disable`, `-c features.unified_exec=false` and the
+    config file all leave `codex features list` saying true) and does not
+    decide the shell either: each model's catalog entry names its shell's
+    kind (`shell_type: unified_exec` for every model listed). Measured in
+    real role turns: a role with shell_tool off is offered no
+    `exec_command` at all."""
+    release = launch.role.release
+    keep = ROLE_KEEP_FEATURES
+    config: dict = {"project_doc_max_bytes": 0, "project_root_markers": [],
+                    "web_search": "disabled", "agents": {"enabled": False},
+                    "include_apply_patch_tool": release.writes}
+    overrides = servers_off([n for n in home_servers() if n != roles.SERVER_NAME])
+    if release.tools and launch.mcp_config is not None:
+        keep = keep | {"code_mode_host"}
+        overrides += config_overrides(
+            {roles.SERVER_NAME: _servers_of(launch.mcp_config).get(roles.SERVER_NAME)})
+    if release.writes:
+        filesystem = {":root": "deny", ":minimal": "read",
+                      ":slash_tmp": "deny", ":tmpdir": "deny", str(run): "write"}
+        config["default_permissions"] = ROLE_PROFILE
+        config["permissions"] = {ROLE_PROFILE: {"filesystem": filesystem,
+                                                "network": {"enabled": False}}}
+    return keep, config, overrides
+
+
+def features_to_disable(listing: str, keep: frozenset = KEEP_FEATURES) -> list[str]:
     """From `codex features list`: every feature that is on and not kept."""
     off = []
     for line in listing.splitlines():
         parts = line.split()
-        if len(parts) >= 2 and parts[-1] == "true" and parts[0] not in KEEP_FEATURES:
+        if len(parts) >= 2 and parts[-1] == "true" and parts[0] not in keep:
             off.append(parts[0])
     return off
 
@@ -330,28 +428,25 @@ class RpcCalls:
                 future.set_exception(RuntimeError(why))
 
 
-# ── the session ───────────────────────────────────────────────────────────
+# ── one app server process ────────────────────────────────────────────────
 
-class CodexSession:
-    """One `codex app-server` process with one thread: one conversation."""
+class _Connection:
+    """One `codex app-server` process over stdio and its JSON-RPC: started
+    and initialised, written to, read, closed. A response settles its
+    request; every other message goes to `on_message`; each line read
+    stamps `heard_at`; its end goes to `on_end(code)`."""
 
-    def __init__(self, config: "BrainConfig", on_event: EventSink, on_exit: ExitSink):
-        self.config = config
-        self._on_event = on_event
-        self._on_exit = on_exit
-        self.codex = getattr(config, "codex_path", None)
+    def __init__(self, home: Path, warmup_timeout: float, on_message, on_end):
+        self.home = home
+        self.warmup_timeout = warmup_timeout
+        self._on_message = on_message
+        self._on_end = on_end
         self.proc: Optional[asyncio.subprocess.Process] = None
         self._killed = False
         self._reader: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         self._calls = RpcCalls()
-        self.thread_id: Optional[str] = None
-        self._rollout: Optional[Path] = None      # the thread's transcript
-        self._rollout_read = 0                    # bytes of it already read
-        self._call_names: dict[str, str] = {}
-        self._info: Optional[SessionInfo] = None
-        self._last_usage: dict = {}
-        self.disabled: list[str] = []
+        self.heard_at = time.monotonic()
 
     @property
     def alive(self) -> bool:
@@ -362,89 +457,36 @@ class CodexSession:
         return (proc is not None and not self._killed and proc.returncode is None
                 and proc.stdin is not None)
 
-    def _cmd(self, *args: str) -> list[str]:
-        return _codex_binary(self.codex) + list(args)
-
-    async def open(self, instructions: str) -> None:
-        home = self.config.home if self.config.authoring else data_paths.codex_home()
-        env = child_env(authoring=self.config.authoring)
-        if not self.config.authoring:
-            write_config(self.config.mcp_config)
-            listing = await asyncio.create_subprocess_exec(
-                *self._cmd("features", "list"), env=env, cwd=str(self.config.home),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await listing.communicate()
-            self.disabled = features_to_disable(out.decode(errors="replace"))
-        argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
-        if self.config.authoring:
-            argv += config_overrides(_servers_of(self.config.mcp_config))
+    async def start(self, argv: list[str], env: dict) -> None:
+        """The app server running and initialised."""
         self.proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(self.config.home), env=env,
+            *argv, cwd=str(self.home), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
         self._reader = asyncio.create_task(self._read_stdout(self.proc))
         self._stderr_task = asyncio.create_task(self._drain_stderr(self.proc))
         try:
-            await self._call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
-                             timeout=self.config.warmup_timeout)
-            self._notify("initialized")
-            settings = {
-                "model": self.config.model, "cwd": str(self.config.home),
-                "approvalPolicy": "never",
-                "sandbox": "workspace-write" if self.config.authoring else "read-only",
-                "developerInstructions": instructions,
-                # Codex 0.171.0 offers spawn_agent and its companions to
-                # every thread whatever the `multi_agent` feature says, and a
-                # long-lived thread's subagent runs: switched off, as every
-                # feature JARVIS does not keep is.
-                "config": {"agents": {"enabled": False}},
-            }
-            if self.config.resume:
-                # The same thread goes on (a package author answered by its
-                # sender): its rollout, and so its transcript, is the same.
-                started = await self._call("thread/resume", {"threadId": self.config.resume,
-                                                             **settings},
-                                           timeout=self.config.warmup_timeout)
-            else:
-                started = await self._call("thread/start", settings,
-                                           timeout=self.config.warmup_timeout)
-            thread = started.get("thread") or {}
-            self.thread_id = thread.get("id")
-            self._rollout = Path(thread["path"]) if thread.get("path") else None
-            status = await self._call("mcpServerStatus/list", {}, timeout=self.config.warmup_timeout)
+            await self.call("initialize", {"clientInfo": {"name": "jarvis", "version": "1"}},
+                            timeout=self.warmup_timeout)
+            self.notify("initialized")
         except (asyncio.TimeoutError, RuntimeError, OSError) as e:
             self.kill()
-            raise OSError(f"codex app-server did not start a thread: {e}") from e
-        servers, tools, by_server = [], [WEB_SEARCH_TOOL], {}
-        for s in (status or {}).get("data") or []:
-            name = str(s.get("name") or "")
-            if not name:
-                continue
-            servers.append({"name": name, "status": "connected" if s.get("tools") is not None else "failed"})
-            for t in (s.get("tools") or {}):
-                tools.append(tool_name(name, str(t)))
-                by_server.setdefault(name, []).append(str(t))
-        # Reported with the first turn: the brain takes events only from the
-        # session it is serving, which it is not until open() returns.
-        self._info = SessionInfo(conversation_id=self.thread_id,
-                                 model=started.get("model") or self.config.model,
-                                 servers=servers, tools=tools, server_tools=by_server)
-        log.info("codex: thread %s in %s, %d features switched off",
-                 self.thread_id, home, len(self.disabled))
+            raise OSError(f"codex app-server did not start: {e}") from e
 
-    async def send(self, text: str) -> None:
-        if not self.alive or not self.thread_id:
+    def write(self, msg: dict) -> None:
+        if self.proc is None or self.proc.stdin is None:
             raise BrokenPipeError("the codex app-server is not running")
-        if self._info is not None:
-            info, self._info = self._info, None
-            self._emit(info)
-        try:
-            await self._call("turn/start", {
-                "threadId": self.thread_id, "effort": self.config.effort,
-                "input": [{"type": "text", "text": text}],
-            }, timeout=self.config.turn_timeout)
-        except RuntimeError as e:          # refused: the turn never started
-            self._emit(TurnEnded(0, 0, error=str(e)))
+        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
+
+    def notify(self, method: str, params: Optional[dict] = None) -> None:
+        self.write({"method": method, "params": params})
+
+    async def _send(self, msg: dict) -> None:
+        self.write(msg)
+        await self.proc.stdin.drain()
+
+    async def call(self, method: str, params: dict, timeout: float) -> dict:
+        return await self._calls.call(self._send, method, params, timeout)
 
     def kill(self) -> None:
         if self.proc is None:
@@ -476,28 +518,6 @@ class CodexSession:
                 except Exception as e:
                     log.warning(f"codex: reader task ended with {e}")
 
-    # ── JSON-RPC ─────────────────────────────────────────────────────────
-    def _write(self, msg: dict) -> None:
-        if self.proc is None or self.proc.stdin is None:
-            raise BrokenPipeError("the codex app-server is not running")
-        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
-
-    def _notify(self, method: str, params: Optional[dict] = None) -> None:
-        self._write({"method": method, "params": params})
-
-    async def _send(self, msg: dict) -> None:
-        self._write(msg)
-        await self.proc.stdin.drain()
-
-    async def _call(self, method: str, params: dict, timeout: float) -> dict:
-        return await self._calls.call(self._send, method, params, timeout)
-
-    def _emit(self, event) -> None:
-        try:
-            self._on_event(self, event)
-        except Exception as e:  # a listener must never kill the reader
-            log.warning(f"codex: event listener failed: {e}")
-
     async def _read_stdout(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stdout is not None
         try:
@@ -509,22 +529,457 @@ class CodexSession:
                     continue
                 if not raw:
                     break
+                self.heard_at = time.monotonic()
                 try:
                     msg = json.loads(raw.decode(errors="replace"))
                 except ValueError:
                     continue
+                if self._calls.resolve(msg):                 # a response
+                    continue
                 try:
-                    self._handle(msg)
+                    self._on_message(msg)
                 except Exception as e:  # one malformed message must not kill the reader
                     log.warning(f"codex: bad message ignored: {e}")
         finally:
             self._calls.end("the codex app-server ended")
             code = await proc.wait()
-            await self._on_exit(self, code)
+            await self._on_end(code)
+
+    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stderr is not None
+        try:
+            while True:
+                try:
+                    raw = await proc.stderr.readline()
+                except ValueError:
+                    continue
+                if not raw:
+                    return
+                log.debug(f"codex stderr: {raw.decode(errors='replace').rstrip()}")
+        except Exception as e:
+            log.warning(f"codex: stderr reader stopped: {e}")
+
+
+def _usage_seen(params: dict) -> UsageSeen:
+    """An `account/rateLimits/updated` notification recorded as the openai
+    brain's usage, and the event that says it."""
+    report, plan = usage_report(params.get("rateLimits") or {})
+    try:
+        usage_store.record(report, provider={"service": SERVICE, "subscription": plan})
+    except Exception as e:
+        log.warning(f"codex: could not record usage ({e})")
+    blocked = report["status"] == "rejected"
+    return UsageSeen(blocked=blocked, resets_at=report.get("resetsAt"),
+                     window=report.get("rateLimitType"),
+                     summary={"status": report["status"],
+                              "utilization": report.get("utilization"),
+                              "windows": report["unifiedWindows"]},
+                     detail=report)
+
+
+# ── one app server per role for a step ─────────────────────────────────────
+
+class RoleAppServer:
+    """One `codex app-server` shared by every thread of one role in a step
+    (the standard design, measured on package-870e45145b2d: 20 app servers
+    started for 22 calls of the mark step). Started by the first of the
+    role's sessions to open, with the role's lockdown (its features off,
+    the home's servers off, its own tool server); each session of the role
+    is a thread on it (`CodexSession`), and each thread's notifications go
+    to its own session by the thread's id. Closed when the step ends
+    (`role_servers`), never by a session's close, which only leaves it."""
+
+    def __init__(self, home: Path, warmup_timeout: float):
+        self.home = home
+        self.warmup_timeout = warmup_timeout
+        self.disabled: list[str] = []
+        self.threads: dict[str, "CodexSession"] = {}
+        self.starts = 0
+        self._conn: Optional[_Connection] = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def alive(self) -> bool:
+        return self._conn is not None and self._conn.alive
+
+    @property
+    def heard_at(self) -> float:
+        return self._conn.heard_at if self._conn is not None else 0.0
+
+    async def ensure(self, argv_of, env: dict) -> bool:
+        """The app server running: started (True) with `argv_of()`'s
+        argv when it is not, else left as it is (False)."""
+        async with self._lock:
+            if self.alive:
+                return False
+            argv, self.disabled = await argv_of()
+            conn = _Connection(self.home, self.warmup_timeout, self._route, self._ended)
+            await conn.start(argv, env)
+            self._conn = conn
+            self.starts += 1
+            return True
+
+    def attach(self, session: "CodexSession", old: Optional[str] = None) -> None:
+        if old:
+            self.threads.pop(old, None)
+        if session.thread_id:
+            self.threads[session.thread_id] = session
+
+    def detach(self, session: "CodexSession") -> None:
+        for tid in [t for t, s in self.threads.items() if s is session]:
+            del self.threads[tid]
+
+    def write(self, msg: dict) -> None:
+        if self._conn is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        self._conn.write(msg)
+
+    async def call(self, method: str, params: dict, timeout: float) -> dict:
+        if self._conn is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        return await self._conn.call(method, params, timeout)
+
+    def _route(self, msg: dict) -> None:
+        """A message to its thread's session. A request to us is refused
+        here (approvals are never); rate limits go to every thread, recorded
+        once; another notification naming no thread goes to the one thread
+        in a turn, else the one thread there is."""
+        method = msg.get("method")
+        if "id" in msg:
+            self.write({"id": msg["id"], "result": {"decision": "decline"}})
+            return
+        params = msg.get("params") or {}
+        if method == "account/rateLimits/updated":
+            event = _usage_seen(params)
+            for session in list(self.threads.values()):
+                session._heard = time.monotonic()
+                session._emit(event)
+            return
+        tid = params.get("threadId")
+        session = self.threads.get(str(tid)) if tid else None
+        if session is None and not tid:
+            turning = [s for s in self.threads.values() if s._in_turn]
+            candidates = turning or list(self.threads.values())
+            session = candidates[0] if len(candidates) == 1 else None
+        if session is None:
+            log.debug("codex: %s for no thread here (%s)", method, tid)
+            return
+        session._handle(msg)
+
+    async def _ended(self, code) -> None:
+        threads, self.threads = list(self.threads.values()), {}
+        for session in threads:
+            await session._on_exit(session, code)
+
+    async def close(self, timeout: float = 5.0) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            await conn.close(timeout)
+
+
+_ROLE_SERVERS: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "codex_role_servers", default=None)
+
+
+@contextlib.asynccontextmanager
+async def role_servers():
+    """While it is open, every Codex role session opened in it shares one
+    app server per role and lockdown (`RoleAppServer`); each is closed when
+    it ends. Outside it, each role session has an app server of its own.
+    Yields the servers, by role and lockdown."""
+    held: dict = {}
+    token = _ROLE_SERVERS.set(held)
+    try:
+        yield held
+    finally:
+        _ROLE_SERVERS.reset(token)
+        for server in held.values():
+            with contextlib.suppress(Exception):
+                await server.close()
+
+
+# ── the session ───────────────────────────────────────────────────────────
+
+class CodexSession:
+    """One thread: one conversation. On a `codex app-server` process of its
+    own, or, for a role while `role_servers` is open, on its role's one
+    shared app server (`RoleAppServer`), whose other threads are the same
+    role's other sessions."""
+
+    def __init__(self, config: "BrainConfig", on_event: EventSink, on_exit: ExitSink):
+        self.config = config
+        self._on_event = on_event
+        self._on_exit = on_exit
+        self.codex = getattr(config, "codex_path", None)
+        self._conn: Optional[_Connection] = None        # its own app server
+        self._server: Optional[RoleAppServer] = None    # its role's shared one
+        self._attached = False
+        # Whether opening it started an app server (one shared and already
+        # running is not one), for the run's count of app server starts.
+        self.started_server = False
+        self._in_turn = False
+        self.thread_id: Optional[str] = None
+        self._rollout: Optional[Path] = None      # the thread's transcript
+        self._rollout_read = 0                    # bytes of it already read
+        self._call_names: dict[str, str] = {}
+        self._info: Optional[SessionInfo] = None
+        self._last_usage: dict = {}
+        # The thread's running total, and what its last turn used (input,
+        # cached input and output tokens, the total's change over the turn),
+        # for a role's record of each turn.
+        self._total_usage: dict = {}
+        self._turn_from: dict = {}
+        self.turn_usage: Optional[dict] = None
+        self._reply: Optional[str] = None
+        self.disabled: list[str] = []
+        self._role_thread: Optional[dict] = None  # how a role's new thread is started
+        self._heard = time.monotonic()
+
+    @property
+    def heard_at(self) -> float:
+        """When it last heard from its brain (time.monotonic()): what a role
+        session's idle bound is measured from (sessions.BrainChatSession).
+        On its own app server every line counts; on a shared one, its own
+        thread's."""
+        if self._conn is not None:
+            return max(self._heard, self._conn.heard_at)
+        return self._heard
+
+    @property
+    def proc(self) -> Optional[asyncio.subprocess.Process]:
+        return self._conn.proc if self._conn is not None else None
+
+    @property
+    def alive(self) -> bool:
+        if self._server is not None:
+            return self._attached and self._server.alive
+        return self._conn is not None and self._conn.alive
+
+    def _cmd(self, *args: str) -> list[str]:
+        return _codex_binary(self.codex) + list(args)
+
+    async def _features_off(self, env: dict, keep: frozenset) -> None:
+        listing = await asyncio.create_subprocess_exec(
+            *self._cmd("features", "list"), env=env, cwd=str(self.config.home),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await listing.communicate()
+        self.disabled = features_to_disable(out.decode(errors="replace"), keep)
+
+    async def open(self, instructions: str) -> None:
+        if self.config.role is not None:
+            return await self._open_role(instructions)
+        home = self.config.home if self.config.authoring else data_paths.codex_home()
+        env = child_env(authoring=self.config.authoring)
+        if not self.config.authoring:
+            write_config(self.config.mcp_config)
+            await self._features_off(env, KEEP_FEATURES)
+        argv = self._cmd("app-server") + [a for f in self.disabled for a in ("--disable", f)]
+        if self.config.authoring:
+            argv += config_overrides(_servers_of(self.config.mcp_config))
+        await self._start(argv, env)
+        try:
+            settings = {
+                "model": self.config.model, "cwd": str(self.config.home),
+                "approvalPolicy": "never",
+                "sandbox": "workspace-write" if self.config.authoring else "read-only",
+                "developerInstructions": instructions,
+                # Codex 0.171.0 offers spawn_agent and its companions to
+                # every thread whatever the `multi_agent` feature says, and a
+                # long-lived thread's subagent runs: switched off, as every
+                # feature JARVIS does not keep is.
+                "config": {"agents": {"enabled": False}},
+            }
+            if self.config.resume:
+                # The same thread goes on (a package author answered by its
+                # sender): its rollout, and so its transcript, is the same.
+                started = await self._call("thread/resume", {"threadId": self.config.resume,
+                                                             **settings},
+                                           timeout=self.config.warmup_timeout)
+            else:
+                started = await self._call("thread/start", settings,
+                                           timeout=self.config.warmup_timeout)
+            status = await self._thread_started(started)
+        except (asyncio.TimeoutError, RuntimeError, OSError) as e:
+            self.kill()
+            raise OSError(f"codex app-server did not start a thread: {e}") from e
+        self._note_started(started, status, [WEB_SEARCH_TOOL])
+        log.info("codex: thread %s in %s, %d features switched off",
+                 self.thread_id, home, len(self.disabled))
+
+    async def _start(self, argv: list[str], env: dict) -> None:
+        """Its own app server running and initialised."""
+        self._conn = _Connection(self.config.home, self.config.warmup_timeout, self._handle,
+                                 self._ended)
+        self.started_server = True
+        await self._conn.start(argv, env)
+
+    async def _ended(self, code) -> None:
+        await self._on_exit(self, code)
+
+    async def _thread_started(self, started: dict) -> dict:
+        thread = started.get("thread") or {}
+        old, self.thread_id = self.thread_id, thread.get("id")
+        if self._server is not None:
+            self._server.attach(self, old)
+            self._attached = True
+        self._rollout = Path(thread["path"]) if thread.get("path") else None
+        return await self._call("mcpServerStatus/list", {}, timeout=self.config.warmup_timeout)
+
+    def _note_started(self, started: dict, status: dict, tools: list[str]) -> None:
+        servers, by_server = [], {}
+        for s in (status or {}).get("data") or []:
+            name = str(s.get("name") or "")
+            if not name:
+                continue
+            servers.append({"name": name, "status": "connected" if s.get("tools") is not None else "failed"})
+            for t in (s.get("tools") or {}):
+                tools.append(tool_name(name, str(t)))
+                by_server.setdefault(name, []).append(str(t))
+        # Reported with the first turn: the brain takes events only from the
+        # session it is serving, which it is not until open() returns.
+        self._info = SessionInfo(conversation_id=self.thread_id,
+                                 model=started.get("model") or self.config.model,
+                                 servers=servers, tools=tools, server_tools=by_server)
+
+    async def _open_role(self, instructions: str) -> None:
+        """One role's thread (sessions.yaml launch_v1, participants.md
+        section 0.3): JARVIS's own Codex home, never the user's (its
+        AGENTS.md would reach the role), the role's prompt as the base
+        instructions, no project docs, no web search, every server the
+        home's config.toml names off (JARVIS's brain server among them),
+        locked down and released to exactly its role's `Release`
+        (`role_release`)."""
+        launch = self.config.role
+        role = launch.role
+        keep, config, overrides = role_release(launch, self.config.home)
+        env = child_env()
+
+        async def argv_of() -> tuple[list[str], list[str]]:
+            await self._features_off(env, keep)
+            return (self._cmd("app-server")
+                    + [a for f in self.disabled for a in ("--disable", f)] + overrides,
+                    self.disabled)
+        held = _ROLE_SERVERS.get()
+        if held is None:
+            await self._start((await argv_of())[0], env)
+        else:
+            # The role's one app server for the step: started by its first
+            # session, each later one a thread on it.
+            key = (role.name, str(self.config.home), tuple(self._cmd()), keep, tuple(overrides))
+            server = held.get(key)
+            if server is None:
+                server = held[key] = RoleAppServer(self.config.home, self.config.warmup_timeout)
+            self._server = server
+            self.started_server = await server.ensure(argv_of, env)
+            self.disabled = list(server.disabled)
+        settings = {
+            "model": self.config.model, "cwd": str(self.config.home),
+            "approvalPolicy": "never",
+            "baseInstructions": instructions, "developerInstructions": None,
+            "personality": "none", "config": config,
+        }
+        if "default_permissions" not in config:
+            settings["sandbox"] = "read-only"
+        try:
+            if self.config.resume:
+                started = await self._call("thread/resume", {"threadId": self.config.resume,
+                                                             **settings},
+                                           timeout=self.config.warmup_timeout)
+            else:
+                self._role_thread = {**settings, "ephemeral": role.lifetime == roles.ONE_SHOT}
+                started = await self._call("thread/start", self._role_thread,
+                                           timeout=self.config.warmup_timeout)
+            status = await self._thread_started(started)
+        except (asyncio.TimeoutError, RuntimeError, OSError) as e:
+            self.kill()
+            raise OSError(f"codex app-server did not start the {role.name} thread: {e}") from e
+        self._note_started(started, status, [])
+        log.info("codex: %s thread %s, %d features switched off",
+                 role.name, self.thread_id, len(self.disabled))
+
+    async def new_thread(self) -> None:
+        """A new conversation for a role on the same app server: a thread
+        started as its first was, so the next item is asked with nothing of
+        the last (Mark rebuilt for speed, Tim 2026-11-21: one session
+        reused across a role's pages, not a new app server a call). Only a
+        role's own new thread; raises OSError otherwise or when it fails."""
+        if self._role_thread is None or not self.alive:
+            raise OSError("only a running role's session starts a new thread")
+        try:
+            started = await self._call("thread/start", self._role_thread,
+                                       timeout=self.config.warmup_timeout)
+            status = await self._thread_started(started)
+        except (asyncio.TimeoutError, RuntimeError) as e:
+            raise OSError(f"codex app-server did not start a new thread: {e}") from e
+        self._total_usage, self._turn_from, self._last_usage = {}, {}, {}
+        self._rollout_read = 0
+        self._note_started(started, status, [])
+
+    async def send(self, text: str, answer_format: Optional[dict] = None) -> None:
+        if not self.alive or not self.thread_id:
+            raise BrokenPipeError("the codex app-server is not running")
+        self._in_turn = True
+        if self._info is not None:
+            info, self._info = self._info, None
+            self._emit(info)
+        turn = {"threadId": self.thread_id, "effort": self.config.effort,
+                "input": [{"type": "text", "text": text}]}
+        launch = self.config.role
+        schema = answer_format if answer_format is not None else (
+            launch.answer_format if launch is not None else None)
+        if schema is not None:
+            turn["outputSchema"] = schema
+        self._reply = None
+        try:
+            await self._call("turn/start", turn, timeout=self.config.turn_timeout)
+        except RuntimeError as e:          # refused: the turn never started
+            self._in_turn = False
+            self._emit(TurnEnded(0, 0, error=str(e)))
+
+    def _leave(self) -> None:
+        """Off its role's shared app server, which goes on for the others."""
+        if self._server is not None:
+            self._server.detach(self)
+        self._attached = False
+
+    def kill(self) -> None:
+        if self._server is not None:
+            self._leave()
+        elif self._conn is not None:
+            self._conn.kill()
+
+    async def close(self, timeout: float = 5.0) -> None:
+        if self._server is not None:
+            self._leave()
+        elif self._conn is not None:
+            await self._conn.close(timeout)
+
+    # ── JSON-RPC ─────────────────────────────────────────────────────────
+    def _write(self, msg: dict) -> None:
+        if self._server is not None:
+            self._server.write(msg)
+        elif self._conn is not None:
+            self._conn.write(msg)
+        else:
+            raise BrokenPipeError("the codex app-server is not running")
+
+    async def _call(self, method: str, params: dict, timeout: float) -> dict:
+        if self._server is not None:
+            return await self._server.call(method, params, timeout)
+        if self._conn is None:
+            raise BrokenPipeError("the codex app-server is not running")
+        return await self._conn.call(method, params, timeout)
+
+    def _emit(self, event) -> None:
+        try:
+            self._on_event(self, event)
+        except Exception as e:  # a listener must never kill the reader
+            log.warning(f"codex: event listener failed: {e}")
 
     def _handle(self, msg: dict) -> None:
-        if self._calls.resolve(msg):                         # a response
-            return
+        """A message from the app server for this thread (a response has
+        already settled its request)."""
+        self._heard = time.monotonic()
         method = msg.get("method")
         if "id" in msg:                                     # a request to us
             # Approvals are set to never; anything that still asks is refused.
@@ -547,6 +1002,8 @@ class CodexSession:
                 self._emit(ToolStarted(str(kind)))
         elif method == "item/completed":
             item = params.get("item") or {}
+            if item.get("type") == "agentMessage" and isinstance(item.get("text"), str):
+                self._reply = item["text"]          # the last one is the turn's answer
             if item.get("type") == "mcpToolCall" and item.get("status") == "failed":
                 err = item.get("error") or {}
                 self._emit(ToolFailed(tool_name(str(item.get("server") or ""),
@@ -554,7 +1011,9 @@ class CodexSession:
                                       str(err.get("message") if isinstance(err, dict) else err)
                                       or "the tool call failed"))
         elif method == "thread/tokenUsage/updated":
-            self._last_usage = ((params.get("tokenUsage") or {}).get("last") or {})
+            usage = params.get("tokenUsage") or {}
+            self._last_usage = usage.get("last") or {}
+            self._total_usage = usage.get("total") or self._total_usage
         elif method == "turn/completed":
             turn = params.get("turn") or {}
             error = None
@@ -566,21 +1025,17 @@ class CodexSession:
                 log.error(f"codex: {name} failed in the code-mode host: {failure}")
                 self._emit(ToolFailed(name, failure))
             u, self._last_usage = self._last_usage, {}
+            self.turn_usage = {k: int(self._total_usage.get(k) or 0)
+                               - int(self._turn_from.get(k) or 0)
+                               for k in ("inputTokens", "cachedInputTokens", "outputTokens")}
+            self._turn_from = dict(self._total_usage)
+            reply, self._reply = self._reply, None
+            self._in_turn = False
             self._emit(TurnEnded(context_tokens=int(u.get("inputTokens") or 0),
-                                 output_tokens=int(u.get("outputTokens") or 0), error=error))
+                                 output_tokens=int(u.get("outputTokens") or 0), error=error,
+                                 reply=None if error else reply))
         elif method == "account/rateLimits/updated":
-            report, plan = usage_report(params.get("rateLimits") or {})
-            try:
-                usage_store.record(report, provider={"service": SERVICE, "subscription": plan})
-            except Exception as e:
-                log.warning(f"codex: could not record usage ({e})")
-            blocked = report["status"] == "rejected"
-            self._emit(UsageSeen(blocked=blocked, resets_at=report.get("resetsAt"),
-                                 window=report.get("rateLimitType"),
-                                 summary={"status": report["status"],
-                                          "utilization": report.get("utilization"),
-                                          "windows": report["unifiedWindows"]},
-                                 detail=report))
+            self._emit(_usage_seen(params))
         elif method == "error":
             log.warning(f"codex: {json.dumps(params)[:300]}")
 
@@ -604,20 +1059,6 @@ class CodexSession:
             except ValueError:
                 continue
         return code_mode_failures(objs, self._call_names)
-
-    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stderr is not None
-        try:
-            while True:
-                try:
-                    raw = await proc.stderr.readline()
-                except ValueError:
-                    continue
-                if not raw:
-                    return
-                log.debug(f"codex stderr: {raw.decode(errors='replace').rstrip()}")
-        except Exception as e:
-            log.warning(f"codex: stderr reader stopped: {e}")
 
 
 # ── usage, history and checks ─────────────────────────────────────────────
@@ -802,23 +1243,36 @@ async def check_codex_login(timeout: float = preflight.DEFAULT_CHECK_TIMEOUT) ->
                            message="JARVIS's Codex is not logged in.", remedy=remedy)
 
 
+def fallback_model(listed: list[str]) -> Optional[str]:
+    """The model Codex runs on when none is chosen: the sweep's first for
+    the default tier over the models listed now (model_tiers), never a
+    fixed name; None when nothing listed fits, and Codex's own default
+    is used."""
+    found = model_tiers.sweep("codex", model_tiers.DEFAULT_TIER, listed)
+    return found[0] if found else None
+
+
 class CodexProvider:
     name = SERVICE
     title = "OpenAI (Codex)"
-    default_model = DEFAULT_MODEL
 
     def __init__(self, codex_path: Optional[str] = None):
         self._codex = codex_path or settings_service.value("codex_path") or None
         self._signing_in: dict[str, AppServer] = {}
 
+    @property
+    def default_model(self) -> Optional[str]:
+        return fallback_model(self.models())
+
     def models(self) -> list[str]:
+        """The app server's live model/list; none when it cannot be asked."""
         try:
             with AppServer(self._codex) as server:
                 found = server.call("model/list", {}).get("data") or []
         except UsageUnavailable:
-            return [DEFAULT_MODEL]
+            return []
         names = [str(m.get("id") or m.get("model")) for m in found if isinstance(m, dict)]
-        return [n for n in names if n and n != "None"] or [DEFAULT_MODEL]
+        return [n for n in names if n and n != "None"]
 
     async def account(self) -> Account:
         def read() -> Account:

@@ -22,9 +22,10 @@ transaction, then embedded again in the background: a vector never answers
 for text it was not made from. With no embedder (the default until one is
 chosen) nothing is embedded and a search says so.
 
-The vector search has its own deadline after the query embedding is ready;
-past it the answer is marked partial, and the remaining files are still
-scanned in the background, which leaves their pages warm.
+A search scans every file and answers in full: nothing on the search path
+is stopped by a timer (construction-drafts "Knowledge search: no deadline
+that drops results"). A question is embedded on the searching thread
+itself, never queued behind a build batch on the embedding thread.
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ from typing import Iterable, Iterator, Optional
 
 from jarvis.knowledge import embedder as emb
 from jarvis.knowledge import items as item_texts
-from jarvis.knowledge import kinds, lanes, vecmath
+from jarvis.knowledge import kinds, lanes, paths, vecmath
 from jarvis.knowledge.documents import DOC_HEAD, DocumentStore, decode_doc
 from jarvis.knowledge.encoding import canonical
 from jarvis.knowledge.segment import Version
@@ -62,8 +63,6 @@ IDS = struct.Struct("<IIQ")              # ordinal, property id | flags, lsn
 DELETED = 0x80000000
 ORD = struct.Struct(">I")
 GATHER_MAX = 4096
-DEADLINE_SEC = 0.100
-QUERY_EMBED_SEC = 0.150
 NONE = 0
 WHOLE = 0                       # an item's whole-item row; section i is prop i + 1
 ITEM_SPACE_SUFFIX = "#items"
@@ -375,14 +374,22 @@ class Space:
         return sum(1 for props in self.props.values() if WHOLE in props)
 
 
+URGENT = -1
+
+
 def build_rank(doc: dict) -> tuple:
     """Where an item waits in the build, best first (Tim's order,
     2026-11-12): the records that hold people's words, newest first; then
     the brain's notes; then JARVIS's own other files (answers, packages,
     received files, the voice log), newest first; then registered folders'
-    files, most recently changed first; then anything else."""
+    files, most recently changed first; then anything else. A package's
+    evidence is ahead of all of it (`URGENT`): it is indexed urgently, ahead
+    of the background work, its vectors included, since the package's swarm
+    waits on it (workflow.yaml gather index)."""
     path = str(doc.get("_key") or "")
     at = float(doc.get("_at") or 0.0)
+    if paths.is_package_evidence(path):
+        return (URGENT, -at)
     if item_texts.is_record(doc):
         return (0, -at)
     if path.startswith("/jarvis/brain/"):
@@ -434,8 +441,14 @@ class Job:
         return len(band_props(self.stage, self.sections))
 
 
+def urgent(job: "Job") -> bool:
+    """A job of an item indexed urgently (`build_rank`'s URGENT)."""
+    return job.rank[0] == URGENT
+
+
 class BuildQueue:
-    """The items with vectors still to make, best first: every item's
+    """The items with vectors still to make, best first: an urgent item's
+    every stage before any other item's (`urgent`), then every item's
     whole-item row (stage 0) before any section's, then the sections a band
     at a time across all items (stage b), each stage in `build_rank` order.
     One entry an item, at the stage it has reached and holding only its
@@ -443,14 +456,18 @@ class BuildQueue:
     its owner's lock."""
 
     def __init__(self) -> None:
-        self._heap: list[tuple[int, tuple, int, str]] = []
+        self._heap: list[tuple[int, int, tuple, int, str]] = []
         self._held: dict[int, Job] = {}
+
+    @staticmethod
+    def _entry(job: Job) -> tuple[int, int, tuple, int, str]:
+        return (0 if urgent(job) else 1, job.stage, job.rank, job.o, job.sha)
 
     def put(self, job: Job) -> None:
         self._held[job.o] = job
-        heapq.heappush(self._heap, (job.stage, job.rank, job.o, job.sha))
+        heapq.heappush(self._heap, self._entry(job))
         if len(self._heap) > 2 * len(self._held) + 1024:
-            self._heap = [(j.stage, j.rank, j.o, j.sha) for j in self._held.values()]
+            self._heap = [self._entry(j) for j in self._held.values()]
             heapq.heapify(self._heap)
 
     def again(self, job: Job) -> None:
@@ -465,7 +482,7 @@ class BuildQueue:
 
     def _top(self) -> Optional[Job]:
         while self._heap:
-            stage, rank, o, sha = self._heap[0]
+            _lane, stage, rank, o, sha = self._heap[0]
             held = self._held.get(o)
             if held is not None and (held.stage, held.rank, held.sha) == (stage, rank, sha):
                 return held
@@ -484,6 +501,11 @@ class BuildQueue:
         """The stage the build is at: the best job's."""
         job = self._top()
         return job.stage if job is not None else None
+
+    def urgent_first(self) -> bool:
+        """Whether the best job waiting is an urgent one."""
+        job = self._top()
+        return job is not None and urgent(job)
 
     def __len__(self) -> int:
         return len(self._held)
@@ -506,6 +528,11 @@ class VectorIndex:
         self._stage: Optional[int] = None       # the stage being embedded now
         self._todo_cond = threading.Condition()
         self.paused = False
+        # The pace holds the background build while the conversation needs
+        # the machine; urgent items (a package's evidence) are not
+        # background work and go on (workflow.yaml gather index). `paused`
+        # (indexing paused in Settings) stops both.
+        self.held = False
         self._stop = False
         self.embedded = 0
         self.items_embedded = 0
@@ -677,6 +704,11 @@ class VectorIndex:
         items = self.spaces.get(self.item_space_id or "")
         return items is not None and items.has(ordinal, WHOLE)
 
+    def item_complete(self, ordinal: int, sections: int) -> bool:
+        """Whether every vector the item can have exists for its current
+        content: its whole-item row and one per section."""
+        return next_stage(self.spaces.get(self.item_space_id or ""), ordinal, sections) is None
+
     def _forget_keys(self, keys: set[bytes]) -> dict[int, set[bytes]]:
         out: set[bytes] = set()
         for key in keys:
@@ -744,6 +776,17 @@ class VectorIndex:
             self.paused = paused
             self._todo_cond.notify_all()
 
+    def set_held(self, held: bool) -> None:
+        """The pace's hold: the background build waits; urgent items go on."""
+        with self._todo_cond:
+            self.held = held
+            self._todo_cond.notify_all()
+
+    def _waits(self) -> bool:
+        """Whether the build waits now (under `_todo_cond`): paused, or held
+        with nothing urgent first."""
+        return self.paused or (self.held and not self._items_todo.urgent_first())
+
     def pending(self) -> int:
         return len(self._todo) + len(self._items_todo)
 
@@ -751,7 +794,7 @@ class VectorIndex:
         lanes.background()
         while True:
             with self._todo_cond:
-                while not self._stop and (self.paused or not (self._todo or self._items_todo)):
+                while not self._stop and (self._waits() or not (self._todo or self._items_todo)):
                     self._todo_cond.wait(1.0)
                 if self._stop:
                     return
@@ -764,6 +807,12 @@ class VectorIndex:
                         break
                     jobs.append(job)
                 batch = []
+                if jobs and urgent(jobs[0]):
+                    # An urgent commit holds urgent jobs only, so a hold
+                    # never waits behind background work taken with them.
+                    for job in [j for j in jobs if not urgent(j)]:
+                        self._items_todo.put(job)
+                    jobs = [j for j in jobs if urgent(j)]
                 if not jobs:
                     for o in list(self._todo)[:emb.INGEST_BATCH]:
                         batch.append((o, *self._todo.pop(o)))
@@ -772,7 +821,7 @@ class VectorIndex:
             try:
                 if jobs:
                     self._since, self._spent = time.monotonic(), {"cpu_sec": 0.0, "held_sec": 0.0}
-                    self._embed_jobs(jobs)
+                    self._embed_jobs(jobs, urgent_only=urgent(jobs[0]))
                 else:
                     self._embed_batch(batch)
             except Exception:
@@ -781,7 +830,7 @@ class VectorIndex:
                 self._working = False
                 self._stage = None
 
-    def _embed_texts(self, texts: list[str]) -> list[array]:
+    def _embed_texts(self, texts: list[str], urgent_only: bool = False) -> list[array]:
         """Every text's vector, as ingest batches behind any query, each
         followed by its rest (`lanes.BUILD_SHARE`), waiting while the pace holds;
         `_Closing` when the engine closes meanwhile. The rest is this
@@ -805,8 +854,9 @@ class VectorIndex:
             rest_until = time.monotonic() + lanes.rest_for(cpu)
             self._spent["cpu_sec"] += cpu
             with self._todo_cond:
-                while not self._stop and (self.paused or time.monotonic() < rest_until):
-                    held, waited = self.paused, time.monotonic()
+                while not self._stop and (self.paused or (self.held and not urgent_only)
+                                          or time.monotonic() < rest_until):
+                    held, waited = self.paused or (self.held and not urgent_only), time.monotonic()
                     self._todo_cond.wait(1.0 if held else max(0.0, rest_until - time.monotonic()))
                     if held:
                         self._spent["held_sec"] += time.monotonic() - waited
@@ -859,7 +909,7 @@ class VectorIndex:
                              else (done["texts"], done["busy_sec"]))
         rate = texts_done / spent if spent > 0 and texts_done else None
         state = ("off" if self.embedder is None else "done" if not working
-                 else "paused" if self.paused else "building")
+                 else "paused" if self.paused or self.held else "building")
         return {"state": state,
                 "items_embedded": items_embedded, "items_total": items_total,
                 "items_waiting": items_total - items_embedded,
@@ -905,7 +955,7 @@ class VectorIndex:
                 out.append((p, t))
         return out
 
-    def _embed_jobs(self, jobs: list[Job]) -> None:
+    def _embed_jobs(self, jobs: list[Job], urgent_only: bool = False) -> None:
         """One step of the build: each job's vectors (an item's whole-item
         row, or a band of its sections), embedded together and committed in
         one write with the build's progress, each only while its item's
@@ -922,7 +972,7 @@ class VectorIndex:
         texts = [t for _, found in planned for _, t in found]
         if texts:
             try:
-                vectors = self._embed_texts(texts)
+                vectors = self._embed_texts(texts, urgent_only)
             except _Closing:
                 return
             for vector in vectors:
@@ -1026,20 +1076,23 @@ class VectorIndex:
         return self._working or (self.queue is not None and not self.queue._q.empty())
 
     # -- searching -----------------------------------------------------------
-    def embed_query(self, text: str, timeout: float = QUERY_EMBED_SEC) -> Optional[array]:
-        if self.queue is None:
+    def embed_query(self, text: str) -> Optional[array]:
+        """The question's vector, embedded here on the searching thread (the
+        fast lane): onnxruntime runs one session's calls side by side, so a
+        question never waits for the build's batch on the embedding
+        thread. None with no model."""
+        embedder = self.embedder
+        if self.queue is None or embedder is None:
             return None
-        found = self.queue.embed_now([text], timeout)
-        return found[0] if found else None
+        return embedder.embed([emb.prepare(text)], "query")[0]
 
     def search(self, query: array, k: int = 50, within: Optional[set[int]] = None,
-               deadline_s: float = DEADLINE_SEC, space_name: Optional[str] = None) -> dict:
+               space_name: Optional[str] = None) -> dict:
         """The top `k` ordinals by cosine to `query` in one space; refused
         and stale rows never come back."""
         space = self.spaces.get(space_name or self.space_id or "")
         if space is None or not space.dim:
             return {"hits": [], "partial": False, "space": space_name or self.space_id}
-        end = time.monotonic() + deadline_s
         d = space.dim
         q = (c_float * d)(*query)
         hits: list[tuple[float, int]] = []
@@ -1049,14 +1102,8 @@ class VectorIndex:
         if within is not None and len(within) <= GATHER_MAX:
             hits = self._gathered(space, files, mem, q, d, within, k)
             return {"hits": [(o, s) for s, o in hits], "partial": False, "space": space.name}
-        partial = False
-        late: list[SpaceFile] = []
         for f in files:
             if not f.n or f.rows is None:
-                continue
-            if time.monotonic() > end:
-                partial = True
-                late.append(f)
                 continue
             scores = (c_float * f.n)()
             vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
@@ -1072,20 +1119,16 @@ class VectorIndex:
                 hits.append((s, f.ordinals[row]))
         if mem:
             hits.extend(self._score_mem(mem, q, d, within))
-        if late:
-            threading.Thread(target=self._finish_late, args=(late, q, d), daemon=True).start()
         hits.sort(key=lambda h: (-h[0], h[1]))
-        return {"hits": [(o, s) for s, o in hits[:k]], "partial": partial, "space": space.name}
+        return {"hits": [(o, s) for s, o in hits[:k]], "partial": False, "space": space.name}
 
-    def search_items(self, query: array, k: int = 50, within: Optional[set[int]] = None,
-                     deadline_s: float = DEADLINE_SEC) -> dict:
+    def search_items(self, query: array, k: int = 50, within: Optional[set[int]] = None) -> dict:
         """Items by meaning: ranked by their whole-item vectors, one hit an
         item, each naming the sections whose vectors come closest (where in
         the item it matched): (ordinal, score, [section index, ...])."""
         space = self.spaces.get(self.item_space_id or "")
         if space is None or not space.dim:
             return {"hits": [], "partial": False, "space": self.item_space_id}
-        end = time.monotonic() + deadline_s
         d = space.dim
         q = (c_float * d)(*query)
         with self._lock:
@@ -1093,15 +1136,11 @@ class VectorIndex:
             mem = dict(space.mem)
         whole_mem = {key: v for key, v in mem.items() if key[1] == WHOLE}
         ranked: list[tuple[float, int]] = []
-        partial = False
         if within is not None and len(within) <= GATHER_MAX:
             ranked = self._gathered(space, files, whole_mem, q, d, within, k, props=(WHOLE,))
         else:
             for f in files:
                 if not f.n or f.rows is None:
-                    continue
-                if time.monotonic() > end:
-                    partial = True
                     continue
                 scores = (c_float * f.n)()
                 vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
@@ -1123,7 +1162,7 @@ class VectorIndex:
                 continue
             where = sorted(self._section_scores(space, files, mem, q, d, o), key=lambda h: (-h[0], h[1]))
             hits.append((o, s, [p - 1 for _, p in where[:WHERE_SECTIONS]]))
-        return {"hits": hits, "partial": partial, "space": space.name}
+        return {"hits": hits, "partial": False, "space": space.name}
 
     def _section_scores(self, space: Space, files: list[SpaceFile], mem: dict, q, d: int,
                         o: int) -> list[tuple[float, int]]:
@@ -1193,11 +1232,6 @@ class VectorIndex:
             out.extend((scores[i], o) for i, (o, _, _) in enumerate(picked))
         out.sort(key=lambda h: (-h[0], h[1]))
         return out[:k]
-
-    def _finish_late(self, files: list[SpaceFile], q, d: int) -> None:
-        for f in files:
-            scores = (c_float * f.n)()
-            vecmath.MATH.gemv(f.rows, f.n, d, q, scores)
 
     def warm(self) -> None:
         for space in self.spaces.values():

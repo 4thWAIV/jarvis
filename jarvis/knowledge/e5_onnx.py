@@ -9,8 +9,9 @@ so onnxruntime (with numpy, its own requirement) is the one library this
 needs. The model folder is `embedding_models.model_dir(...)`, installed
 and checked there; this class only reads it.
 
-One intra-op thread (`THREADS`), so a batch runs on the embedding thread
-itself and the build can measure its CPU and keep to its share of one core
+One intra-op thread (`THREADS`), so a batch runs on the thread that calls
+it (the build's on the embedding thread, a search's question on the
+search's own thread) and the build can measure its CPU and keep to its share of one core
 (lanes.BUILD_SHARE). Measured on a 16-core Mac, 1,000-character passages:
 one thread 7.4 a second at 132 ms of CPU each, four 18 a second at 205 ms
 each; a short query takes 11 ms on one thread. CPU only, and no memory
@@ -18,7 +19,6 @@ arena, so the process gives back what one long batch took.
 """
 from __future__ import annotations
 
-import threading
 from array import array
 from pathlib import Path
 
@@ -54,7 +54,6 @@ class E5Onnx:
             raise ValueError(f"the model gives {out_dim} dimensions, not {dim}")
         self.id = model_id
         self.dim = dim
-        self._lock = threading.Lock()
 
     def embed(self, texts: list[str], purpose: str) -> list[array]:
         np = self._np
@@ -69,8 +68,11 @@ class E5Onnx:
         feed = {"input_ids": ids, "attention_mask": mask}
         if "token_type_ids" in self.inputs:
             feed["token_type_ids"] = np.zeros_like(ids)
-        with self._lock:
-            hidden = self.session.run(None, feed)[0]
+        # onnxruntime runs one session's calls side by side, each on its
+        # caller's thread (one intra-op thread): a search's question is
+        # embedded on its own thread while the build's batch runs on the
+        # embedding thread, never behind it.
+        hidden = self.session.run(None, feed)[0]
         weights = mask[..., None].astype(np.float32)
         pooled = (hidden * weights).sum(axis=1) / np.maximum(weights.sum(axis=1), 1e-9)
         pooled /= np.maximum(np.linalg.norm(pooled, axis=1, keepdims=True), 1e-12)

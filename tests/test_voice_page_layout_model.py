@@ -3,25 +3,28 @@
 computed from its own bytes (picture_proof) and the layout spec's slot
 boxes. This test holds that model to the browser: a hard fixture deck (long
 words, a table, two pictures, a comparison of four, a picture beside words,
-a decision with picture options, in Spanish) is built as make_package builds
-it and drawn in headless Chromium at frames across the whole range, and the
-size the browser draws each picture is the size the proof computed, within
-MODEL_PX. A change to the CSS or the renderer that the model does not follow
-fails here, in CI. A slide's words are drawn in the system font stack and
-are not modelled.
+a decision with picture options, JARVIS's components, charts and a table
+from data, in Spanish) is built as make_package builds it and drawn in
+headless Chromium at frames across the whole range, and the size the browser
+draws each picture is the size the proof computed, within MODEL_PX; every
+object the capacity model (deck_capacity) says fits its slot is drawn
+within it, nothing cut off, and every chart keeps its least plot; every
+diagram's nodes and groups, its link words, whens and group labels and
+every point of its connectors and axis (the diagram deck's four kinds, and
+the hard deck's flow) are drawn where diagram_layout put them, within
+MODEL_PX, with no word cut off. A change
+to the CSS or the renderer that the models do not follow fails here, in CI,
+on this fixture deck: no package is drawn in a browser on its way.
 
 A browser page test: run with `pytest -m page` (see pytest.ini)."""
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
-
 import pytest
-import yaml
 
-from jarvis import layout_spec, make_package as mp, picture_proof
+from jarvis import deck_capacity, layout_spec, make_package as mp, picture_proof
 from jarvis.presentation_schema import ContentSlide, ImageObject
 from jarvis.presentation_source import read_source
+from tests.deck_fixtures import hard_deck
 
 pytestmark = pytest.mark.page
 
@@ -31,109 +34,6 @@ MODEL_PX = 0.5
 # The frames drawn: the range's corners, its middle, and where the deck unit
 # switches from the frame's width to its height.
 FRAMES = [*layout_spec.corners(), (1024, 700), (880, 640), (1131, 823)]
-
-PICTURE = ('<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">'
-           '<rect width="{w}" height="{h}" fill="{fill}"/></svg>\n')
-
-
-def _text(ident: str, slot: str, *paragraphs: tuple[str, str] | str) -> dict:
-    """A text object: each paragraph plain words, or (role, words), a
-    `**word**` run strong."""
-    out = []
-    for n, item in enumerate(paragraphs, 1):
-        role, words = item if isinstance(item, tuple) else ("paragraph", item)
-        runs = []
-        for m, part in enumerate(words.split("**")):
-            if part:
-                runs.append({"id": f"{ident}-{n}-{m}", "text": part,
-                             "emphasis": "strong" if m % 2 else "normal"})
-        out.append({"id": f"{ident}-p{n}", "role": role, "runs": runs})
-    return {"id": ident, "type": "text", "slot": slot, "source": {"reference": "evidence"},
-            "paragraphs": out}
-
-
-def _slide(ident: str, title: str, layout: str, *objects: dict) -> dict:
-    return {"id": ident, "type": "content", "title": title, "layout": layout,
-            "objects": list(objects), "readingOrder": [o["id"] for o in objects],
-            "narration": [{"id": f"{ident}-cue", "say": title, "focus": [objects[0]["id"]]}],
-            "notes": ""}
-
-
-def _image(ident: str, slot: str, asset: str) -> dict:
-    return {"id": ident, "type": "image", "slot": slot, "source": {"reference": "evidence"},
-            "asset": asset, "alt": "Una imagen de prueba", "fit": "contain"}
-
-
-def hard_deck(folder: Path) -> Path:
-    """The hard fixture set as presentation.yaml, its pictures beside it."""
-    assets = []
-    for ident, (w, h, fill) in {"ancho": (640, 360, "#38bdf8"), "alto": (300, 420, "#f97316"),
-                                "opcion-a": (320, 200, "#22c55e"),
-                                "opcion-b": (320, 200, "#a855f7")}.items():
-        raw = PICTURE.format(w=w, h=h, fill=fill).encode()
-        (folder / f"{ident}.svg").write_bytes(raw)
-        picture = picture_proof.prove_bytes(raw)
-        assets.append({"id": ident, "path": f"{ident}.svg",
-                       "sha256": hashlib.sha256(raw).hexdigest(), "mime": picture.mime,
-                       "width": picture.width, "height": picture.height,
-                       "source": {"reference": "evidence"}})
-    long = ("La internacionalización del electroencefalograma contrarrevolucionario "
-            "desproporcionadamente interdisciplinario")
-    deck = {
-        "version": "presentation/1", "id": "prueba-dificil", "title": "Una prueba difícil",
-        "purpose": "Comprobar que el modelo de altura coincide con el navegador.",
-        "conclusion": "El modelo y el navegador dan la misma altura en cada marco.",
-        "language": "es", "requires": ["presentation-core/1"], "assets": assets,
-        "references": [{"id": "evidence", "kind": "authored-example", "locator": "Una prueba",
-                        "revision": "1", "description": "Datos inventados para la prueba."}],
-        "slides": [
-            _slide("palabras", "Palabras largas y viñetas", "title-and-body",
-                   _text("palabras-texto", "body",
-                         ("heading", "Electroencefalografía"), long,
-                         "Una frase **con negrita** en medio, y acentos: árbol, canción, pingüino.",
-                         ("bullet", "Primera viñeta con desproporcionadamente muchas sílabas."),
-                         ("bullet", "Segunda viñeta, más corta."),
-                         ("numbered", "Un paso numerado."))),
-            {"id": "tabla", "type": "content", "title": "Una tabla con cabeceras",
-             "layout": "table", "notes": "",
-             "objects": [{"id": "tabla-datos", "type": "table", "slot": "table",
-                          "source": {"reference": "evidence"}, "alt": "Costes por ruta",
-                          "head": ["Ruta", "Coste anual", "Mantenimiento"], "rowHeads": True,
-                          "rows": [{"id": f"fila-{n}", "cells": cells} for n, cells in enumerate([
-                              ["Plantada", "12 000", "Riego dos veces por semana"],
-                              ["Pavimentada", "8 000", "Ninguno"],
-                              ["Interdisciplinaria", "15 500", "Contrarrevolucionario"],
-                              ["Mixta", "10 250", "Poda anual"]], 1)]},
-                         _text("tabla-texto", "words", "Las cifras son inventadas.")],
-             "readingOrder": ["tabla-datos", "tabla-texto"],
-             "narration": [{"id": "tabla-cue", "say": "Una tabla.", "focus": ["tabla-datos"]}]},
-            _slide("dos", "Dos imágenes", "two-pictures", _image("dos-a", "first", "ancho"),
-                   _image("dos-b", "second", "alto"),
-                   _text("dos-texto", "words", "Una ancha y una alta, " + long + ".")),
-            _slide("cuatro", "Cuatro columnas", "comparison",
-                   *[_text(f"col-{slot}", slot, ("heading", name), text) for slot, name, text in [
-                       ("first", "Primera", "Interdisciplinar y contraproducente."),
-                       ("second", "Segunda", "Corta."),
-                       ("third", "Tercera", "Una columna con más palabras que las demás juntas."),
-                       ("fourth", "Cuarta", "Desproporcionado.")]],
-                   _text("cuatro-texto", "words", "Cuatro columnas comparadas, una frase debajo.")),
-            _slide("imagen", "Una imagen y palabras", "picture-and-words",
-                   _text("imagen-texto", "words", long, ("bullet", "Una viñeta junto a la imagen.")),
-                   _image("imagen-dibujo", "picture", "ancho")),
-            {"id": "decidir", "type": "decision", "decision": "elegir-ruta"},
-        ],
-        "decisions": [{
-            "id": "elegir-ruta", "question": "¿Qué ruta probamos?",
-            "options": [{"id": "plantada", "name": "La plantada", "says": "Plantas en la calle.",
-                         "picture": "opcion-a"},
-                        {"id": "pavimentada", "name": "La pavimentada", "says": "Como ahora.",
-                         "picture": "opcion-b"}],
-            "recommended": "plantada", "reason": "Retiene más lluvia."}],
-    }
-    source = folder / "presentation.yaml"
-    source.write_text(yaml.safe_dump(deck, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    return source
-
 
 # What the browser drew for one picture: its size inside its slot, contained.
 DRAWN = """id => {
@@ -203,3 +103,163 @@ def test_the_decision_s_pictured_options_are_drawn(built):
             browser.close()
     assert {p["src"] for p in pictures} >= {"opcion-a.svg", "opcion-b.svg"}
     assert all(p["ok"] for p in pictures), pictures
+
+
+# For each slot of the current slide: how far its content runs past it, and
+# a chart's plot height.
+OVERFLOW = """() => [...document.querySelectorAll('.slide.current .presentation-slot')].map(slot => ({
+  id: slot.dataset.object, kind: slot.dataset.kind,
+  over: Math.max(slot.scrollHeight - slot.clientHeight, slot.scrollWidth - slot.clientWidth),
+  plot: slot.querySelector('.presentation-chart-plot')?.getBoundingClientRect().height ?? null}))"""
+
+
+def test_every_object_within_capacity_is_drawn_within_its_slot(built):
+    """The capacity model is the language's: what it lets through is drawn
+    whole by the browser, at every frame, words at whatever size the
+    slide's fit chose; and every slot of the deck is within its capacity."""
+    from playwright.sync_api import sync_playwright
+    package, source = built
+    content = [s for s in source.document.slides if isinstance(s, ContentSlide)]
+    assert all(deck_capacity.problems(s) == [] for s in content)
+    plot_min = layout_spec.spec()["chart"]["plot_min_px"]
+    off, kinds = [], set()
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.route("**/api/packages/story.js", lambda route: route.fulfill(
+                body="", content_type="application/javascript"))
+            for frame in FRAMES:
+                page.set_viewport_size({"width": int(frame[0]), "height": int(frame[1])})
+                page.goto((package / "index.html").as_uri())
+                page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
+                for n, slide in enumerate(source.document.slides):
+                    if not isinstance(slide, ContentSlide):
+                        continue
+                    page.evaluate(f"document.getElementById('go-{n + 1}').click()")
+                    page.wait_for_function(f"document.querySelector('.slide.current')?.id === "
+                                           f"'presentation-slide-{slide.id}'")
+                    page.wait_for_timeout(50)
+                    for seen in page.evaluate(OVERFLOW):
+                        kinds.add(seen["kind"])
+                        if seen["kind"] not in ("image", "vector") and seen["over"] > 1:
+                            off.append(f"{frame[0]}x{frame[1]} {slide.id}/{seen['id']}: "
+                                       f"{seen['over']} px past its slot")
+                        if seen["plot"] is not None and seen["plot"] < plot_min - 1:
+                            off.append(f"{frame[0]}x{frame[1]} {seen['id']}: plot "
+                                       f"{seen['plot']:.0f} px, under {plot_min}")
+        finally:
+            browser.close()
+    assert {"text", "table", "callout", "figures", "steps", "chart", "diagram"} <= kinds, kinds
+    assert not off, "\n".join(off)
+
+
+# Each diagram on the current slide: its own box, each node's and group's
+# box inside it, each placed word's box (a link's words, a node's when, a
+# group's label, by whose they are), every connector's and the axis's points
+# as drawn, and whether any of its words is cut off.
+DIAGRAM_BOXES = """() => [...document.querySelectorAll('.slide.current .presentation-diagram')].map(d => {
+  const at = d.getBoundingClientRect();
+  const of = e => { const r = e.getBoundingClientRect(); return [r.left - at.left, r.top - at.top, r.width, r.height]; };
+  const svg = d.querySelector('.presentation-diagram-links'), s = svg.getBoundingClientRect();
+  const shift = p => [p[0] + s.left - at.left, p[1] + s.top - at.top];
+  const words = cls => Object.fromEntries([...d.querySelectorAll(cls)].map(e => [e.dataset.labelOf, of(e)]));
+  const axis = d.querySelector('.presentation-diagram-axis');
+  return {id: d.parentElement.dataset.object, size: [at.width, at.height],
+    boxes: Object.fromEntries([...d.querySelectorAll('.presentation-diagram-node, .presentation-diagram-group')]
+      .map(e => [e.dataset.member, of(e)])),
+    link_words: words('.presentation-diagram-label'), whens: words('.presentation-diagram-when'),
+    group_words: words('.presentation-diagram-group-label'),
+    points: Object.fromEntries([...d.querySelectorAll('.presentation-diagram-connector')].map(g => [g.dataset.member,
+      (g.querySelector('path').getAttribute('d') || '').slice(1).split(' L').filter(Boolean)
+        .map(q => shift(q.split(',').map(Number)))])),
+    axis: axis ? ['x1', 'y1', 'x2', 'y2'].map(k => Number(axis.getAttribute(k)))
+      .reduce((o, v, k) => (k % 2 ? o[o.length - 1].push(v) : o.push([v]), o), []).map(shift) : null,
+    cut: [...d.querySelectorAll('.presentation-diagram-text, .presentation-diagram-label, .presentation-diagram-when, .presentation-diagram-group-label')]
+      .filter(e => e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)};
+})"""
+
+
+@pytest.fixture(scope="module")
+def diagrams(tmp_path_factory):
+    from tests.deck_fixtures import diagram_deck
+    folder = tmp_path_factory.mktemp("diagrams")
+    mp.make_presentation(diagram_deck(folder / "source"), folder / "out")
+    package = folder / "out" / "compiled" / "diagramas"
+    return package, read_source(package / "source.yaml", built=True, language="es")
+
+
+def test_the_browser_draws_every_diagram_where_its_layout_put_it(diagrams, built):
+    """diagram_layout places every node and group as a share of its slot;
+    the browser draws each there within MODEL_PX at every frame, and every
+    word of it within its place (the hard deck's flow beside words too)."""
+    from playwright.sync_api import sync_playwright
+    from jarvis.presentation_schema import DiagramObject
+    off, checked = [], 0
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.route("**/api/packages/story.js", lambda route: route.fulfill(
+                body="", content_type="application/javascript"))
+            for package, source in (diagrams, built):
+                drawn = {o.id: o for s in source.document.slides if isinstance(s, ContentSlide)
+                         for o in s.objects if isinstance(o, DiagramObject)}
+                for frame in FRAMES:
+                    page.set_viewport_size({"width": int(frame[0]), "height": int(frame[1])})
+                    page.goto((package / "index.html").as_uri())
+                    page.wait_for_function("window.JarvisPresentation && document.querySelector('.slide.current')")
+                    for n, slide in enumerate(source.document.slides):
+                        if not isinstance(slide, ContentSlide) or not any(
+                                isinstance(o, DiagramObject) for o in slide.objects):
+                            continue
+                        page.evaluate(f"document.getElementById('go-{n + 1}').click()")
+                        page.wait_for_function(f"document.querySelector('.slide.current')?.id === "
+                                               f"'presentation-slide-{slide.id}'")
+                        page.wait_for_timeout(50)
+                        boxes = layout_spec.boxes(slide.layout, {o.slot for o in slide.objects})
+                        for seen in page.evaluate(DIAGRAM_BOXES):
+                            obj = drawn[seen["id"]]
+                            w, h = layout_spec.frame_box(boxes[obj.slot], frame)
+                            where = f"{frame[0]}x{frame[1]} {obj.id}"
+                            if abs(seen["size"][0] - w) > MODEL_PX or abs(seen["size"][1] - h) > MODEL_PX:
+                                off.append(f"{where}: drawn {seen['size']}, slot {w:.2f} x {h:.2f}")
+                            for item in [*obj._drawn["nodes"], *obj._drawn["groups"]]:
+                                x, y, bw, bh = item["box"]
+                                model = [x * w, y * h, bw * w, bh * h]
+                                got = seen["boxes"][item["id"]]
+                                checked += 1
+                                if any(abs(a - b) > MODEL_PX for a, b in zip(got, model)):
+                                    off.append(f"{where}/{item['id']}: drawn {[round(v, 2) for v in got]}, "
+                                               f"model {[round(v, 2) for v in model]}")
+                            placed = [*[(f"{l['id']} words", l["label_box"], seen["link_words"].get(l["id"]))
+                                        for l in obj._drawn["links"] if l.get("label_box")],
+                                      *[(f"{n['id']} when", n["when_box"], seen["whens"].get(n["id"]))
+                                        for n in obj._drawn["nodes"] if n.get("when_box")],
+                                      *[(f"{g['id']} label", g["label_box"], seen["group_words"].get(g["id"]))
+                                        for g in obj._drawn["groups"]]]
+                            for name, (x, y, bw, bh), got in placed:
+                                model = [x * w, y * h, bw * w, bh * h]
+                                checked += 1
+                                if got is None or any(abs(a - b) > MODEL_PX for a, b in zip(got, model)):
+                                    off.append(f"{where}/{name}: drawn {got and [round(v, 2) for v in got]}, "
+                                               f"model {[round(v, 2) for v in model]}")
+                            lines = [(l["id"], l["points"], seen["points"].get(l["id"]))
+                                     for l in obj._drawn["links"]]
+                            if obj._drawn.get("axis"):
+                                a = obj._drawn["axis"]
+                                lines.append(("axis", [a["from"], a["to"]], seen["axis"]))
+                            for name, points, got in lines:
+                                model = [[px_ * w, py_ * h] for px_, py_ in points]
+                                checked += 1
+                                if (got is None or len(got) != len(model)
+                                        or any(abs(a - b) > MODEL_PX for p, q in zip(got, model)
+                                               for a, b in zip(p, q))):
+                                    off.append(f"{where}/{name} points: drawn {got}, model "
+                                               f"{[[round(v, 2) for v in q] for q in model]}")
+                            if seen["cut"]:
+                                off.append(f"{where}: words cut off: {seen['cut']}")
+        finally:
+            browser.close()
+    assert checked > len(FRAMES) * 20, checked
+    assert not off, "\n".join(off)

@@ -1,7 +1,7 @@
 """An agent's canonical architecture document, from its YAML to a package in
 Tim's inbox: the signed command (language_document.py), make_package
 --document (JARVIS's projection of the exact checked revision around the
-fresh author's explanation, author-proven and signed), its admission and
+fresh author's explanation, signed), its admission and
 ground by package id. The kit-backed tests run where the pinned kit asset
 is supplied (JARVIS_LANGUAGE_KIT_ASSET; the language-kit workflow)."""
 import hashlib
@@ -10,9 +10,9 @@ import zipfile
 
 import pytest
 
-from jarvis import (agent_key_store, agent_keys, agent_rights, author_proof, language_document,
+from jarvis import (agent_key_store, agent_keys, agent_rights, language_document,
                     language_document_api, language_projection, make_package, package_inbox,
-                    session_watch, work_packages, workflow_report)
+                    work_packages, workflow_report)
 from jarvis import decision_package as dp
 from tests import architecture_author
 from tests.agent_key_fixtures import Agent
@@ -140,7 +140,6 @@ def test_the_author_s_check_takes_only_its_explanation(tmp_path, capsys):
     assert make_package.main(check) == 0
     out = capsys.readouterr().out
     assert "document-x" in out
-    assert author_proof.MARK + author_proof.source_digest(package) in out
     (package / "index.html").write_text("<p>a page of the author's own</p>")
     assert make_package.main(check) == 1
     assert "holding only UNDERSTANDING.md" in capsys.readouterr().out
@@ -161,7 +160,6 @@ def factory(through_the_route, monkeypatch, tmp_path):
     """make_package's author is the stand-in claude (tests/architecture_author)
     and its delivery goes to this test's JARVIS, signed as it is sent."""
     hold_setting("claude_path", str(architecture_author.install(tmp_path / "bin")))
-    monkeypatch.setenv("AUTHOR_TEST_CLAUDE_ROOT", str(session_watch.config_roots()[0]))
 
     def post(url, token, body, timeout=60, signer=None):
         data = json.dumps(body).encode()
@@ -176,10 +174,9 @@ def factory(through_the_route, monkeypatch, tmp_path):
 
 
 def handoff(tmp_path):
-    path = tmp_path / "handoff.json"
-    path.write_text(json.dumps({"question": "Explain the proposed document store",
-                                "evidence": ["the architecture document"]}))
-    return path
+    from tests.test_package_jobs import handoff_file
+    return handoff_file(tmp_path / "handoff.json", "Explain the proposed document store",
+                        evidence=[{"type": "content", "text": "the architecture document"}])
 
 
 def make(tmp_path, checked, *extra) -> int:
@@ -190,7 +187,7 @@ def make(tmp_path, checked, *extra) -> int:
                               "--deliver-to", "http://testserver", *extra])
 
 
-def test_a_checked_document_reaches_the_inbox_author_proven_and_grounds(
+def test_a_checked_document_reaches_the_inbox_and_grounds(
         factory, draft, tmp_path, capsys):  # noqa: F811
     who = agent()
     checked = language_document_api.Adapter().documents.validate(**validate_arguments(draft),
@@ -218,7 +215,7 @@ def test_a_checked_document_reaches_the_inbox_author_proven_and_grounds(
         checked["references"]["view"], "rb").read()
     with zipfile.ZipFile(record["zip"]) as z:
         names = z.namelist()
-    assert any(n.endswith(".jarvis/author/package/UNDERSTANDING.md") for n in names)
+    assert not any(".jarvis/author/" in n for n in names), "no author proof is carried"
 
     # Tim's JARVIS reads the explanation as it reads any package's.
     opened = _call(factory, "package_inbox", package=entry.id, understanding_offset=0)["text"]
@@ -261,10 +258,6 @@ def test_the_author_s_story_is_composed_once_and_its_question_is_asked_in_the_he
     told = package.story()
     assert [s.waits for s in told.slides] == [None, "ownership-clear",
                                               package_inbox.VOTE_ID], "one vote, last"
-    with zipfile.ZipFile(record["zip"]) as z:
-        names = [n for n in z.namelist() if "/.jarvis/author/" in n or n.startswith(".jarvis/author/")]
-        assert sorted(n.split(".jarvis/author/")[1] for n in names) == [
-            "package/UNDERSTANDING.md", "package/story.json"]
     vote = package_inbox.page_vote(package)
     assert vote["question"] == "approve-package"
     assert [q["id"] for q in vote["asks"]] == ["ownership-clear"]

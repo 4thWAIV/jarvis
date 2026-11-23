@@ -82,10 +82,14 @@ RIGHTS: dict[str, Right] = {
          ("GET", r"/api/work/answers"), ("GET", OWN_REPORTS), ("POST", r"/api/agent-keys/work-keys"),
          ("POST", r"/api/agent-keys/work-keys/.+/renew"))),
     "packages": Right(
-        "Send Tim packages for his package inbox, withdraw one it sent while it is open, "
-        "write canonical language documents for them, and retrieve and inspect received "
-        "attachments without opening or running them.",
-        (("POST", r"/api/packages/inbox"), ("POST", r"/api/packages/inbox/[^/]+/withdraw"),
+        "Ask JARVIS for a package for Tim and follow and answer its run, send Tim packages "
+        "for his package inbox, withdraw one it sent while it is open, write canonical "
+        "language documents for them, and retrieve and inspect received attachments without "
+        "opening or running them.",
+        (("POST", r"/api/packages/requests"), ("GET", r"/api/packages/requests/[^/]+"),
+         ("POST", r"/api/packages/requests/[^/]+/answer"),
+         ("POST", r"/api/packages/requests/[^/]+/rerun"),
+         ("POST", r"/api/packages/inbox"), ("POST", r"/api/packages/inbox/[^/]+/withdraw"),
          ("POST", r"/api/language-documents"),
          ("POST", r"/api/team/messages/[^/]+/files/[^/]+/(location|download)"),
          ("POST", r"/api/team/messages/[^/]+/attachments/[^/]+/bundle"))),
@@ -108,7 +112,11 @@ TOOLS: dict[str, tuple[str, ...]] = {
         "package_results", "work_status", "work_detail", "work_context", "workflow_status",
         "run_status", "knowledge_search", "knowledge_status", "search_repo", "repo_overview",
         "project_notes", "project_history", "list_folders", "browse_folder",
-        "read_folder_file", "list_agents", "read_message_reply", "read_session_reply"),
+        "read_folder_file", "list_agents", "read_message_reply", "read_session_reply",
+        # The brain's own past conversations (workflow.yaml research
+        # tools_to_add_to_research_right; Tim, 2026-11-18: agents need
+        # access to most MCP services).
+        "search_history", "read_history"),
 }
 
 # The rights file shipped beside this module: the standard rights (Tim's
@@ -136,7 +144,7 @@ def _work_target(method: str, path: str, query: str) -> str:
     if m:
         return urllib.parse.unquote(m.group(1))
     params = urllib.parse.parse_qs(query or "")
-    if path in ("/api/packages/inbox", "/api/messages"):
+    if path in ("/api/packages/inbox", "/api/messages", "/api/packages/requests"):
         return (params.get("work") or [""])[0]
     if path == "/api/work/answers":
         return (params.get("item") or [""])[0]

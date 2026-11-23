@@ -7,10 +7,15 @@ what the signer vouches
 for (`statements`: `decision-check v<n>` once a deck passed its end-to-end
 check), an optional work-item key grant (`work_key`: the public half of a
 key made for one Work item, which may then report on that item alone),
-the claim of the fresh author session that wrote it (`author`: its engine,
-session and the digest of the source it wrote, which the zip carries under
-`.jarvis/author/`; author_proof.py), and the agent's SSH signature over
-all of that under `jarvis-package@v1`.
+and the agent's SSH signature over all of that under `jarvis-package@v1`.
+A signature made while packages carried a fresh author's claim (`author`)
+still checks: the signature is over its whole manifest as written.
+
+A package JARVIS makes itself from an agent's request (package_jobs.py) is
+signed with JARVIS's own key (`sign_as_jarvis`; workflow.yaml deliver,
+decided "signing"): its session is JARVIS (`JARVIS`) and `requested_by`
+names the agent whose signed request started it (`agent:<session id>`),
+which JARVIS proved as it took the request.
 
 JARVIS checks it against the public key it holds for that fingerprint,
 never one the file names: a signature only proves anything for a key Tim
@@ -33,6 +38,8 @@ VERSION = 1
 # What a deck checked by the old end-to-end browser check vouched for; still
 # read for decks delivered before JARVIS proved every deck's layout itself.
 DECISION_CHECKED = "decision-check v1"
+# The session a package JARVIS signs itself names.
+JARVIS = "jarvis"
 
 
 class SignatureError(ValueError):
@@ -47,10 +54,17 @@ class Signed:
     public_key: str = ""              # as the file names it: proves only that key signed it
     statements: tuple[str, ...] = ()
     work_key: Optional[dict] = None
-    author: Optional[dict] = None     # the fresh author claim (author_proof.Claim)
+    requested_by: str = ""            # JARVIS's own: the agent whose request started it
     files_match: bool = False         # the files are the ones signed
     manifest: dict = field(default_factory=dict)
     signature: str = ""
+
+    def by_jarvis(self) -> bool:
+        """Whether JARVIS's own key signed it (and its files are the ones
+        signed): never a key the file names."""
+        public = agent_keys.jarvis_public_key()
+        return bool(public) and self.session == JARVIS and \
+            agent_keys.fingerprint(public) == self.fingerprint and self.checks(public)
 
     def checks(self, public_key: str) -> bool:
         """Whether the files are the ones signed and the signature is the
@@ -83,7 +97,7 @@ def _text(manifest: dict) -> bytes:
 
 def sign(source: Path, target: Path, private: Path, public_key: str, session: str,
          statements: tuple[str, ...] = (), work_key: Optional[dict] = None,
-         author: Optional[dict] = None) -> None:
+         requested_by: str = "") -> None:
     """Copy the zip at `source` to `target` with a signature by the key at
     `private` in place of any it had; every other file byte for byte."""
     with bundle_archive.open_archive(source) as archive:
@@ -93,8 +107,8 @@ def sign(source: Path, target: Path, private: Path, public_key: str, session: st
                     "files": _digest(archive, files), "statements": sorted(set(statements))}
         if work_key:
             manifest["work_key"] = dict(work_key)
-        if author:
-            manifest["author"] = dict(author)
+        if requested_by:
+            manifest["requested_by"] = requested_by
         sig = agent_keys.compact(agent_keys.sign(private, agent_keys.PACKAGE, _text(manifest)))
         body = json.dumps({**manifest, "signature": sig}, indent=2) + "\n"
         partial = target.with_name(target.name + ".part")
@@ -105,6 +119,14 @@ def sign(source: Path, target: Path, private: Path, public_key: str, session: st
                 out.writestr(info, archive.read(info))
             out.writestr(root + FILE, body)
     partial.replace(target)
+
+
+def sign_as_jarvis(source: Path, target: Path, requested_by: str,
+                   statements: tuple[str, ...] = ()) -> None:
+    """Sign a package JARVIS made with its own key (made once,
+    agent_keys.jarvis_key), naming the agent whose request started it."""
+    private, public = agent_keys.jarvis_key()
+    sign(source, target, private, public, JARVIS, statements, requested_by=requested_by)
 
 
 def add_files(archive_path: Path, files: dict[str, bytes]) -> None:
@@ -139,10 +161,10 @@ def read(zip_path: Path) -> Optional[Signed]:
         raise SignatureError("Its signature file is not one JARVIS reads.")
     manifest = {k: v for k, v in body.items() if k != "signature"}
     statements = manifest.get("statements") or []
-    work_key, author = manifest.get("work_key"), manifest.get("author")
+    work_key = manifest.get("work_key")
     return Signed(str(manifest.get("key") or ""), str(manifest.get("session") or ""),
                   str(manifest.get("public_key") or ""),
                   tuple(str(s) for s in statements if isinstance(s, str)),
                   work_key if isinstance(work_key, dict) else None,
-                  author if isinstance(author, dict) else None,
+                  str(manifest.get("requested_by") or ""),
                   manifest.get("files") == digest, manifest, body["signature"])

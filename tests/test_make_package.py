@@ -1,7 +1,9 @@
 """The one command that makes a package and sends it to Tim
-(jarvis/make_package.py): a presentation deck (no votes), a hand-made
-package's folder with only its purpose given, the version worked out, and
-the package sent to Tim's package inbox with who sent it. Content checks shared with decision packages are in
+(jarvis/make_package.py): a presentation deck built (no votes) for the
+package workflow, a hand-made package's folder with only its purpose given,
+the version worked out, an agent's package sent to Tim's package inbox with
+who sent it, a working tool's page delivered, and a deck from the fresh
+author refused as a briefing. Content checks shared with decision packages are in
 tests/test_decision_package.py; the isolated JARVIS here is a stand-in."""
 from __future__ import annotations
 
@@ -44,13 +46,10 @@ def built_deck(out: Path) -> dict:
 
 # -- a presentation ---------------------------------------------------------------------
 
-def test_a_presentation_carries_the_standard_vote_asked_at_done(tmp_path, monkeypatch, capsys):
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
-    assert mp.main([str(write_yaml(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
-                    "--project", "lunch", "--session", "sess-1",
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+def test_a_presentation_carries_the_standard_vote_asked_at_done(tmp_path):
+    made = mp.make_presentation(write_yaml(tmp_path / "in", presentation()), tmp_path / "out")
     archive = tmp_path / "out" / "team-lunch-moved-1.0.0.zip"
+    assert made.archive == archive and made.kind == "presentation"
     z = zipfile.ZipFile(archive)
     assert "scripts/decide.py" not in z.namelist(), "no slide asks the vote: JARVIS records it"
     package = json.loads(z.read("package.json"))
@@ -68,9 +67,39 @@ def test_a_presentation_carries_the_standard_vote_asked_at_done(tmp_path, monkey
     assert titles[:2] == ["Friday's lunch has moved", "What changed"], \
         "its own slides first, its opening first of all"
     assert not any(s.get("waits") for s in story["slides"]), "the vote is asked at Done"
-    assert len(delivery.calls) == 1
-    assert "Built a presentation" in capsys.readouterr().out
 
+
+def test_a_deck_from_the_fresh_author_is_refused_as_a_briefing(tmp_path, monkeypatch, capsys):
+    """A deck for Tim is a briefing: only the package workflow makes one
+    (make_package --start), so the fresh author's is refused and nothing is
+    delivered."""
+    from jarvis import package_author
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    assert mp.main([str(write_yaml(tmp_path / "deck", presentation())), "--work", "work-1",
+                    "--out", str(tmp_path / "out"), "--session", "sess-1",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 1
+    assert package_author.BRIEFING_BY_REQUEST in capsys.readouterr().out
+    assert delivery.calls == [], "nothing delivered, nothing reported"
+
+
+def test_a_working_tool_s_page_from_the_fresh_author_is_delivered(tmp_path, monkeypatch, capsys):
+    """Hand-made pages stay, for tools: the fresh author's page folder is
+    built, carries the vote and is delivered on its Work item."""
+    from jarvis import package_author
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, "post", delivery)
+    assert mp.main([str(page_folder(tmp_path / "in")), "--work", "work-1",
+                    "--out", str(tmp_path / "out"), "--project", "globe", "--session", "sess-1",
+                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    archive = tmp_path / "out" / "globe-numbers-1.0.0.zip"
+    names = zipfile.ZipFile(archive).namelist()
+    assert "app.js" in names and "story.json" in names
+    assert json.loads(zipfile.ZipFile(archive).read("package.json"))["vote"] == "approve-package"
+    [(url, _, _)] = delivery.calls
+    assert "work=work-1" in url
+    out = capsys.readouterr().out
+    assert "Built a page package" in out and package_author.BRIEFING_BY_REQUEST not in out
 
 def test_a_deck_with_neither_slides_nor_decisions_is_refused(tmp_path, capsys):
     assert mp.main([str(write_yaml(tmp_path, {"title": "Nothing"})), "--check-only"]) == 1
@@ -99,14 +128,14 @@ def test_a_content_json_deck_is_refused_naming_presentation_yaml(tmp_path, capsy
 def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    assert mp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
+    assert mp.main([str(agent_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
                     "--project", "lunch", "--session", "sess-1", "--workflow", "wf-1",
                     "--work", "work-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, _token, body)] = delivery.calls
     assert url.startswith("http://127.0.0.1:19999/api/messages?"), "a message carrying it"
     assert "project=lunch" in url and "workflow=wf-1" in url and "work=work-1" in url
     assert base64.b64decode(body["package"])[:2] == b"PK", "the zip's own bytes"
-    assert body["says"].startswith("Decision package: "), "its kind and title by default"
+    assert body["says"].startswith("Agent package: "), "its kind and title by default"
     out = capsys.readouterr().out
     assert "Sent to Tim as message 41, carrying it; in his package inbox as " \
         "pkg-0123456789ab" in out
@@ -114,17 +143,6 @@ def test_it_goes_to_his_package_inbox_naming_its_sender(tmp_path, monkeypatch, c
     record = json.loads((tmp_path / "out" / "delivery.json").read_text())
     assert (record["inbox"], record["message"], record["session"]) == (
         "pkg-0123456789ab", 41, "sess-1")
-
-
-def test_says_is_the_message_s_words(tmp_path, monkeypatch):
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
-    assert mp.main([str(write_yaml(tmp_path / "in", small_deck())), "--out", str(tmp_path / "out"),
-                    "--session", "sess-1", "--says", "Two choices on the lunch.",
-                    "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    [(_url, _token, body)] = delivery.calls
-    assert body["says"] == "Two choices on the lunch."
-
 
 def test_the_version_follows_the_highest_already_delivered(tmp_path, monkeypatch):
     for version in ("1.0.0", "1.0.9", "1.0.10"):
@@ -178,6 +196,15 @@ def page_folder(root: Path, **manifest) -> Path:
     return folder
 
 
+def agent_folder(root: Path) -> Path:
+    """An agent package's folder: its brief and only its purpose given."""
+    folder = root / "Count Words"
+    folder.mkdir(parents=True)
+    (folder / "BRIEF.md").write_text("Count the words.\n")
+    (folder / "package.json").write_text(json.dumps({"purpose": "Count the words."}))
+    return folder
+
+
 # -- every package carries his vote -----------------------------------------------------
 
 def built_story(out: Path) -> dict:
@@ -185,18 +212,7 @@ def built_story(out: Path) -> dict:
     return json.loads(zipfile.ZipFile(archive).read("story.json"))
 
 
-def test_a_presentation_for_a_work_item_goes_with_the_vote(tmp_path, monkeypatch):
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
-    assert mp.main([str(write_yaml(tmp_path / "in", presentation())), "--work", "work-1",
-                    "--out", str(tmp_path / "out"), "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    [(url, _token, _body)] = delivery.calls
-    assert "work=work-1" in url and not built_deck(tmp_path / "out").get("decisions")
-
-
-def test_a_page_with_no_story_carries_the_vote_and_gets_no_story(tmp_path, monkeypatch):
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, "post", delivery)
+def test_a_page_with_no_story_carries_the_vote_and_gets_no_story(tmp_path):
     folder = tmp_path / "in" / "Plain Page"
     folder.mkdir(parents=True)
     (folder / "index.html").write_text("<p>Hello</p>")
@@ -204,29 +220,23 @@ def test_a_page_with_no_story_carries_the_vote_and_gets_no_story(tmp_path, monke
     (folder / "package.json").write_text(json.dumps({"purpose": "Say hello.", "returns": [],
                                                      "understanding": {"index.html": "about.md"}}))
     out = tmp_path / "out"
-    assert mp.main([str(folder), "--work", "work-1", "--out", str(out),
-                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    [archive] = out.glob("*.zip")
+    out.mkdir()
+    archive = mp.make_folder(folder, out).archive
     manifest = json.loads(zipfile.ZipFile(archive).read("package.json"))
     assert manifest["vote"] == "approve-package" and "story" not in manifest
     assert "results/decisions.json" in manifest["returns"]
     assert "story.json" not in zipfile.ZipFile(archive).namelist()
-    assert len(delivery.calls) == 1
 
-
-def test_a_page_s_own_story_is_kept_as_it_is_and_the_vote_asked_at_done(tmp_path, monkeypatch):
-    monkeypatch.setattr(dp, "post", _Delivery())
+def test_a_page_s_own_story_is_kept_as_it_is_and_the_vote_asked_at_done(tmp_path):
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
     given["answers"] = "results/mine.json"
     given["slides"][-1]["waits"] = "go-ahead"
     (folder / "story.json").write_text(json.dumps(given))
-    assert mp.main([str(folder), "--out", str(tmp_path / "b"),
-                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
+    (tmp_path / "b").mkdir()
+    archive = mp.make_folder(folder, tmp_path / "b").archive
     assert built_story(tmp_path / "b") == given
-    [archive] = (tmp_path / "b").glob("*.zip")
     assert json.loads(zipfile.ZipFile(archive).read("package.json"))["vote"] == "approve-package"
-
 
 def in_force(language: str) -> None:
     data_paths.language_path().write_text(json.dumps({"language": language}))
@@ -277,18 +287,17 @@ def test_a_deck_that_declares_the_vote_is_refused(tmp_path, capsys, decision, sa
     assert said in capsys.readouterr().out
 
 
-def test_a_page_whose_story_asks_got_it_is_refused(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(dp, "post", _Delivery())
+def test_a_page_whose_story_asks_got_it_is_refused(tmp_path):
     folder = page_folder(tmp_path / "in")
     given = json.loads((folder / "story.json").read_text())
     given["answers"] = "results/decisions.json"
     given["slides"].append({"title": "Got it?", "waits": "understood",
                             "beats": [{"say": "Got it, or do you have questions?"}]})
     (folder / "story.json").write_text(json.dumps(given))
-    assert mp.main([str(folder), "--out", str(tmp_path / "a"),
-                    "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 1
-    assert "Got it, which is retired" in capsys.readouterr().out
-
+    (tmp_path / "a").mkdir()
+    with pytest.raises(dp.Refused) as refused:
+        mp.make_folder(folder, tmp_path / "a")
+    assert "Got it, which is retired" in " ".join(refused.value.problems)
 
 @pytest.mark.parametrize("question", ["approve-item", "merge-pr"])
 def test_a_deck_that_asks_approval_still_ends_with_the_package_vote(tmp_path, question):
@@ -349,16 +358,22 @@ def test_a_folder_with_only_a_purpose_is_worked_out(tmp_path):
 def test_a_folder_is_zipped_read_back_and_delivered(tmp_path, monkeypatch, capsys):
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
-    assert mp.main([str(page_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
+    folder = agent_folder(tmp_path / "in")
+    (folder / "notes.txt").write_text("The words to count.\n")
+    (folder / "notes.md").write_text("# Notes\nThe words the brief counts.\n")
+    (folder / "package.json").write_text(json.dumps({"purpose": "Count the words.",
+                                                     "understanding": {"notes.txt": "notes.md"}}))
+    (folder / "results").mkdir()
+    (folder / "results" / "old.json").write_text("{}")
+    assert mp.main([str(folder), "--out", str(tmp_path / "out"),
                     "--project", "globe", "--session", "sess-1",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
-    archive = tmp_path / "out" / "globe-numbers-1.0.0.zip"
+    archive = tmp_path / "out" / "count-words-1.0.0.zip"
     names = zipfile.ZipFile(archive).namelist()
-    assert "app.js" in names and "story.json" in names and "results/old.json" not in names
+    assert "BRIEF.md" in names and "notes.txt" in names and "results/old.json" not in names
     assert len(delivery.calls) == 1
     out = capsys.readouterr().out
-    assert "Built a page package" in out and "in his package inbox" in out
-
+    assert "agent package: " in out and "in his package inbox" in out
 
 @pytest.mark.parametrize("change, said", [
     (lambda f: (f / "package.json").write_text("{}"), "needs a purpose"),
@@ -401,25 +416,15 @@ def test_the_old_command_name_is_the_same_command(tmp_path, capsys):
     assert "a presentation" in capsys.readouterr().out
 
 
-def test_every_deck_carries_its_proof_and_is_signed_a_presentation_too(
-        tmp_path, monkeypatch, session_key):
+def test_every_deck_carries_its_proof_a_presentation_too(tmp_path):
     """A presentation carries the standard vote (PR 89), so it is proven
-    and signed exactly as a decision package is: no browser, no "only as
-    sent" path, and his JARVIS makes the proof again as it arrives."""
-    from jarvis import package_signature, presentation_proof
-    monkeypatch.setattr(dp, "post", _Delivery())
+    exactly as a decision package is: no browser, and his JARVIS makes the
+    proof again as it arrives."""
+    from jarvis import presentation_proof
     for name, deck in (("d", small_deck()), ("p", presentation())):
-        out = tmp_path / name / "out"
-        assert mp.main([str(write_yaml(tmp_path / name, deck)), "--out", str(out),
-                        "--session", "sess-1", "--deliver-to", "http://127.0.0.1:19999"]) == 0
-        [archive] = out.glob("*.zip")
-        signed = package_signature.read(archive)
-        assert signed.session == "sess-1" and signed.checks(session_key[1])
-        # Also signed as checked, for a JARVIS from before the proof.
-        assert package_signature.DECISION_CHECKED in signed.statements
-        with zipfile.ZipFile(archive) as z:
+        made = mp.make_presentation(write_yaml(tmp_path / name, deck), tmp_path / name / "out")
+        with zipfile.ZipFile(made.archive) as z:
             assert json.loads(z.read(presentation_proof.PROOF_FILE))["proven"]
-
 
 def test_a_deck_given_as_a_folder_is_refused(tmp_path):
     with pytest.raises(dp.Refused) as refused:
@@ -428,20 +433,18 @@ def test_a_deck_given_as_a_folder_is_refused(tmp_path):
 
 
 def test_a_build_refused_after_the_author_reports_on_work_without_a_package(tmp_path, monkeypatch):
-    from jarvis import presentation_proof
     delivery = _Delivery()
     monkeypatch.setattr(dp, "post", delivery)
     def refused(source, out):
-        raise dp.Refused(["deck.css is not JARVIS's own."])
-    monkeypatch.setattr(mp, "make_presentation", refused)
-    assert mp.main([str(write_yaml(tmp_path / "in", presentation())), "--out", str(tmp_path / "out"),
+        raise dp.Refused(["BRIEF.md is not readable."])
+    monkeypatch.setattr(mp, "make_folder", refused)
+    assert mp.main([str(agent_folder(tmp_path / "in")), "--out", str(tmp_path / "out"),
                     "--session", "sess-1", "--work", "image-work",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 1
     [(url, signer, body)] = delivery.calls
     assert url.endswith("/api/messages?work=image-work")
     assert signer is not None and "package" not in body
-    assert "deck.css is not JARVIS's own" in body["says"]
-
+    assert "BRIEF.md is not readable" in body["says"]
 
 # -- a briefing: its purpose, conclusion and an opening of words ------------------------
 

@@ -262,10 +262,12 @@ class CodexEngine:
         self._reconnector: Optional[asyncio.Task] = None
         self._closed = False
 
-    def resolve_model(self, model: str | None) -> str:
+    def resolve_model(self, model: str | None) -> str | None:
         """Explicit, else the Codex brain's model in Settings, else Codex's
-        default: never left to the app server's own default."""
-        return model or brains_config.model_for(PROVIDER) or codex_provider.DEFAULT_MODEL
+        fallback (the tiers' sweep over the models listed now); None only
+        when nothing listed fits, and the app server's own default is used."""
+        return (model or brains_config.model_for(PROVIDER)
+                or codex_provider.CodexProvider().default_model)
 
     # -- the connection ---------------------------------------------------
 

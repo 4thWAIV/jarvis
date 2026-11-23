@@ -181,8 +181,15 @@ def test_it_is_the_provider_named_openai_with_its_own_default_model(tmp_path, mo
     from jarvis import brains_config
     brains_config.add("openai")
     brains_config.set_default("openai")
+    # Its default is never a fixed name: the tiers' sweep over the models
+    # it lists now, the newest of the default tier's family first.
+    monkeypatch.setattr(codex_provider.CodexProvider, "models",
+                        lambda self: ["gpt-6-astra", "gpt-5.6-terra", "gpt-6.1-terra"])
     cfg = brain.BrainConfig.from_env(tmp_path)
-    assert (cfg.provider, cfg.model) == ("openai", codex_provider.DEFAULT_MODEL)
+    assert (cfg.provider, cfg.model) == ("openai", "gpt-6.1-terra")
+    monkeypatch.setattr(codex_provider.CodexProvider, "models", lambda self: [])
+    assert codex_provider.CodexProvider().default_model is None, \
+        "with no list, Codex's own default, never an out-of-date name"
 
 
 def test_its_failures_and_foreign_reads_are_its_own():
@@ -361,3 +368,23 @@ def test_on_macos_a_configured_codex_keeps_shell_rules_and_a_found_one_is_whole(
 def test_natively_a_configured_interpreter_and_script_split_by_windows_rules():
     assert codex_provider._codex_binary(f'"{sys.executable}" "{FAKE}"') == [
         sys.executable, str(FAKE)]
+
+
+def test_a_turn_s_whole_use_is_the_thread_total_s_change_over_it(tmp_path):
+    seen = []
+    session = codex_provider.CodexSession(_config(tmp_path), lambda s, ev: seen.append(ev), None)
+
+    def usage(total, last):
+        session._handle({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {
+            "total": total, "last": last}}})
+    usage({"inputTokens": 900, "cachedInputTokens": 600, "outputTokens": 40},
+          {"inputTokens": 500, "outputTokens": 30})
+    session._handle({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+    assert session.turn_usage == {"inputTokens": 900, "cachedInputTokens": 600,
+                                  "outputTokens": 40}
+    assert seen[-1].context_tokens == 500 and seen[-1].output_tokens == 30
+    usage({"inputTokens": 2000, "cachedInputTokens": 1500, "outputTokens": 70},
+          {"inputTokens": 1100, "outputTokens": 30})
+    session._handle({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+    assert session.turn_usage == {"inputTokens": 1100, "cachedInputTokens": 900,
+                                  "outputTokens": 30}

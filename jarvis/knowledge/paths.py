@@ -100,3 +100,26 @@ def under_prefix(under: str) -> str:
 
 def is_under(path: str, under: str) -> bool:
     return path.startswith(under_prefix(under))
+
+
+# A package's evidence (workflow.yaml gather layout evidence_path): gathered
+# once at the package level, `/work/<id>/packages/<package id>/evidence/`,
+# or `/packages/<package id>/evidence/` for a package with no Work item. Its
+# items are indexed urgently, ahead of the background build
+# (vectors.build_rank), since a package's swarm waits on them.
+EVIDENCE = "evidence"
+
+
+def package_evidence_folder(work: Optional[str], package: str) -> str:
+    """The evidence folder of one package, from its Work item's and its own
+    path segments (records.segment, already made)."""
+    return (f"/work/{work}/packages/{package}/{EVIDENCE}" if work
+            else f"/packages/{package}/{EVIDENCE}")
+
+
+def is_package_evidence(path: str) -> bool:
+    """Whether the item is in a package's evidence folder."""
+    s = path[1:].split("/")
+    if len(s) >= 6 and s[0] == "work" and s[2] == "packages" and s[4] == EVIDENCE:
+        return True
+    return len(s) >= 4 and s[0] == "packages" and s[2] == EVIDENCE

@@ -139,6 +139,29 @@ def _read() -> Optional[Running]:
         return None
 
 
+def another() -> Optional[Running]:
+    """Another JARVIS recorded as running on this data folder, or None. A
+    start refuses while there is one (`refusal`; Tim, 2026-11-20), so a
+    second start never ends the first one's knowledge engine. The record of
+    this very process is not another: `/api/restart` re-executes in place
+    (`os.execv`, the same pid). Any other live pid, a parent included, is
+    another."""
+    found = running()
+    if found is None or found.pid == os.getpid():
+        return None
+    return found
+
+
+def refusal() -> Optional[str]:
+    """Why this start is refused, in plain words, or None."""
+    other = another()
+    if other is None:
+        return None
+    return (f"JARVIS is already running on this data folder ({data_paths.data_dir()}): "
+            f"process {other.pid}, at {other.url}. This start is refused, so the one "
+            f"running is left as it is. Use that one, or stop it before starting again.")
+
+
 def running() -> Optional[Running]:
     """The recorded server unless its process is confirmed gone, else None.
 

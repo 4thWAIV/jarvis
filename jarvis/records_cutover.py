@@ -162,7 +162,9 @@ def done(uds=None) -> Optional[dict]:
     return None if item is None else dict(item.data or {})
 
 
-def _snapshot(uds) -> Optional[str]:
+def take_snapshot(uds) -> Optional[str]:
+    """A snapshot of the engine, its name: the copy to go back to before a
+    move of records (this cut-over, work_folders)."""
     try:
         status, payload = uds.transport.request("POST", "/v1/snapshot", {}, 120.0)
     except Exception:
@@ -204,7 +206,7 @@ def cut_over(*, db_path: Optional[Path] = None, uds=None, files_root: Optional[P
                     "copying again in full", cleared.items, cleared.files, cleared.seconds)
         seconds["cleared"] = round(cleared.seconds, 3)
     t = time.monotonic()
-    snap = _snapshot(uds) if snapshot else None
+    snap = take_snapshot(uds) if snapshot else None
     seconds["snapshot"] = round(time.monotonic() - t, 3)
     log.info("cut-over: moving %s into the engine", db_path)
     on_step(COPY, {})

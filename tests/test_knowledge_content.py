@@ -413,3 +413,74 @@ def test_the_watcher_indexes_a_voice_file_only_once_it_is_closed(engine):
         assert (service.counters.indexed, service.counters.unchanged) == (2, 0)   # each read once
     finally:
         service.stop()
+
+
+def test_a_work_items_and_a_packages_files_are_under_their_folders_of_records(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
+    roots = {r.prefix: r for r in kc.jarvis_roots()}
+    assert roots["/work"].path == os.path.realpath(tmp_path / "data" / "work")
+    assert roots["/packages"].path == os.path.realpath(tmp_path / "data" / "package")
+    assert roots["/work"].shares and roots["/packages"].shares and roots["/work"].scope == "text"
+
+
+def test_a_shared_root_never_writes_over_or_removes_a_record(engine, tmp_path):
+    _, uds = engine
+    disk = tmp_path / "work"
+    (disk / "work-1" / "packages" / "p-1").mkdir(parents=True)
+    (disk / "work-1" / "work-1.work").write_text("a file named as the record is")
+    (disk / "work-1" / "packages" / "p-1" / "handoff.json").write_text('{"question": "Which?"}')
+    uds.put(TIM, "/work/work-1/work-1.work", data={"title": "The Work item", "state": "ready"})
+    root = kc.Root("/work", os.path.realpath(disk), "text", "untrusted", shares=True)
+    indexer = kc.Indexer(uds)
+    assert _index_all(indexer, root) == ["work-1/packages/p-1/handoff.json"]
+    assert uds.get(TIM, "/work/work-1/work-1.work").data == {"title": "The Work item", "state": "ready"}
+    assert indexer.changed(root, "work-1/work-1.work") is None
+    (disk / "work-1" / "work-1.work").unlink()
+    assert indexer.changed(root, "work-1/work-1.work") is None
+    assert indexer.scan(root) == []
+    assert uds.get(TIM, "/work/work-1/work-1.work").data["title"] == "The Work item"
+    assert indexer.forget_root("/work") == 1
+    assert uds.get(TIM, "/work/work-1/packages/p-1/handoff.json") is None
+    assert uds.get(TIM, "/work/work-1/work-1.work") is not None
+
+
+def test_a_package_run_s_bookkeeping_is_never_indexed_and_leaves_on_the_next_scan(engine, tmp_path):
+    from jarvis import run_report
+    _, uds = engine
+    disk = tmp_path / "work"
+    run = disk / "work-1" / "packages" / "p-1" / "runs" / "run-1"
+    (run / run_report.ROLE_CONFIG).mkdir(parents=True)
+    (run / run_report.ROLE_CONFIG / "author-mcp.json").write_text('{"mcpServers": {}}')
+    (run / "research.md").write_text("# Research\nThe move waits on PR 180.")
+    for name in run_report.BOOKKEEPING:
+        (run / name).write_text('{"steps": []}\n')
+    # A file of the same name outside a run's folder is the package's own.
+    (disk / "work-1" / "packages" / "p-1" / "timing.json").write_text('{"given": true}')
+    root = kc.Root("/work", os.path.realpath(disk), "text", "untrusted", shares=True)
+    indexer = kc.Indexer(uds)
+    # Indexed before the rule: each bookkeeping file holds an item.
+    before = []
+    for name in run_report.BOOKKEEPING:
+        rel = f"work-1/packages/p-1/runs/run-1/{name}"
+        if kc.item_path(root, rel) is not None:
+            indexer.note(root, rel, fs_watch.stat_of(str(run / name)))
+            before.append(kc.item_path(root, rel))
+    assert before and all(uds.get(TIM, p) is not None for p in before)
+    todo = _index_all(indexer, root)
+    assert sorted(todo) == ["work-1/packages/p-1/runs/run-1/research.md",
+                            "work-1/packages/p-1/timing.json"]
+    assert all(uds.get(TIM, p) is None for p in before), "the next scan removed them"
+    for name in run_report.BOOKKEEPING:
+        assert not kc.wanted(root, f"work-1/packages/p-1/runs/run-1/{name}")
+    assert not kc.wanted(root, f"work-1/packages/p-1/runs/run-1/{run_report.ROLE_CONFIG}/a.json")
+    assert kc.wanted(root, "work-1/packages/p-1/runs/run-1/research.md")
+    # An event for one never indexes it either.
+    assert indexer.changed(root, "work-1/packages/p-1/runs/run-1/timing.json") is None
+
+
+def test_the_bookkeeping_names_are_the_run_s_own():
+    from jarvis import package_jobs, package_swarm, research_log, run_report
+    assert run_report.BOOKKEEPING == {run_report.TIMING, run_report.QUALITY, package_swarm.STATE,
+                                      package_jobs.RECORD_NAME, package_jobs.LOG,
+                                      research_log.NAME, research_log.USED}
+    assert not run_report.BOOKKEEPING & set(package_swarm.WORKING)

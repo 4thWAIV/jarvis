@@ -60,7 +60,7 @@ def write(engine, chunks):
 
 
 def nearest(engine, text, k=3, within=None):
-    q = engine.vectors.embed_query(text, timeout=5)
+    q = engine.vectors.embed_query(text)
     found = engine.vectors.search(q, k=k, within=within)
     return [engine.docs.key_of(o) for o, _ in found["hits"]]
 
@@ -224,12 +224,45 @@ def test_within_limits_the_rows_by_gathering_and_by_mask(engine, monkeypatch):
     assert gathered == masked
 
 
-def test_past_the_deadline_the_answer_is_partial(engine):
+def test_no_timer_cuts_a_vector_search_short(engine, monkeypatch):
+    """Every file is scanned however long the scan takes: a clock jumping a
+    day between files still answers in full, never partial."""
     write(engine, [chunk(i, t) for i, t in enumerate(TEXTS)])
     engine.store.flush()
     q = engine.vectors.embed_query(TEXTS[0])
-    found = engine.vectors.search(q, deadline_s=-1)
-    assert found["partial"] and found["hits"] == []
+    ticks = iter(range(0, 10 ** 9, 86400))
+    monkeypatch.setattr(vx.time, "monotonic", lambda: float(next(ticks)))
+    found = engine.vectors.search(q, k=len(TEXTS))
+    assert not found["partial"] and len(found["hits"]) == len(TEXTS)
+    items = engine.vectors.search_items(q, k=len(TEXTS))
+    assert not items["partial"]
+
+
+def test_a_question_is_embedded_on_its_own_thread_never_behind_the_build(tmp_path, monkeypatch):
+    """A search's question does not wait for the build's batch on the
+    embedding thread: with that thread held mid-batch, it is embedded at
+    once on the searching thread."""
+    release = threading.Event()
+
+    class Held(emb.FakeEmbedder):
+        def embed(self, texts, purpose):
+            if threading.current_thread().name == "knowledge-embed":
+                release.wait(30)
+            return super().embed(texts, purpose)
+    monkeypatch.setattr(emb, "RUNNER", lambda: Held(32))
+    e = open_engine(tmp_path / "k")
+    try:
+        e.transaction({"puts": [chunk(i, t) for i, t in enumerate(TEXTS)]})
+        deadline = time.monotonic() + 10
+        while not e.vectors._busy() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        began = time.monotonic()
+        q = e.vectors.embed_query("the microphone")
+        assert q is not None and time.monotonic() - began < 5
+        assert not release.is_set()
+    finally:
+        release.set()
+        e.close()
 
 
 def test_forget_removes_every_vector_row(engine):

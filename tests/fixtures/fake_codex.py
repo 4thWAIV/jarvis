@@ -13,6 +13,8 @@ import sys
 
 WARMUP = "(system) Warm-up. Reply with exactly: OK"
 RESUMED = False     # thread/resume was asked for, not thread/start
+TURN: dict = {}     # the turn/start being answered
+THREADS = 0         # the threads started on this app server
 
 
 def log(**entry):
@@ -36,28 +38,38 @@ def limits(reached=False):
 
 
 def turn(rid, text):
+    tid = {"threadId": TURN.get("threadId")} if TURN.get("threadId") else {}
     out({"id": rid, "result": {"turn": {"id": "turn-x", "status": "inProgress"}}})
     if text == "die":
         sys.exit(3)
     if os.environ.get("FAKE_CODEX_FORCE") == "AUTHERROR":
-        out({"method": "turn/completed", "params": {"turn": {
+        out({"method": "turn/completed", "params": {**tid, "turn": {
             "id": "turn-x", "status": "failed",
             "error": {"message": "Not logged in. Please log in again."}}}})
         return
     if text == "use the web":
-        out({"method": "item/started", "params": {"item": {"type": "webSearch", "id": "w1"}}})
+        out({"method": "item/started", "params": {**tid, "item": {"type": "webSearch", "id": "w1"}}})
     if text == "use capture":
-        out({"method": "item/started", "params": {"item": {"type": "mcpToolCall", "id": "m1",
+        out({"method": "item/started", "params": {**tid, "item": {"type": "mcpToolCall", "id": "m1",
                                                             "server": "jarvis", "tool": "capture"}}})
     if text == "hit the limit":
         out({"method": "account/rateLimits/updated", "params": {"rateLimits": limits(reached=True)}})
     reply = ["OK"] if text == WARMUP else ["Hello, ", "sir."]
+    if TURN.get("outputSchema") is not None:
+        # An answer in the turn's form: $FAKE_CODEX_ANSWER, as given.
+        reply = [os.environ.get("FAKE_CODEX_ANSWER", "{}")]
+    if text.startswith("which thread"):
+        # The thread's own id and the words asked, so a test sees each
+        # thread on a shared app server answered as itself.
+        reply = [json.dumps({"answer": f"{TURN.get('threadId')}:{text}"})]
     for part in reply:
-        out({"method": "item/agentMessage/delta", "params": {"delta": part}})
+        out({"method": "item/agentMessage/delta", "params": {**tid, "delta": part}})
+    out({"method": "item/completed", "params": {**tid, "item": {"type": "agentMessage", "id": "a1",
+                                                         "text": "".join(reply)}}})
     used = 1000 if text == WARMUP else 1500
-    out({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {
+    out({"method": "thread/tokenUsage/updated", "params": {**tid, "tokenUsage": {
         "last": {"inputTokens": used, "outputTokens": 7}, "modelContextWindow": 258400}}})
-    out({"method": "turn/completed", "params": {"turn": {"id": "turn-x", "status": "completed"}}})
+    out({"method": "turn/completed", "params": {**tid, "turn": {"id": "turn-x", "status": "completed"}}})
 
 
 def app_server():
@@ -74,8 +86,11 @@ def app_server():
         if method == "initialize":
             out({"id": rid, "result": {}})
         elif method == "thread/start":
+            global THREADS
+            THREADS += 1
             log(thread=params)
-            out({"id": rid, "result": {"thread": {"id": "thread-1"}, "model": params.get("model")}})
+            out({"id": rid, "result": {"thread": {"id": f"thread-{THREADS}"},
+                                       "model": params.get("model")}})
         elif method == "thread/resume":
             # The same thread goes on (a package author answered by its sender).
             global RESUMED
@@ -88,6 +103,9 @@ def app_server():
                 {"name": "jarvis", "tools": {"capture": {}, "list_agents": {}}},
                 {"name": "broken", "tools": None}]}})
         elif method == "turn/start":
+            log(turn=params)
+            TURN.clear()
+            TURN.update(params)
             text = "".join(i.get("text", "") for i in params.get("input") or [])
             turn(rid, text)
         elif method == "account/rateLimits/read":

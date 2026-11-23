@@ -58,6 +58,41 @@ def _word_before(text: str, i: int) -> str:
     return text[j:i]
 
 
+def sentence_end(text: str) -> Optional[int]:
+    """Where the first sentence of `text` ends (after its closing marks),
+    or None while what follows its last mark is still to come. Shared with
+    written text (text_parts.py), which ends a whole text itself."""
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in ".!?":
+            j = i
+            while j < n and text[j] in ".!?":
+                j += 1
+            k = j
+            while k < n and text[k] in _CLOSERS:
+                k += 1
+            if k >= n:
+                return None                      # need to see what follows
+            if not text[k].isspace():
+                i = k                            # "3.5", "server.py"
+                continue
+            if text[i] == "." and j - i == 1:
+                meridiem = _in_spaced_meridiem(text, i)
+                if meridiem is None:
+                    return None                  # "3 p." may be "3 p. m."
+                if meridiem:
+                    i = k
+                    continue
+                word = _word_before(text, i)
+                if (word.lower() in _ABBREVIATIONS or (len(word) == 1 and word.isupper())
+                        or word.isdigit()):      # "Mr.", initials "J.", list markers "1."
+                    i = k
+                    continue
+            return k
+        i += 1
+    return None
+
+
 class SentenceSplitter:
     def __init__(self, first_chunk_max: int = 160, first_chunk_min: int = 40):
         self._buf = ""
@@ -112,35 +147,7 @@ class SentenceSplitter:
         return chunk
 
     def _boundary(self, text: str) -> Optional[int]:
-        i, n = 0, len(text)
-        while i < n:
-            if text[i] in ".!?":
-                j = i
-                while j < n and text[j] in ".!?":
-                    j += 1
-                k = j
-                while k < n and text[k] in _CLOSERS:
-                    k += 1
-                if k >= n:
-                    return None                      # need to see what follows
-                if not text[k].isspace():
-                    i = k                            # "3.5", "server.py"
-                    continue
-                if text[i] == "." and j - i == 1:
-                    meridiem = _in_spaced_meridiem(text, i)
-                    if meridiem is None:
-                        return None                  # "3 p." may be "3 p. m."
-                    if meridiem:
-                        i = k
-                        continue
-                    word = _word_before(text, i)
-                    if (word.lower() in _ABBREVIATIONS or (len(word) == 1 and word.isupper())
-                            or word.isdigit()):      # "Mr.", initials "J.", list markers "1."
-                        i = k
-                        continue
-                return k
-            i += 1
-        return None
+        return sentence_end(text)
 
     @staticmethod
     def _last_clause_break(text: str) -> Optional[int]:

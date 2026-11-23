@@ -8,9 +8,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import decision_package as dp, package_story, package_understanding, presentation_proof
-from jarvis.presentation_schema import (BarObject, ContentSlide, ImageObject, SourceRef, TableObject,
-                                        TextObject, VectorObject)
+from jarvis import (decision_package as dp, deck_capacity, diagram_layout, package_story, package_understanding,
+                    presentation_data, presentation_proof)
+from jarvis.presentation_schema import (COMPONENTS, BarObject, ChartObject, ContentSlide,
+                                        DiagramObject, FiguresObject, ImageObject, SourceRef,
+                                        StepsObject, TableObject, TextObject, VectorObject,
+                                        link_words, node_words, words)
 from jarvis.presentation_source import DeckCompileError, DeckDiagnostic, Source, read_source
 
 ASSETS = Path(__file__).with_name("presentation_assets")
@@ -23,10 +26,7 @@ class CompiledDeck:
     target_index: Path
 
 
-def _ordered_objects(slide: ContentSlide):
-    """The authored reading order governs every generated human traversal."""
-    objects = {obj.id: obj for obj in slide.objects}
-    return (objects[ident] for ident in slide.readingOrder)
+_ordered_objects = presentation_proof.ordered_objects
 
 
 def _targets(source: Source) -> list[dict]:
@@ -46,28 +46,61 @@ def _targets(source: Source) -> list[dict]:
             add(decision.id, "decision", decision.question, authored, "d-" + decision.id)
             for option in decision.options:
                 add(option.id, "option", option.name, authored, "opt-" + decision.id + "-" + option.id)
+            # What it shows beside its words, in its context area: every
+            # object and its parts a target narration can light.
+            for obj in decision.objects:
+                _object_targets(obj, add)
             continue
         add(slide.id, "slide", slide.title, authored, "presentation-slide-" + slide.id)
         add(slide.id + "-title", "title", slide.title, authored)
         for obj in _ordered_objects(slide):
-            if isinstance(obj, TextObject):
-                add(obj.id,"text"," ".join(run.text for p in obj.paragraphs for run in p.runs),obj.source)
-                for paragraph in obj.paragraphs:
-                    add(paragraph.id,"paragraph","".join(r.text for r in paragraph.runs),obj.source)
-                    for run in paragraph.runs:
-                        add(run.id,"run",run.text,obj.source)
-            else:
-                add(obj.id,obj.type,obj.alt,obj.source)
-                if isinstance(obj, VectorObject):
-                    for shape in obj.members:
-                        add(shape.id,shape.type,shape.alt,obj.source)
-                elif isinstance(obj, BarObject):
-                    for bar in obj.bars:
-                        add(bar.id,"bar",f"{bar.label}: {bar.value:g} {obj.units}",bar.source)
-                elif isinstance(obj, TableObject):
-                    for row in obj.rows:
-                        add(row.id,"row"," | ".join(row.cells),obj.source)
+            _object_targets(obj, add)
     return entries
+
+
+def _object_targets(obj, add) -> None:
+    """An object's targets, and its parts' (paragraphs and runs, items,
+    shapes, bars, rows and cells, a diagram's groups, nodes and connectors,
+    a chart's points)."""
+    if isinstance(obj, TextObject):
+        add(obj.id,"text"," ".join(run.text for p in obj.paragraphs for run in p.runs),obj.source)
+        for paragraph in obj.paragraphs:
+            add(paragraph.id,"paragraph","".join(r.text for r in paragraph.runs),obj.source)
+            for run in paragraph.runs:
+                add(run.id,"run",run.text,obj.source)
+    elif isinstance(obj, COMPONENTS):
+        add(obj.id,obj.type," ".join(words(obj)),obj.source)
+        if isinstance(obj, (FiguresObject, StepsObject)):
+            kind = "figure" if isinstance(obj, FiguresObject) else "step"
+            for item, said in zip(obj.items, words(obj)):
+                add(item.id,kind,said,obj.source)
+    else:
+        add(obj.id,obj.type,obj.alt,obj.source)
+        if isinstance(obj, VectorObject):
+            for shape in obj.members:
+                add(shape.id,shape.type,shape.alt,obj.source)
+        elif isinstance(obj, BarObject):
+            for bar in obj.bars:
+                add(bar.id,"bar",f"{bar.label}: {bar.value:g} {obj.units}",bar.source)
+        elif isinstance(obj, TableObject):
+            for row in obj.rows:
+                add(row.id,"row"," | ".join(row.cells),obj.source)
+            for row, ids in zip(obj.rows, presentation_data.cell_ids(obj)):
+                for n, cell in enumerate(ids):
+                    head = f"{obj.head[n]}: " if obj.head else ""
+                    add(cell,"cell",head + row.cells[n],obj.source)
+        elif isinstance(obj, DiagramObject):
+            # Every group, node and connector a target narration can light.
+            for group in obj.groups:
+                add(group.id,"group",group.label,obj.source)
+            for node in obj.nodes:
+                add(node.id,"node",node_words(node),obj.source)
+            for link in obj.links:
+                add(link.id,"connector",link_words(obj,link),obj.source)
+        elif isinstance(obj, ChartObject):
+            for series in obj._drawn["series"]:
+                for point in series["points"]:
+                    add(point["id"],"point",f"{series['label']}, {point['name']}",obj.source)
 
 
 def _deck(source: Source, targets: list[dict]) -> dict:
@@ -86,8 +119,8 @@ def _deck(source: Source, targets: list[dict]) -> dict:
                 blocks.extend({"p":"".join(run.text for run in p.runs)} for p in obj.paragraphs)
             elif isinstance(obj,ImageObject):
                 blocks.append({"picture":assets[obj.asset].path,"alt":obj.alt})
-            elif isinstance(obj,BarObject):
-                blocks.append({"p":" ".join(f"{b.label} {b.value:g} {obj.units}" for b in obj.bars)})
+            elif isinstance(obj,(BarObject,ChartObject,DiagramObject,*COMPONENTS)):
+                blocks.extend({"p":said} for said in words(obj))
             elif isinstance(obj,TableObject):
                 blocks.append({"table":{**({"head":obj.head} if obj.head else {}),"rows":[r.cells for r in obj.rows],
                                         "rowHeads":obj.rowHeads}})
@@ -119,6 +152,8 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
     targets and template bytes; written into the package as
     .jarvis/layout-proof.json, or DeckCompileError naming each failure."""
     failures = presentation_proof.prove_pictures(parsed, parsed.pictures)
+    failures += presentation_proof.prove_text()
+    failures += presentation_proof.prove_diagrams(parsed)
     failures += presentation_proof.prove_targets(story, targets, deck)
     failures += presentation_proof.prove_templates(folder)
     if failures:
@@ -126,7 +161,7 @@ def _prove(parsed: Source, folder: Path, deck: dict, targets: list[dict], story:
             "layout", failure.message, member=failure.member if failure.member in parsed.nodes else None,
             profile=f"{failure.frame[0]:.0f}x{failure.frame[1]:.0f}" if failure.frame else None)
             for failure in failures))
-    presentation_proof.write(folder, presentation_proof.record(parsed, failures))
+    presentation_proof.write(folder, presentation_proof.record(parsed, failures, story))
 
 
 def compile_deck(source: Path, output: Path) -> CompiledDeck:
@@ -168,7 +203,16 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
                     snapshot.parent.mkdir(exist_ok=True)
                     snapshot.write_bytes(evidence)
                     frozen[reference.id] = {"path": relative, "sha256": hashlib.sha256(evidence).hexdigest()}
-            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
+            # Every object a slide or a decision shows (a decision's in its
+            # context area, presentation.js renderShown).
+            objects=[obj for holder in (*parsed.document.slides,*parsed.document.decisions)
+                     for obj in getattr(holder,"objects",[])]
+            charts={obj.id:obj._drawn for obj in objects if isinstance(obj,ChartObject)}
+            diagrams={obj.id:obj._drawn for obj in objects if isinstance(obj,DiagramObject)}
+            decisions=parsed.document.decisions
+            shown={k:v for n,decision in enumerate(decisions)
+                   for k,v in deck_capacity.shown_heights(decision,n,decisions).items()}
+            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"diagrams":diagrams,"shown":shown,"diagram_arrow":diagram_layout.spec()["arrow"],"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
             (folder/"presentation-data.js").write_text("window.PRESENTATION = "+json.dumps(model,ensure_ascii=False)+";\n",encoding="utf-8")
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

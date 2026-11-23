@@ -316,6 +316,36 @@ def make_pair(folder: Path, comment: str, name: str = KEY_FILE) -> tuple[Path, s
     return private, normalise(public.read_text(encoding="ascii", errors="replace"))
 
 
+# JARVIS's own key: it signs the packages JARVIS makes itself (workflow.yaml
+# deliver, decided "signing"; who asked is proven by the request's own
+# signature, package_jobs.py).
+JARVIS_KEY = "jarvis"
+
+
+def _jarvis_folder() -> Path:
+    from jarvis import data_paths
+    return key_folder(JARVIS_KEY, data_paths.data_dir())
+
+
+def jarvis_key() -> tuple[Path, str]:
+    """(the private key's path, the public key) of JARVIS's own key pair,
+    made once in its data folder (`<data>/jarvis/agent-keys/jarvis/`, a
+    sensitive name to every folder reader), as an agent's is made."""
+    return make_pair(_jarvis_folder(), JARVIS_KEY)
+
+
+def jarvis_public_key() -> Optional[str]:
+    """JARVIS's own public key, or None while it has made none (then nothing
+    is signed by it); reading makes nothing."""
+    public = _jarvis_folder() / (KEY_FILE + ".pub")
+    if public.is_symlink() or not public.is_file():
+        return None
+    try:
+        return normalise(public.read_text(encoding="ascii", errors="replace"))
+    except OSError:
+        return None
+
+
 def session_key(session_id: str) -> Optional[tuple[Path, str]]:
     """(private key path, public key) the session has made, or None."""
     try:

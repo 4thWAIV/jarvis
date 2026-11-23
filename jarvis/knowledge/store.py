@@ -451,6 +451,39 @@ class Store:
                 best = found
         return best
 
+    def newest_many(self, family: int, keys: Iterable[bytes], at: Optional[int] = None, *,
+                    live: bool = False) -> dict[bytes, Version]:
+        """`newest` of many keys at once (a batched multi-get): the keys
+        sorted, the memtables first, then each segment once, newest first,
+        asked only for the keys it could still hold a newer version of
+        (`Segment.newest_many`: one pass in key order, each block read
+        once). A key with no version is left out; a tombstone comes back
+        as a Version whose value is None, as `newest` gives it."""
+        wanted = sorted(set(keys))
+        best: dict[bytes, Version] = {}
+        if not wanted:
+            return best
+        mems, segs = self._sources(family)
+        for mem in mems:
+            for key in wanted:
+                with self._lock:
+                    found = mem.versions_of(family, key)
+                for v in found:  # newest first
+                    if (at is None or v.lsn <= at) and not (live and v.value is None):
+                        if key not in best or v.lsn > best[key].lsn:
+                            best[key] = v
+                        break
+        for _, seg in sorted(segs, key=lambda gs: -gs[1].lsn_max):
+            if at is not None and seg.lsn_min > at:
+                continue
+            ask = [k for k in wanted if k not in best or seg.lsn_max > best[k].lsn]
+            if not ask:
+                break
+            for key, v in seg.newest_many(ask, at, live).items():
+                if key not in best or v.lsn > best[key].lsn:
+                    best[key] = v
+        return best
+
     def value(self, family: int, key: bytes, at: Optional[int] = None) -> Optional[bytes]:
         v = self.get(family, key, at)
         return None if v is None else v.value

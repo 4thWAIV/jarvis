@@ -155,7 +155,7 @@ def test_an_item_is_one_document_and_its_log_is_its_versions(ws, folder):
     _ev(ws, item, "piece", "Tests run.", key="tests", who={"kind": "tim"})
     _ev(ws, item, "decision_needed", "Which?", key="which", options=["A"])
     doc = records.get(ws.path_of(item.id))
-    assert doc.path == f"/work/{item.id}.work"
+    assert doc.path == f"/work/{item.id}/{item.id}.work"
     assert [p["key"] for p in doc.data["pieces"]] == ["tests"]
     assert [d["key"] for d in doc.data["decisions"]] == ["which"]
     logged = records.history(doc.path, fields=["events"])

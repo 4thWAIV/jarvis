@@ -2,16 +2,27 @@
 
     python -m jarvis.make_package --handoff HANDOFF.json --engine claude|codex
                                   --session ID [--project P] [--workflow ID] [--work ID]
-                                  [--check-only] [--fill-assets] [--example [decisions|presentation]]
+                                  [--check-only] [--fill-assets] [--example [decisions|presentation|visuals]]
                                   [--document ID --revision REV]... [--start]
-    python -m jarvis.make_package --status JOB
-    python -m jarvis.make_package --answer JOB --reply ID=TEXT [--reply ID=TEXT ...]
+    python -m jarvis.make_package --start --handoff HANDOFF.json --session ID
+                                  [--work ID | --general] [--workflow ID] [--project P]
+                                  [--document ID --revision REV]...
+    python -m jarvis.make_package --status JOB --session ID
+    python -m jarvis.make_package --answer JOB --reply ID=TEXT [--reply ID=TEXT ...] --session ID
+    python -m jarvis.make_package --rerun JOB --session ID
     python -m jarvis.make_package --withdraw INBOX_ID --session ID
 
-`--start` makes it as a job (package_jobs.py): the job id comes back at once
-and the package is built in a process of its own; `--status` follows it, and
-when the author has asked its sender questions (waiting_on_sender) `--answer`
-gives the answers and the same author goes on.
+`--start` asks JARVIS for the package (package_request.py): the handoff is
+sent signed with the session's own key, JARVIS checks it at once (a bad one
+is refused, saying each problem), records who asked from the signature and
+the job with its run (package_jobs.py), and runs it itself; the job, the
+package and the run come back at once. `--status` follows it, and when the
+run has asked its sender questions (waiting_on_sender) `--answer` gives the
+answers and the run goes on. A run that cannot go on is in Error: `--status`
+says the step, why, what was tried and what would fix it. `--rerun` asks for
+the package again after a run that ended in Error or failed, with no new
+answers: the next run reuses every step whose inputs are unchanged (the step
+cache, step_cache.py), so it goes on from the step that stopped.
 
 docs/making-a-package.md is the whole of how to use it. In short:
 
@@ -26,17 +37,22 @@ docs/making-a-package.md is the whole of how to use it. In short:
   asked at the package view's Done, never as a slide. Got it is retired: a
   source that declares it (`understood`), or the vote itself, is refused.
   content.json decks are no longer made (JSON_DECK_RETIRED).
-- FOLDER is a hand-made package (a page of its own, an agent's brief or a
-  conversation's skill). Its package.json needs only `purpose`; the rest is
-  worked out from the files there. Every page carries the same vote,
-  named in its package.json (`vote`) and asked at Done. An agent or
-  conversation package cannot carry a vote, so it may not name a Work item.
+- FOLDER is a hand-made package (a page of its own for a working tool, an
+  agent's brief or a conversation's skill). Its package.json needs only
+  `purpose`; the rest is worked out from the files there. Every page
+  carries the same vote, named in its package.json (`vote`) and asked at
+  Done. An agent or conversation package cannot carry a vote, so it may
+  not name a Work item.
+- A deck is a briefing: only JARVIS's package workflow makes one, from a
+  request (`--start`); the fresh author here writes none, and one it
+  writes is refused (package_author.BRIEFING_BY_REQUEST; workflow.yaml
+  deliver only_way_in).
 - `--document ID --revision REV` is a canonical architecture document an
   agent checked with `python -m jarvis.language_document validate`: the
   package is JARVIS's projection of that exact checked revision
   (language_projection.project, the brain's publish shares it) around the
-  fresh author's plain explanation, `package/UNDERSTANDING.md`, which is
-  what the author proof covers. It goes on the document's own Work item.
+  fresh author's plain explanation, `package/UNDERSTANDING.md`. It goes on
+  the document's own Work item.
   Given more than once (each --document with its --revision, in order) it
   is a view set: one package of several checked views of the same system
   on the same Work item, the first its own revision, its story walking one
@@ -45,11 +61,9 @@ docs/making-a-package.md is the whole of how to use it. In short:
 The command launches a fresh author first, on the engine his package-author setting gives
 (the caller's own by default, engine_choice.py). Existing source
 can accompany the handoff as evidence; --check-only validates source without a model.
-The command builds the author's unchanged result (a deck is proven as it
-compiles; no browser runs anywhere in a package's path, and his JARVIS
-makes the proof again as it arrives), then signs it and sends it to the live JARVIS as a message carrying it (POST /api/messages,
-messages_api.py): on the Work item `--work` names (else his Inbox), saying
-`--says`, unpacked in his package inbox (package_inbox.py), never shown and
+The command builds the author's unchanged result, then signs it and sends it to the live JARVIS as a message carrying it (POST /api/messages,
+messages_api.py): on the Work item `--work` names (else his Inbox), with
+words the command writes, unpacked in his package inbox (package_inbox.py), never shown and
 never spoken until he asks for it. `--session` is whose key signs it and
 who his answers go back to; `--workflow` names the workflow it is for.
 Anything it cannot decide it refuses, saying what to change. Nothing is
@@ -68,7 +82,7 @@ import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import (author_proof, data_paths, decision_package as dp, decision_stamp,
+from jarvis import (data_paths, decision_package as dp, decision_stamp, env_names,
                     package_signature)
 
 # The file each way of running needs, by its usual name: a folder holding
@@ -121,6 +135,131 @@ EXAMPLE = {**PRESENTATION_EXAMPLE, "id": "team-lunch-choice", "title": "Team lun
                                       {"id": "restaurant", "name": "A restaurant", "says": "A short walk away."}],
                           "recommended": "office", "reason": "Nobody has to book a table.",
                           "text_only": "Both places are familiar to everyone, so a picture adds nothing."}]}
+
+# A deck that shows what can be shown (make_package --example visuals): the
+# bottom line as a callout, a sequence as numbered steps, the key numbers as
+# figures, numbers as a chart and a table drawn from one dataset, each with
+# its source, and diagrams (a flow, a hierarchy, a cycle and a timeline)
+# JARVIS lays out; the author turns dry text into these, never long
+# paragraphs.
+_LUNCH = {"reference": "lunch-survey"}
+VISUALS_EXAMPLE = {
+    "version": "presentation/1", "id": "team-lunch-numbers", "title": "Where the team eats",
+    "purpose": "Show where the team eats on Fridays and what each place costs.",
+    "conclusion": "The office lunch costs least and every team member can come.",
+    "language": "en", "requires": ["presentation-core/1"], "assets": [],
+    "references": [{"id": "lunch-survey", "kind": "authored-example", "locator": "The lunch survey",
+                    "revision": "1", "description": "Each place's cost per person, the walk and the "
+                                                     "team's votes, from the team's survey."}],
+    "datasets": [{"id": "places", "source": _LUNCH,
+                  "columns": [{"id": "place", "label": "Place", "type": "text"},
+                              {"id": "cost", "label": "Cost a person", "type": "number", "units": "€"},
+                              {"id": "walk", "label": "Walk", "type": "number", "units": "min"},
+                              {"id": "votes", "label": "Votes", "type": "number"}],
+                  "rows": [{"id": ident, "values": {"place": place, "cost": cost, "walk": walk,
+                                                    "votes": votes}}
+                           for ident, place, cost, walk, votes in (
+                               ("office", "Office", 9, 0, 7), ("cafe", "Café", 14, 5, 4),
+                               ("bistro", "Bistro", 22, 12, 2))]}],
+    "slides": [
+        {"id": "opening", "type": "content", "title": "The office lunch costs least",
+         "layout": "opening",
+         "objects": [{"id": "opening-callout", "type": "callout", "slot": "words", "source": _LUNCH,
+                      "label": "Bottom line",
+                      "says": "Lunch in the office costs 9 € a person, and all seven votes it got "
+                              "were from people who cannot walk far."}],
+         "readingOrder": ["opening-callout"],
+         "narration": [{"id": "opening-cue", "focus": ["opening-callout"],
+                        "say": "The office lunch costs least, and everyone can come."}],
+         "notes": ""},
+        {"id": "how", "type": "content", "title": "How Friday's lunch works", "layout": "title-and-body",
+         "objects": [{"id": "how-steps", "type": "steps", "slot": "body", "source": _LUNCH,
+                      "items": [{"id": "how-order", "title": "Order by Thursday noon",
+                                 "says": "Each person picks a dish on the team list."},
+                                {"id": "how-deliver", "title": "Food arrives at 12:00"},
+                                {"id": "how-pay", "title": "The team budget pays",
+                                 "says": "Nobody pays at the table."}]}],
+         "readingOrder": ["how-steps"],
+         "narration": [{"id": "how-cue", "focus": ["how-order"],
+                        "say": "Order by Thursday noon; the food arrives at twelve, paid for."}],
+         "notes": ""},
+        {"id": "costs", "type": "content", "title": "What each place costs", "layout": "two-pictures",
+         "objects": [{"id": "cost-figures", "type": "figures", "slot": "first", "source": _LUNCH,
+                      "items": [{"id": "office-cost", "value": "9 €", "label": "a person, office"},
+                                {"id": "bistro-cost", "value": "22 €", "label": "a person, bistro"}]},
+                     {"id": "cost-chart", "type": "chart", "slot": "second", "source": _LUNCH,
+                      "kind": "bar", "data": {"dataset": "places"}, "x": "place", "y": ["cost"],
+                      "alt": "Cost a person at each place"}],
+         "readingOrder": ["cost-figures", "cost-chart"],
+         "narration": [{"id": "costs-cue", "focus": ["office-cost", "cost-chart-office-cost"],
+                        "say": "The office is nine euros a person; the bistro twenty-two."}],
+         "notes": ""},
+        {"id": "voting", "type": "content", "title": "How the team voted", "layout": "table",
+         "objects": [{"id": "vote-table", "type": "table", "slot": "table", "source": _LUNCH,
+                      "alt": "Each place's votes, walk and cost", "rowHeads": True,
+                      "data": {"dataset": "places", "sort": {"column": "votes", "order": "descending"}},
+                      "columns": ["place", "votes", "walk", "cost"]}],
+         "readingOrder": ["vote-table"],
+         "narration": [{"id": "voting-cue", "focus": ["vote-table-office-votes"],
+                        "say": "The office got seven of the thirteen votes."}],
+         "notes": ""},
+        # Diagrams: the author names the kind and fills nodes, links and
+        # groups with words; JARVIS lays them out, sizes and colours them.
+        {"id": "ordering", "type": "content", "title": "How an order goes through", "layout": "title-and-body",
+         "objects": [{"id": "order-flow", "type": "diagram", "slot": "body", "source": _LUNCH, "kind": "flow",
+                      "alt": "An order from the team list to the table",
+                      "nodes": [{"id": "pick", "label": "Pick a dish", "shape": "pill"},
+                                {"id": "in-time", "label": "In time?", "shape": "diamond",
+                                 "tone": "warn"},
+                                {"id": "cook", "label": "The kitchen cooks", "shape": "rounded"},
+                                {"id": "late", "label": "Next week", "tone": "muted"},
+                                {"id": "served", "label": "Served at 12:00", "tone": "good"}],
+                      "links": [{"id": "pick-check", "from": "pick", "to": "in-time"},
+                                {"id": "check-cook", "from": "in-time", "to": "cook", "label": "yes"},
+                                {"id": "check-late", "from": "in-time", "to": "late", "label": "no",
+                                 "style": "dashed"},
+                                {"id": "cook-served", "from": "cook", "to": "served"}]}],
+         "readingOrder": ["order-flow"],
+         "narration": [{"id": "ordering-cue", "focus": ["in-time", "check-late"],
+                        "say": "An order made after Thursday noon is not in time, and waits for the next week."}],
+         "notes": ""},
+        {"id": "who", "type": "content", "title": "Who looks after lunch", "layout": "picture-and-words",
+         "objects": [{**_words("who-words", "One person answers for each part."), "source": _LUNCH},
+                     {"id": "who-tree", "type": "diagram", "slot": "picture", "source": _LUNCH,
+                      "kind": "hierarchy", "alt": "Who answers to whom for lunch",
+                      "nodes": [{"id": "manager", "label": "Office manager", "tone": "accent"},
+                                {"id": "orders", "label": "Orders"}, {"id": "budget", "label": "Budget"},
+                                {"id": "kitchen", "label": "Kitchen", "shape": "rounded"}],
+                      "links": [{"id": "to-orders", "from": "manager", "to": "orders"},
+                                {"id": "to-budget", "from": "manager", "to": "budget"},
+                                {"id": "to-kitchen", "from": "orders", "to": "kitchen"}]}],
+         "readingOrder": ["who-words", "who-tree"],
+         "narration": [{"id": "who-cue", "focus": ["manager"],
+                        "say": "The office manager answers for orders and the budget."}],
+         "notes": ""},
+        {"id": "week", "type": "content", "title": "Every week", "layout": "two-pictures",
+         "objects": [{"id": "week-cycle", "type": "diagram", "slot": "first", "source": _LUNCH,
+                      "kind": "cycle", "alt": "The weekly round of lunch",
+                      "nodes": [{"id": "vote", "label": "Vote"}, {"id": "order", "label": "Order"},
+                                {"id": "eat", "label": "Eat", "tone": "good"},
+                                {"id": "review", "label": "Review"}],
+                      "links": [{"id": "vote-order", "from": "vote", "to": "order"},
+                                {"id": "order-eat", "from": "order", "to": "eat"},
+                                {"id": "eat-review", "from": "eat", "to": "review"},
+                                {"id": "review-vote", "from": "review", "to": "vote"}]},
+                     {"id": "week-days", "type": "diagram", "slot": "second", "source": _LUNCH,
+                      "kind": "timeline", "alt": "The days of the lunch week",
+                      "nodes": [{"id": "menu", "label": "Menu out", "when": "Monday"},
+                                {"id": "close", "label": "Orders close", "when": "Thursday"},
+                                {"id": "lunch", "label": "Lunch", "when": "Friday", "tone": "good"}],
+                      "groups": [{"id": "ordering-days", "label": "Ordering", "nodes": ["menu", "close"]}]}],
+         "readingOrder": ["week-cycle", "week-days"],
+         "narration": [{"id": "week-cue", "focus": ["review-vote", "close"],
+                        "say": "Each week ends in a review, and orders close on Thursday."}],
+         "notes": ""},
+    ],
+    "decisions": [],
+}
 
 # What a checked architecture document's package is called (make_package --document).
 ARCHITECTURE_KIND = "architecture package"
@@ -409,6 +548,34 @@ class Explanation:
     story: bytes | None
 
 
+def _plain_files(source: Path) -> dict[str, Path]:
+    """Every plain file of the folder `source`, by `<folder name>/<path>`,
+    macOS metadata left out; a link, or anything that is not a plain file,
+    is refused (ValueError)."""
+    import os
+    from jarvis import bundle_archive
+    if source.is_symlink():
+        raise ValueError(f"{source} is a link.")
+    if not source.is_dir():
+        return {source.name: source} if source.is_file() else {}
+    left_out = {bundle_archive.METADATA_FILE, bundle_archive.METADATA_FOLDER}
+    found: dict[str, Path] = {}
+    for root, dirs, names in os.walk(source, followlinks=False):
+        here = Path(root)
+        for d in list(dirs):
+            if (here / d).is_symlink():
+                raise ValueError(f"{here / d} is a link.")
+        dirs[:] = sorted(d for d in dirs if d not in left_out)
+        for name in sorted(names):
+            path = here / name
+            if name in left_out:
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(f"{path} is not a plain file.")
+            found[f"{source.name}/{path.relative_to(source).as_posix()}"] = path
+    return found
+
+
 def understanding_in(source: Path, views: tuple[str, ...] = ()) -> Explanation:
     """The fresh author's explanation of an architecture document: a folder
     holding UNDERSTANDING.md, readable author Markdown within 1 MiB, and
@@ -421,7 +588,7 @@ def understanding_in(source: Path, views: tuple[str, ...] = ()) -> Explanation:
     from jarvis import language_kit, language_projection, package_story, package_understanding
     member = language_projection.MEMBER
     try:
-        files = author_proof.source_files(source)
+        files = _plain_files(source)
     except ValueError as e:
         raise dp.Refused([str(e)]) from None
     allowed = {f"{source.name}/{member}", f"{source.name}/{STORY_FILE}"}
@@ -519,44 +686,10 @@ def make_architecture(envelope: dict, source: Path, out: Path, purpose: str,
 # -- signing --------------------------------------------------------------------------
 
 def sign(archive: Path, signer: tuple[Path, str], session: str,
-         statements: tuple[str, ...] = (), work_key: dict | None = None,
-         author: dict | None = None) -> None:
+         statements: tuple[str, ...] = (), work_key: dict | None = None) -> None:
     """Sign the zip in place with the session's own key (package_signature)."""
     package_signature.sign(archive, archive, signer[0], signer[1], session, statements,
-                           work_key, author)
-
-
-def with_author(made: Made, source: Path, session: str) -> author_proof.Claim:
-    """The fresh author's claim for this package: its authored source put in
-    the zip (`.jarvis/author/`) with its briefing (`.jarvis/briefing/`), and the claim checked here first exactly as
-    the receiving JARVIS checks it (author_proof.problem), so a source
-    changed after the author's own last check is never delivered."""
-    import time
-    from jarvis import package_author
-    claim = package_author.claim_of(source)
-    try:
-        author_proof.attach(made.archive, source)
-    except (OSError, ValueError) as e:
-        raise dp.Refused([f"The authored source could not be added: {e}"]) from None
-    # Its briefing travels with it: the prep, script and edits it was
-    # written from (briefing_prep), beside the author's source.
-    from jarvis import briefing_prep
-    briefing_prep.carry(made.archive, source.parent)
-    why = author_proof.problem(claim.as_dict(), session, made.archive, time.time())
-    if why:
-        raise dp.Refused([why])
-    if made.kind == ARCHITECTURE_KIND:
-        # The receiver's gate holds the attached source to the bound
-        # explanation and story; read the zip back as it will.
-        from jarvis import bundle_archive, work_packages
-        try:
-            with bundle_archive.open_archive(made.archive) as z:
-                recognised = work_packages.recognise(z, bundle_archive.list_members(z))
-        except bundle_archive.ArchiveError as e:
-            raise dp.Refused([f"JARVIS would refuse the zip: {e}"]) from None
-        if recognised.manifest is None:
-            raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
-    return claim
+                           work_key)
 
 
 def add_work_key(archive: Path, work_id: str) -> dict:
@@ -645,12 +778,18 @@ def withdraw(inbox_id: str, session: str, base: str = dp.LIVE) -> int:
 
 
 def _job_command(parser, args) -> int:
-    """--start, --status and --answer: package_jobs' calls, as the agent MCP
-    server's tools make them, printed as JSON."""
-    from jarvis import package_jobs
+    """--start, --status, --answer and --rerun: the sender's calls to JARVIS
+    (package_request.py), signed with the session's own key, as the agent
+    MCP server's tools make them, printed as JSON."""
+    from jarvis import package_request
+    session = args.session or env_names.read("JARVIS_AGENT_SESSION").strip()
+    if not session:
+        parser.error("give --session <your session id>: the request is signed with its key")
     try:
         if args.status:
-            result = package_jobs.package_status(args.status)
+            result = package_request.status(args.status, session=session)
+        elif args.rerun:
+            result = package_request.rerun(args.rerun, session=session)
         elif args.answer:
             answers = {}
             for reply in args.reply:
@@ -658,18 +797,21 @@ def _job_command(parser, args) -> int:
                 if not eq:
                     parser.error("--reply takes ID=TEXT")
                 answers[key.strip()] = text
-            result = package_jobs.package_answer(args.answer, answers,
-                                                 session=args.session or None)
+            result = package_request.answer(args.answer, answers, session=session)
         else:
             if args.handoff is None:
                 parser.error("--start needs --handoff")
-            result = package_jobs.package_start(
-                args.handoff, args.work or None, args.general, session=args.session or None,
-                engine=args.engine, project=args.project, workflow=args.workflow,
-                says=args.says, out=args.out, source=args.source, document=args.document,
-                revision=args.revision, deliver_to=args.deliver_to)
-    except package_jobs.JobError as error:
-        print(f"Refused: {error}")
+            if len(args.document) != len(args.revision):
+                parser.error("--document and --revision go together")
+            result = package_request.start(
+                args.handoff, session=session, work=args.work, general=args.general,
+                engine=args.engine or "", project=args.project, workflow=args.workflow,
+                source=str(args.source.resolve()) if args.source else "",
+                documents=tuple(zip(args.document, args.revision)))
+    except package_request.Refused as refused:
+        print("Refused:")
+        for line in refused.problems:
+            print(f"  - {line}")
         return 1
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
@@ -682,10 +824,12 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                     "docs/making-a-package.md has everything.")
     parser.add_argument("source", type=Path, nargs="?",
                         help="existing source to validate with --check-only or give the fresh author as evidence")
-    parser.add_argument("--handoff", type=Path, help="JSON: the question for Tim, its work item and evidence, for the fresh author")
+    parser.add_argument("--handoff", type=Path,
+                        help="JSON: the handoff in its one form (package_request.py: "
+                             "sender_answers, questions, typed evidence)")
     parser.add_argument("--engine", choices=("claude", "codex"), help="the originating session’s own engine")
     parser.add_argument("--example", nargs="?", const="decisions",
-                        choices=("decisions", "presentation"),
+                        choices=("decisions", "presentation", "visuals"),
                         help="print a minimal deck to start from, and stop")
     parser.add_argument("--check-only", action="store_true",
                         help="check the content and stop: nothing is built or delivered")
@@ -704,9 +848,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
     parser.add_argument("--general", action="store_true",
                         help="it is for no work item: it goes to his Inbox even while you "
                              "have a piece on an open item")
-    parser.add_argument("--says", default="",
-                        help="what the message carrying it says, one or two short sentences "
-                             "(default: its kind and title)")
     parser.add_argument("--out", type=Path, default=None,
                         help="where the package, its zip and the author's source and briefing go "
                              "(default: a new temporary folder)")
@@ -723,21 +864,24 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                              "inbox id, as delivery printed it): it leaves his Inbox, what "
                              "waited on it ends, and nothing else is made or sent")
     parser.add_argument("--start", action="store_true",
-                        help="make it as a job: print its id at once and build it in a process "
-                             "of its own (package_jobs); follow it with --status")
+                        help="ask JARVIS for the package: it checks the handoff at once, runs "
+                             "the job itself and prints its id; follow it with --status")
     parser.add_argument("--status", metavar="JOB", default="",
-                        help="print a package job's record (its state, the author's questions)")
+                        help="print a package job's record (its state, its questions, its Error)")
     parser.add_argument("--answer", metavar="JOB", default="",
-                        help="answer a package job's questions with --reply ID=TEXT; the same "
-                             "author goes on")
+                        help="answer a package job's questions with --reply ID=TEXT; the run "
+                             "goes on")
+    parser.add_argument("--rerun", metavar="JOB", default="",
+                        help="ask for the package again after this run ended in Error or "
+                             "failed: the next run goes on from the step that failed, "
+                             "reusing what this run kept")
     parser.add_argument("--reply", action="append", default=[], metavar="ID=TEXT",
                         help="one answer to --answer's job, by the question's id")
     parser.add_argument("--deliver-to", default=dp.LIVE, help=argparse.SUPPRESS)
-    parser.add_argument("--job", default="", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.withdraw:
         return withdraw(args.withdraw, args.session, args.deliver_to)
-    if args.status or args.answer or args.start:
+    if args.status or args.answer or args.rerun or args.start:
         return _job_command(parser, args)
     if len(args.document) != len(args.revision):
         parser.error("--document and --revision go together")
@@ -749,8 +893,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
 
     if args.example:
         import yaml
-        print(yaml.safe_dump(EXAMPLE if args.example == "decisions" else PRESENTATION_EXAMPLE,
-                             sort_keys=False, allow_unicode=True, width=100), end="")
+        shown = {"decisions": EXAMPLE, "presentation": PRESENTATION_EXAMPLE,
+                 "visuals": VISUALS_EXAMPLE}[args.example]
+        print(yaml.safe_dump(shown, sort_keys=False, allow_unicode=True, width=100), end="")
         return 0
     if args.source is None and (args.check_only or args.fill_assets or args.handoff is None):
         parser.error("give source for --check-only or --fill-assets, or --handoff for creation")
@@ -759,7 +904,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         print(f"There is nothing at {source}.")
         return 1
     built = False
-    signer = job = None
+    signer = None
     from jarvis import package_author
     try:
         if args.fill_assets:
@@ -776,7 +921,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
             named = " and ".join(f"architecture document {d} revision {r}" for d, r in views)
             print(f"The explanation is right: {source.name}/UNDERSTANDING.md{told}, for "
                   f"{named}.")
-            print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         if args.check_only:
             if is_presentation(source):
@@ -799,14 +943,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 manifest = manifest_of(source)
                 print(f"The folder is right: a {manifest['runs']} package, "
                       f"{manifest['name']}-{manifest['version']}.")
-            # What a fresh author's own last check shows (author_proof.MARK).
-            print(author_proof.MARK + author_proof.source_digest(source))
             return 0
         out = (args.out or Path(tempfile.mkdtemp(prefix="package-"))).resolve()
         out.mkdir(parents=True, exist_ok=True)
-        if args.job:
-            from jarvis import package_jobs
-            job = package_jobs.Progress(args.job)
         envelope = document = None
         more: tuple[dict, ...] = ()
         if views:
@@ -830,53 +969,48 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                 for (d, r), found in zip(views, envelopes))
         from jarvis import agent_keys
         signer = agent_keys.signer_for(args.session)
-        made = author = None
+        made = None
 
         async def finish(authored_source, turn):
-            """Build the author's source: a deck is laid out and proven by
-            JARVIS (presentation_proof) as it compiles, with no browser and
-            no screenshot review. Its briefing was judged before it was
-            written (briefing_prep). Anything refused is said."""
-            nonlocal made, author, built
-            if job is not None:
-                job.checking()
+            """Build the author's source: a hand-made folder (a working
+            tool's page, an agent's brief, a conversation's skill), or an
+            architecture document's explanation. A deck is a briefing, made
+            only by the package workflow, and is refused
+            (package_author.BRIEFING_BY_REQUEST). Anything refused is
+            said."""
+            nonlocal made, built
             if envelope is None:
                 refuse_json_deck(authored_source)
+                if is_presentation(authored_source):
+                    raise dp.Refused([package_author.BRIEFING_BY_REQUEST])
             built = True        # the author's source is taken: a refusal now is reported on --work
             if envelope is not None:
                 # The package states the handoff's question as its purpose:
                 # the originating session's, never the author's (it is bound
                 # in canonical.json).
+                from jarvis import package_request
                 handed = package_author.read_handoff(args.handoff)
-                made = make_architecture(envelope, authored_source, out, handed["question"],
-                                         handed.get("approval") is True, more)
-            elif is_presentation(authored_source):
-                made = make_presentation(authored_source, out)
+                made = make_architecture(envelope, authored_source, out,
+                                         package_request.questions_text(handed),
+                                         handed["approval"], more)
             else:
                 made = make_folder(authored_source, out)
-            author = with_author(made, authored_source, args.session)
             print(f"Built a {made.kind}: {made.archive}")
             if signer is None:
                 raise dp.Refused(["There is no key to sign it with. Give --session for your onboarded key."])
-            return {"status": "built", "archive_sha256": author_proof._sha(made.archive)}
+            import hashlib
+            return {"status": "built",
+                    "archive_sha256": hashlib.sha256(made.archive.read_bytes()).hexdigest()}
 
         source = package_author.prepare(args.handoff, args.engine, out, source=source,
                                         session=args.session, work=args.work, workflow=args.workflow,
-                                        document=document, finish=finish, job=job)
-        if made is None or author is None:
+                                        document=document, finish=finish)
+        if made is None:
             raise dp.Refused(["The fresh author's source was not built."])
-        if author_proof.source_digest(source) != author.source:
-            raise dp.Refused(["The source changed after it was built; build it again."])
-    except package_author.WaitingOnSender as asked:
-        print(f"Waiting on the sender's answers to job {args.job}: "
-              + "; ".join(f"{q['id']}: {q['question']}" for q in asked.args[0]))
-        return 0
     except dp.Refused as e:
         print("Not delivered. These need changing:" if built else "Not built. These need changing:")
         for line in e.problems:
             print(f"  - {line}")
-        if job is not None:
-            job.refused(e.problems)
         if built and args.work and signer:
             from jarvis import message
             text = "Package not delivered: " + "; ".join(e.problems)
@@ -889,41 +1023,28 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         return 1
     try:
         # Signed with the session's own key (package_signature.py): who sent
-        # it and that these are its files. A deck carries its own layout
-        # proof, which his JARVIS makes again as it arrives. An agent
-        # package for a Work item carries a key for that item alone.
+        # it and that these are its files. An agent package for a Work item
+        # carries a key for that item alone.
         grant = (add_work_key(made.archive, args.work) if args.work and
                  made.kind == "agent package" and args.session else None)
-        # A deck JARVIS laid out and proved also says it passed its check
-        # (DECISION_CHECKED), so a JARVIS from before the proof, which
-        # admits a deck only on that statement, admits it too; one with the
-        # proof makes the proof again and needs no statement.
-        statements = (package_signature.DECISION_CHECKED,) if made.deck is not None else ()
-        sign(made.archive, signer, args.session, statements, grant, author.as_dict())
+        sign(made.archive, signer, args.session, (), grant)
         delivered = dp.deliver(made.archive, args.deliver_to,
-                               args.says.strip() or dp.says_of(made.title, made.kind),
+                               dp.says_of(made.title, made.kind),
                                project=args.project, workflow=args.workflow, work=args.work,
                                source=str(args.handoff or args.source), signer=signer,
                                general=args.general)
     except (OSError, agent_keys.AgentKeyError, package_signature.SignatureError) as e:
         print(f"Not delivered: {e}")
-        if job is not None:
-            job.refused([f"Not delivered: {e}"])
         return 1
     package_id, inbox_id = delivered.package["id"], delivered.inbox["id"]
-    answers = (data_paths.packages_dir() / package_id / "results" / "decisions.json"
-               if made.deck is not None and made.deck.get("decisions") else None)
     record = {"package": package_id, "inbox": inbox_id, "message": delivered.message.get("id"),
               "title": made.title, "kind": made.kind,
               "project": args.project, "session": args.session, "workflow": args.workflow,
               "work": args.work, "zip": str(made.archive),
               "document": args.document[0] if views else None,
               "revision": args.revision[0] if views else None,
-              "views": [{"document": d, "revision": r} for d, r in views] if len(views) > 1 else None,
-              "answers": str(answers) if answers else None}
+              "views": [{"document": d, "revision": r} for d, r in views] if len(views) > 1 else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    if job is not None:
-        job.delivered(record)
     print(ARRIVED_AS.format(message=delivered.message.get("id"), inbox_id=inbox_id)
           + f" (package {package_id})"
           + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
@@ -935,8 +1056,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
              + (" and to the workflow as its decisions" if args.workflow else "") + "."
              if args.session or args.workflow else
              "Give --session next time so his answers come back to you."))
-    if answers:
-        print(f"The answers are recorded in {answers}.")
     return 0
 
 

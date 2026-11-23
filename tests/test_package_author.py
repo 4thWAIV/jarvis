@@ -12,15 +12,13 @@ from tests.test_make_package import presentation
 from tests.deck_fixtures import presentation_of
 from tests.test_decision_package import _Delivery
 from tests.settings_fixtures import default_setting
+from tests.test_package_jobs import ANSWERS, handoff_file
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def handoff(tmp_path):
-    path = tmp_path / 'handoff.json'
-    path.write_text(json.dumps({'question': 'Approve the result?', 'work': 'origin-work',
-                               'evidence': ['receipt.json']}))
-    return path
+    return handoff_file(tmp_path / 'handoff.json', 'Approve the result?', work='origin-work')
 
 
 def presentation_yaml(folder: Path) -> str:
@@ -39,15 +37,14 @@ def only_engine(request, tmp_path, monkeypatch):
     start = 'def reply(text):' if engine == 'claude' else 'def turn(rid, text):'
     session = 'SESSION_ID' if engine == 'claude' else '"thread-1"'
     resumed = "'--resume' in sys.argv" if engine == 'claude' else 'RESUMED'
-    # The author writes its source, then (as the real one is told to) checks
-    # it last with --check-only, which its own transcript records.
+    # The author writes its source in its first turn: an agent package
+    # or a working tool's page (package/), or, to be refused, a deck.
     action = f'''
     with open('received-prompt.txt', 'a') as output:
         output.write(text + '\\n---turn---\\n')
     mode = os.environ.get('AUTHOR_TEST_MODE', 'source')
     # ask:N asks its sender questions on its first N turns, then writes its
-    # prep (going on from its first step) and its source; every turn is
-    # logged with whether its session was resumed.
+    # source; every turn is logged with whether its session was resumed.
     _asked = int(open('asked-count').read()) if os.path.exists('asked-count') else 0
     with open('turns.log', 'a') as output:
         output.write(json.dumps({{'text': text, 'resumed': {resumed}}}) + '\\n')
@@ -60,35 +57,21 @@ def only_engine(request, tmp_path, monkeypatch):
                 {{'id': 'release-date', 'question': 'When did the release go out?',
                   'why': 'The conclusion depends on it.'}},
                 {{'id': 'owner', 'question': 'Who owns the fix?', 'why': ''}}]}}, output)
-    elif mode != 'deck-first' and ('prep.md and script.md now' in text
-                                   or (_asking and not os.path.exists('prep.md'))):
-        import sys as _sys
-        _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
-        from pathlib import Path as _Path
-        from tests.author_fixtures import write_prep as _prep
-        if mode == 'not-for-tim':
-            _Path('not-for-tim.md').write_text('Nothing in it needs him.')
-        else:
-            _prep(_Path('.'))
-    elif mode in ('source', 'edited-after-check', 'deck-first') or _asking:
-        import sys as _sys
-        from pathlib import Path as _Path
-        _sys.path.insert(0, {str(Path(__file__).parent.parent)!r})
-        from jarvis import author_proof as _ap, session_watch as _sw
-        from tests.author_fixtures import write_transcript as _write
-        with open('presentation.yaml', 'w') as output:
+    elif mode in ('source', 'page') or _asking:
+        os.makedirs('package', exist_ok=True)
+        with open('package/package.json', 'w') as output:
             output.write(os.environ['AUTHOR_TEST_CONTENT'])
-        _digest = _ap.source_digest(_Path('presentation.yaml').resolve())
-        if {engine!r} == 'claude':
-            _at = (_Path(os.environ['AUTHOR_TEST_CLAUDE_ROOT']) / 'projects'
-                   / _sw.encode_cwd(os.getcwd()) / ({session} + '.jsonl'))
+        if mode == 'page':
+            with open('package/index.html', 'w') as output:
+                output.write('<p>Approve the result?</p>')
+            with open('package/explanation.md', 'w') as output:
+                output.write('# The tool\\nA page that shows the result.\\n')
         else:
-            _at = (_Path(os.environ['AUTHOR_TEST_CODEX_HOME']) / 'sessions' / '2026' / '11'
-                   / '09' / ('rollout-2026-11-09T00-00-00-' + {session} + '.jsonl'))
-        _write({engine!r}, {session}, _digest, path=_at)
-        if mode == 'edited-after-check':
-            with open('presentation.yaml', 'a') as output:
-                output.write('\\n# changed\\n')
+            with open('package/BRIEF.md', 'w') as output:
+                output.write('Count the words.\\n')
+    elif mode == 'deck':
+        with open('presentation.yaml', 'w') as output:
+            output.write('title: A deck\\n')
     elif mode == 'blocked':
         with open('author-blocked.md', 'w') as output:
             output.write('Missing release receipt.')
@@ -99,17 +82,9 @@ def only_engine(request, tmp_path, monkeypatch):
     monkeypatch.setenv('PATH', str(folder))
     default_setting("claude_path")
     default_setting("codex_path")
-    monkeypatch.setenv('AUTHOR_TEST_CONTENT', presentation_yaml(tmp_path))
-    # The briefing's editors and judges are asks of their own (briefing_prep).
-    from jarvis import briefing_prep
-    from tests.author_fixtures import passing_judges
-    monkeypatch.setattr(briefing_prep, 'ASK', passing_judges())
+    monkeypatch.setenv('AUTHOR_TEST_CONTENT', json.dumps({'purpose': 'Count the words.'}))
     monkeypatch.setenv('FAKE_CODEX_LOG', str(tmp_path / 'codex.log'))
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'caller-codex-home'))
-    from jarvis import session_watch
-    monkeypatch.setenv('AUTHOR_TEST_CLAUDE_ROOT', str(session_watch.config_roots()[0]))
-    from jarvis import settings_service
-    monkeypatch.setenv('AUTHOR_TEST_CODEX_HOME', settings_service.value("codex_sessions_home"))
     return engine
 
 
@@ -149,12 +124,9 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
     [(name, server)] = config['mcpServers'].items()
     assert name == pa.AGENT_MCP and server['args'][1:3] == ['-m', 'jarvis.agent_mcp']
     assert server['env']['JARVIS_AGENT_SESSION'] == 'origin-session'
-    first, deck = prompt.split('---turn---')[:2]
-    assert 'prep.md and script.md now' in first and 'presentation.yaml in your' not in first, \
-        "the first turn writes the briefing's prep and script, no deck"
-    assert deck.strip().startswith('The script passed') and 'presentation.yaml' in deck, \
-        "the deck is asked of the same session only once its script passed"
-    assert receipt['briefing']['status'] == 'passed'
+    first = prompt.split('---turn---')[0]
+    assert 'a folder package under package/' in first and pa.BRIEFING_BY_REQUEST in first, \
+        "the first turn writes the package itself; a deck is no business of it"
     if only_engine == 'codex':
         log = [json.loads(line) for line in (tmp_path / 'codex.log').read_text().splitlines()]
         start = next(row for row in log if 'argv' in row)
@@ -167,47 +139,6 @@ def test_factory_launches_only_callers_engine_and_preserves_origin(only_engine, 
         thread = next(row['thread'] for row in log if 'thread' in row)
         assert thread['sandbox'] == 'workspace-write'
         assert 'resume' not in thread
-
-
-def test_the_signature_names_the_fresh_author_and_carries_its_source(only_engine, origin_key,
-                                                                    tmp_path, monkeypatch):
-    """The delivered zip carries the authored source under .jarvis/author/
-    and its signature the claim: the engine, the fresh author session and
-    that source's digest, which the receiver recomputes from the zip."""
-    from jarvis import author_proof, package_signature
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, 'post', delivery)
-    out = tmp_path / 'out'
-    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
-                    '--session', 'origin-session', '--out', str(out),
-                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
-    [(_, _, body)] = delivery.calls
-    sent = tmp_path / 'sent.zip'
-    sent.write_bytes(base64.b64decode(body['package']))
-    signed = package_signature.read(sent)
-    [receipt] = out.glob('author/*/author-receipt.json')
-    receipt = json.loads(receipt.read_text())
-    assert signed.author == {'engine': only_engine, 'session': receipt['author_session'],
-                             'source': author_proof.digest_in_zip(sent)}
-    assert signed.session == 'origin-session' != signed.author['session']
-    assert author_proof.problem(signed.author, 'origin-session', sent, __import__('time').time()) is None
-
-
-def test_a_source_changed_after_the_author_s_last_check_is_never_delivered(
-        only_engine, origin_key, tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv('AUTHOR_TEST_MODE', 'edited-after-check')
-    monkeypatch.setattr(dp, 'post', lambda *a, **kw: pytest.fail('changed source delivered'))
-    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
-                    '--session', 'origin-session', '--out', str(tmp_path / 'out')]) == 1
-    assert 'does not show it checking exactly this source' in capsys.readouterr().out
-
-
-def test_check_only_prints_the_digest_the_author_proof_names(tmp_path, capsys):
-    from jarvis import author_proof
-    source = tmp_path / 'presentation.yaml'
-    source.write_text(presentation_yaml(tmp_path))
-    assert mp.main([str(source), '--check-only']) == 0
-    assert author_proof.MARK + author_proof.source_digest(source) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('mode', ['missing', 'blocked'])
@@ -227,6 +158,34 @@ def test_creation_cannot_bypass_author_with_source(tmp_path, monkeypatch, capsys
     assert mp.main([str(source), '--session', 'origin']) == 1
     assert 'requires --handoff' in capsys.readouterr().out
     assert mp.main([str(source), '--check-only']) == 0
+
+
+def test_a_deck_the_author_writes_is_refused_as_a_briefing(only_engine, origin_key, tmp_path,
+                                                          monkeypatch, capsys):
+    """A deck for Tim is a briefing: only the package workflow makes one
+    (make_package --start); nothing is delivered."""
+    monkeypatch.setenv('AUTHOR_TEST_MODE', 'deck')
+    monkeypatch.setattr(dp, 'post', lambda *a, **kw: pytest.fail('a briefing delivered'))
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin-session', '--out', str(tmp_path / 'out')]) == 1
+    assert pa.BRIEFING_BY_REQUEST in capsys.readouterr().out
+
+
+def test_a_working_tool_s_page_the_author_writes_is_built(only_engine, origin_key, tmp_path,
+                                                          monkeypatch, capsys):
+    """Hand-made pages stay, for tools: a page the author writes is built
+    and delivered, never refused as a briefing."""
+    monkeypatch.setenv('AUTHOR_TEST_MODE', 'page')
+    monkeypatch.setenv('AUTHOR_TEST_CONTENT', json.dumps(
+        {'purpose': 'Show the result.', 'understanding': {'index.html': 'explanation.md'}}))
+    delivery = _Delivery()
+    monkeypatch.setattr(dp, 'post', delivery)
+    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
+                    '--session', 'origin-session', '--out', str(tmp_path / 'out'),
+                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
+    out = capsys.readouterr().out
+    assert 'Built a page package' in out and pa.BRIEFING_BY_REQUEST not in out
+    assert len(delivery.calls) == 1
 
 
 def test_invalid_handoff_never_starts_engine(tmp_path, monkeypatch):
@@ -290,7 +249,7 @@ def test_the_author_goes_on_his_package_author_setting(tmp_path, monkeypatch):
 
 
 def test_invalid_generated_content_is_refused_before_delivery(only_engine, tmp_path, monkeypatch):
-    monkeypatch.setenv('AUTHOR_TEST_CONTENT', 'title: Missing explanation\n')
+    monkeypatch.setenv('AUTHOR_TEST_CONTENT', '{}')
     monkeypatch.setattr(dp, 'post', lambda *args, **kwargs: pytest.fail('invalid content delivered'))
     assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
                     '--session', 'origin', '--out', str(tmp_path / 'out')]) == 1
@@ -316,10 +275,8 @@ async def test_author_timeout_closes_session_and_preserves_failure(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch,
-                                                          briefing_passes):
+async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch):
     from jarvis.brain_provider import SessionInfo, TurnEnded
-    from tests.author_fixtures import write_prep
     class Session:
         turns = 0
         async def open(self, instructions):
@@ -327,9 +284,8 @@ async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch
         async def send(self, text):
             self.turns += 1
             if self.turns == 1:
-                write_prep(self.config.home)
-            else:
-                (self.config.home / 'presentation.yaml').write_text('title: x\n')
+                (self.config.home / 'package').mkdir()
+                (self.config.home / 'package' / 'BRIEF.md').write_text('Count.\n')
             self.event(self, SessionInfo('fresh-author' if self.turns == 1 else 'replacement', None))
             self.event(self, TurnEnded(0, 0))
         async def close(self, timeout):
@@ -348,52 +304,19 @@ async def test_a_second_turn_cannot_switch_author_sessions(tmp_path, monkeypatch
     assert child.closed
 
 
-def test_the_package_carries_the_briefing_it_was_written_from(only_engine, origin_key, tmp_path,
-                                                              monkeypatch):
-    """prep.md, script.md and edits.md travel under .jarvis/briefing/."""
-    import zipfile
-    from jarvis import briefing_prep
-    delivery = _Delivery()
-    monkeypatch.setattr(dp, 'post', delivery)
-    out = tmp_path / 'out'
-    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
-                    '--session', 'origin-session', '--out', str(out),
-                    '--deliver-to', 'http://127.0.0.1:19999']) == 0
-    [(_, _, body)] = delivery.calls
-    sent = tmp_path / 'sent.zip'
-    sent.write_bytes(base64.b64decode(body['package']))
-    [folder] = [p.parent for p in out.glob('author/*/author-receipt.json')]
-    with zipfile.ZipFile(sent) as z:
-        carried = {n.split('.jarvis/briefing/')[1]: z.read(n) for n in z.namelist()
-                   if '.jarvis/briefing/' in n}
-    assert carried == {name: (folder / name).read_bytes() for name in briefing_prep.FILES}
-
-
-@pytest.mark.parametrize('mode, said', [
-    ('deck-first', 'before its script passed'),
-    ('not-for-tim', 'Not sent: the author found Tim would not want this now. '
-                    'Nothing in it needs him.'),
-])
-def test_no_package_comes_of_a_briefing_that_did_not_go_first(only_engine, mode, said, tmp_path,
-                                                             monkeypatch, capsys):
-    monkeypatch.setenv('AUTHOR_TEST_MODE', mode)
-    monkeypatch.setattr(dp, 'post', lambda *a, **kw: pytest.fail('delivered'))
-    assert mp.main(['--handoff', str(handoff(tmp_path)), '--engine', only_engine,
-                    '--session', 'origin', '--out', str(tmp_path / 'out')]) == 1
-    assert said in capsys.readouterr().out
-
-
 @pytest.mark.parametrize('extra, reason', [
-    ({'purpose': 'Explain'}, 'may not give purpose: the author states the answer itself'),
+    ({'question': 'Merge?'}, 'no longer takes question'),
+    ({'decisions': []}, 'questions and decisions are one list'),
     ({'conclusion': 'Approve it'}, 'may not give conclusion'),
-    ({'audience': 'Tim'}, "may not give audience: the author reads Tim's record"),
-    ({'questions': ['Why?']}, 'may not give questions'),
+    ({'audience': 'Tim'}, 'the audience is always Tim'),
     ({'shape': 'Slides 1-3 background'}, "never a sender's structure"),
-    ({'structure': ['a', 'b']}, "never a sender's structure"),
-    ({'notes': 'x'}, 'a handoff is only question, work, evidence, decisions'),
+    ({'sender_answers': None}, 'needs sender_answers'),
+    ({'evidence': ['PR 171']}, 'evidence entry 1 is an object'),
+    ({'notes': 'x'}, 'may not give notes'),
 ])
-def test_a_handoff_gives_only_question_work_evidence_and_decisions(tmp_path, monkeypatch, extra,
-                                                                  reason):
+def test_the_handoff_is_the_one_form_a_request_takes(tmp_path, monkeypatch, extra, reason):
+    """The command reads the same handoff JARVIS takes a request in
+    (package_request): one form, refused for the same reasons."""
     path = handoff(tmp_path)
     path.write_text(json.dumps({**json.loads(path.read_text()), **extra}))
     monkeypatch.setattr(pa.brain_provider, 'provider', lambda *a: pytest.fail('engine launched'))
@@ -402,18 +325,11 @@ def test_a_handoff_gives_only_question_work_evidence_and_decisions(tmp_path, mon
     assert any(reason in p for p in refused.value.problems), refused.value.problems
 
 
-def test_a_narrow_handoff_reads(tmp_path):
-    path = tmp_path / 'handoff.json'
-    path.write_text(json.dumps({'question': 'Merge PR 171?', 'work': ['w1', 'w2'],
-                                'evidence': ['PR 171', 'CI run 9123'],
-                                'decisions': [{'id': 'merge', 'question': 'Merge it?'}]}))
-    assert pa.read_handoff(path)['question'] == 'Merge PR 171?'
-    path.write_text(json.dumps({'question': 'Merge PR 171?\nIt fixes the build.',
-                                'evidence': ['PR 171']}))
-    assert pa.read_handoff(path)['question'].startswith('Merge'), "a question is not held to one line"
-    for bad in ({'question': '', 'evidence': ['x']},
-                {'question': 'Q?', 'evidence': []}, {'question': 'Q?', 'evidence': ['x'], 'work': 3},
-                {'question': 'Q?', 'evidence': ['x'], 'decisions': ['merge']}):
-        path.write_text(json.dumps(bad))
-        with pytest.raises(dp.Refused):
-            pa.read_handoff(path)
+def test_a_handoff_reads_as_jarvis_keeps_it(tmp_path):
+    path = handoff_file(tmp_path / 'handoff.json', 'Merge PR 171?', work=['w1', 'w2'],
+                        purpose='I need his yes to merge.')
+    handed = pa.read_handoff(path)
+    assert [q['text'] for q in handed['questions']] == ['Merge PR 171?']
+    assert handed['work'] == ['w1', 'w2']
+    assert handed['from_the_sender']['answers']['plainly']['answer'] == ANSWERS['plainly']
+    assert handed['from_the_sender']['purpose'] == 'I need his yes to merge.'

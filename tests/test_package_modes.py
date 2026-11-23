@@ -661,7 +661,7 @@ def test_a_decision_package_unpacks_here_only_signed_as_checked_by_an_onboarded_
     package_signature.sign(archive, signed, agent.private, agent.public, "sess-deck")
     r = wired.client.post("/api/packages/local", json={"path": str(signed)}, headers=_token())
     assert r.status_code == 409, "signed, but not as checked"
-    from tests.author_fixtures import sign_authored
-    sign_authored(archive, signed, agent, "sess-deck", (package_signature.DECISION_CHECKED,))
+    from tests.signing_fixtures import sign_as_agent
+    sign_as_agent(archive, signed, agent, "sess-deck", (package_signature.DECISION_CHECKED,))
     r = wired.client.post("/api/packages/local", json={"path": str(signed)}, headers=_token())
     assert r.status_code == 200, r.text

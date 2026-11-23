@@ -23,6 +23,7 @@ from typing import Awaitable, Callable, Optional
 
 from jarvis import brain_activity
 from jarvis import brain_provider
+from jarvis import roles
 from jarvis import spoken_words
 from jarvis.brain_provider import (BrainProvider, ProviderEvent, ProviderSession, SessionInfo,
                             TextDelta, ToolFailed, ToolStarted, TurnEnded, UsageSeen)
@@ -190,6 +191,10 @@ class BrainConfig:
     # by server.py's `declared_connections`. Empty on the ordinary install.
     connections: list[str] = field(default_factory=list)
     extra_args: list[str] = field(default_factory=list)
+    # A role of a package's making (sessions.ChatSession): launched on
+    # JARVIS's own settings with only its tools (roles.Launch), not as the
+    # voice brain or a package author.
+    role: Optional["roles.Launch"] = None
 
     @classmethod
     def from_env(cls, home: Path) -> "BrainConfig":

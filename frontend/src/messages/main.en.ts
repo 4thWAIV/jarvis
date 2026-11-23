@@ -472,6 +472,13 @@ export const mainEn = {
   "main.work.area": "Area: {area}",
   "main.work.project": "Project: {name}",
   "main.work.who": "Who",
+  "main.work.runs.head": "Package runs",
+  "main.work.runs.package": "{id}: {runs} run(s), {seconds} s, {calls} calls, {tin} tokens in, {tout} out",
+  "main.work.runs.run": "{run} ({state})",
+  "main.work.runs.step": "{step}: {seconds} s, {calls} calls, {pages} pages, {retries} retries, {limits} time limits, {rate} rate limited, {servers} app servers, {tin} tokens in ({cached} cached), {tout} out",
+  "main.work.runs.tooSlow": "Too slow",
+  "main.work.runs.quality": "Quality: {result}, {passes} pass(es), {repeated} repeated, {fixed} fixed; his reader's questions {raised} raised, {answered} answered; facts {sourced} sourced, {unanswered} unanswered",
+  "main.work.runs.verdict": "His verdict: {answer} {labels}",
   "main.work.answeredBy.page": "You answered on the page: {answer}",
   "main.work.answeredBy.voice": "You answered by voice: {answer}",
   "main.work.answeredBy.signed_off": "Closed when you signed off its package, without an answer",
@@ -1226,6 +1233,10 @@ export const mainEn = {
   "main.updates.event.package_run.failed": "The work package {name} failed",
   "main.updates.event.package_run.timed_out": "The work package {name} ran out of time",
   "main.updates.event.package.arrived": "Package from {name}",
+  // A package run that cannot go on: the step it stopped at; its Work item is in Error.
+  "main.updates.event.package_job.error": "The package {name} asked for is in Error at the {step} step",
+  // A package run whose swarm did not pass: its findings went to the agent that asked for it.
+  "main.updates.event.package_job.failed": "The package {name} asked for did not pass the swarm; its findings went back to the agent",
   // The reduced line a package gets in Updates waiting: who sent it, its title, how many decisions wait.
   "main.updates.event.arrival.arrived": "A message from {name} arrived",
   "main.updates.event.sign_in.not_signed_in": "This JARVIS is not signed in to a team server",
