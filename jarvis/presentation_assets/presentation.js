@@ -137,12 +137,14 @@
     drawn.groups.forEach(g=>{
       box.append(placeAt(identify(block("div",undefined,"presentation-diagram-group"),g.id),g.box));
       const words=placeAt(block("div",g.label,"presentation-diagram-group-label"),g.label_box);words.dataset.labelOf=g.id;box.append(words);});
-    const svg=svgNode("svg",{"aria-hidden":"true"});svg.classList.add("presentation-diagram-links");
-    const head=`presentation-arrow-${object.id}`,defs=svgNode("defs",{});
+    // The connector layer stays in the accessible tree (each connector an
+    // image named "A to B: words"); only its arrowheads and axis are hidden.
+    const svg=svgNode("svg",{role:"group"});svg.classList.add("presentation-diagram-links");
+    const head=`presentation-arrow-${object.id}`,defs=svgNode("defs",{"aria-hidden":"true"});
     const marker=svgNode("marker",{id:head,viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:layoutArrow,markerHeight:layoutArrow,orient:"auto-start-reverse",markerUnits:"strokeWidth"});
     const tip=svgNode("path",{d:"M0,0 L10,5 L0,10 Z"});tip.classList.add("presentation-diagram-arrowhead");marker.append(tip);defs.append(marker);svg.append(defs);
     const paths=[];
-    if(drawn.axis){const axis=svgNode("line",{});axis.classList.add("presentation-diagram-axis");svg.append(axis);paths.push([axis,[drawn.axis.from,drawn.axis.to]]);}
+    if(drawn.axis){const axis=svgNode("line",{"aria-hidden":"true"});axis.classList.add("presentation-diagram-axis");svg.append(axis);paths.push([axis,[drawn.axis.from,drawn.axis.to]]);}
     drawn.links.forEach(link=>{
       const g=identify(svgNode("g",{}),link.id);g.classList.add("presentation-diagram-connector");g.dataset.style=link.style;
       g.setAttribute("role","img");g.setAttribute("aria-label",model.targets.find(t=>t.member===link.id).accessible_name);
@@ -164,7 +166,8 @@
     drawn.links.forEach(link=>{if(!link.label_box)return;
       const words=placeAt(block("div",link.label,"presentation-diagram-label"),link.label_box);words.dataset.labelOf=link.id;box.append(words);});
     // The connectors in px: the slot's shares times the diagram's own size now.
-    function draw(){const w=box.clientWidth,h=box.clientHeight;if(!w||!h)return;
+    // Its fractional size (clientWidth rounds to whole px, half a px off).
+    function draw(){const r=box.getBoundingClientRect(),w=r.width,h=r.height;if(!w||!h)return;
       paths.forEach(([e,points])=>{const xy=points.map(p=>[p[0]*w,p[1]*h]);
         if(e.tagName==="line"){e.setAttribute("x1",xy[0][0]);e.setAttribute("y1",xy[0][1]);e.setAttribute("x2",xy[1][0]);e.setAttribute("y2",xy[1][1]);}
         else e.setAttribute("d","M"+xy.map(p=>p[0].toFixed(2)+","+p[1].toFixed(2)).join(" L"));});}

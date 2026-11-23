@@ -252,9 +252,11 @@ def _object_layout(obj, box, pictures: dict) -> dict:
 def _diagram_layout(obj, box) -> dict:
     """A diagram as JARVIS laid it out: its kind and orientation, its words'
     sizes at both sizes (drawn at the deck size, never grown by the fit),
-    every node, connector and group with its place as a share of the slot
-    (`at`, [x, y, width, height]; a connector's `points`) and in px at both
-    sizes, a timeline's axis, and what its slot holds."""
+    every node (with the lines its words take), connector (with its words'
+    lines) and group with its place as a share of the slot (`at`, [x, y,
+    width, height]; a connector's `points`) and in px at both sizes (each
+    word's place too: a node's when, a connector's and a group's words), a
+    timeline's axis in shares and px, and what its slot holds."""
     drawn = deck_capacity.drawn_diagram(obj, box)
     d = diagram_layout.spec()
     frames = sizes()
@@ -268,19 +270,28 @@ def _diagram_layout(obj, box) -> dict:
            "holds": drawn["holds"],
            "text_px": {style: {name: round(layout_spec.style_px(d[style], layout_spec.unit(frame)), 1)
                                for name, frame in frames.items()} for style in ("node", "link")}}
-    out["nodes"] = [{**{k: n[k] for k in ("id", "label", "shape", "tone", "when")},
+    def point_px(share):
+        return {name: [round(share[0] * w, 1), round(share[1] * h, 1)] for name, (w, h) in slot.items()}
+
+    out["nodes"] = [{**{k: n[k] for k in ("id", "label", "shape", "tone", "when", "lines")},
                      "at": n["box"], "box_px": px(n["box"]),
-                     **({"when_at": n["when_box"]} if n.get("when_box") else {})}
+                     **({"when_at": n["when_box"], "when_px": px(n["when_box"])}
+                        if n.get("when_box") else {})}
                     for n in drawn.get("nodes") or []]
     out["connectors"] = [{**{k: link[k] for k in ("id", "from", "to", "style", "label", "points")},
-                          **({"label_at": link["label_box"], "label_px": px(link["label_box"])}
+                          "points_px": [point_px(p) for p in link["points"]],
+                          **({"label_at": link["label_box"], "label_px": px(link["label_box"]),
+                              "label_lines": link["label_lines"]}
                              if link.get("label_box") else {})}
                          for link in drawn.get("links") or []]
     out["groups"] = [{"id": g["id"], "label": g["label"], "nodes": g["nodes"], "at": g["box"],
-                      "box_px": px(g["box"]), "label_at": g["label_box"]}
+                      "box_px": px(g["box"]), "label_at": g["label_box"],
+                      "label_px": px(g["label_box"]), "label_lines": g["label_lines"]}
                      for g in drawn.get("groups") or []]
     if drawn.get("axis"):
-        out["axis"] = drawn["axis"]
+        axis = drawn["axis"]
+        out["axis"] = {**axis, "from_px": point_px(axis["from"]), "to_px": point_px(axis["to"]),
+                       "markers_px": [point_px(p) for p in axis["markers"]]}
     return out
 
 

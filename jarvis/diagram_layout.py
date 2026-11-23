@@ -164,10 +164,38 @@ def _inside(a, W: float, H: float) -> bool:
     return a[0] >= -1e-6 and a[1] >= -1e-6 and a[0] + a[2] <= W + 1e-6 and a[1] + a[3] <= H + 1e-6
 
 
-def _label(text: str, centre, w_max: float, m: _M, along, obstacles: list, both: bool = True):
+def _crosses(box, path, gap: float = 1.0) -> bool:
+    """Whether the polyline `path` passes through `box` grown by `gap`
+    (Liang-Barsky clipping of each segment)."""
+    x0, y0 = box[0] - gap, box[1] - gap
+    x1, y1 = box[0] + box[2] + gap, box[1] + box[3] + gap
+    for (ax, ay), (bx, by) in zip(path, path[1:]):
+        dx, dy = bx - ax, by - ay
+        lo, hi = 0.0, 1.0
+        for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):
+            if abs(p) < 1e-12:
+                if q < 0:
+                    break
+                continue
+            t = q / p
+            if p < 0:
+                lo = max(lo, t)
+            else:
+                hi = min(hi, t)
+            if lo > hi:
+                break
+        else:
+            return True
+    return False
+
+
+def _label(text: str, centre, w_max: float, m: _M, along, obstacles: list, both: bool = True,
+           paths: tuple = ()):
     """The words on a connector: wrapped in at most `w_max` px, placed
     nearest `centre` along the direction `along` where it is inside the
-    diagram and clear of every obstacle. (box, lines) or None."""
+    diagram and clear of every obstacle and of every path in `paths` (the
+    other connectors and the axis: the words are backed, so they would hide
+    a line under them). (box, lines) or None."""
     tw = max(w_max - 2 * m.lpad, m.lchar)
     lines = lines_of(text, tw, m.lpx)
     w = (min(tw, len(text) * m.lchar + 1.0) if lines == 1 else tw) + 2 * m.lpad
@@ -176,20 +204,25 @@ def _label(text: str, centre, w_max: float, m: _M, along, obstacles: list, both:
     for k in range(240):
         off = ((k + 1) // 2) * (1 if k % 2 else -1) * step if both else k * step
         box = (centre[0] + along[0] * off - w / 2, centre[1] + along[1] * off - h / 2, w, h)
-        if _inside(box, m.W, m.H) and not any(_overlap(box, o, 1.0) for o in obstacles):
+        if (_inside(box, m.W, m.H) and not any(_overlap(box, o, 1.0) for o in obstacles)
+                and not any(_crosses(box, path) for path in paths)):
             return box, lines
     return None
 
 
-def _place_labels(requests: list, m: _M, obstacles: list, problems: list, out: dict) -> None:
+def _place_labels(requests: list, m: _M, obstacles: list, problems: list, out: dict,
+                  routes: dict) -> None:
     """Each request (link, text, centre, w_max, along, both) placed in turn,
-    each placed label an obstacle for the next."""
+    each placed label an obstacle for the next, and every connector's route
+    in `routes` (link id: px points) but its own an obstacle too."""
     limit = spec()["link_lines_max"]
     for link, text, centre, w_max, along, both in requests:
-        placed = _label(text, centre, w_max, m, along, obstacles, both)
+        others = tuple(path for other, path in routes.items() if other != link)
+        placed = _label(text, centre, w_max, m, along, obstacles, both, others)
         if placed is None:
-            problems.append(f"the words on link {link} ({text!r}) have no room clear of the nodes "
-                            f"and the other words: shorten them or show fewer nodes")
+            problems.append(f"the words on link {link} ({text!r}) have no room clear of the nodes, "
+                            f"the other connectors and the other words: shorten them or show fewer "
+                            f"nodes")
             continue
         box, lines = placed
         if lines > limit:
@@ -307,7 +340,10 @@ def _flow(obj, m: _M, problems: list, held) -> dict | None:
         avail = m.W - over - under - (L - 1) * ggap - L * 2 * gpad - (slots - L) * cg
         w = _width(nodes, avail / slots, m)
         if w < m.w_min:
-            most = int((avail + slots * 0 + (slots - L) * cg) // (m.w_min + cg))
+            # n nodes in L lanes take n * w_min + (n - L) * cross_gap of what is
+            # left once the lanes' pads, the gaps between them and the routes
+            # are taken: avail + (slots - L) * cross_gap.
+            most = int((avail + slots * cg) // (m.w_min + cg))
             problems.append(f"the flow has {slots} nodes side by side"
                             + (f" across its {L} lanes" if grouped else "")
                             + f"; with its lanes and routes its slot holds {max(1, most)} at most: "
@@ -357,10 +393,7 @@ def _flow(obj, m: _M, problems: list, held) -> dict | None:
     lane_main = (main0 + margin, main_total - 2 * margin)
     for l, group in enumerate(obj.groups):
         box = rect(lane_main[0], lane_start[l], lane_main[1], lane_band[l])
-        if across:
-            words = (box[0] + gpad, box[1] + gpad, box[2] - 2 * gpad, header)
-        else:
-            words = (box[0] + gpad, box[1] + gpad, box[2] - 2 * gpad, header)
+        words = (box[0] + gpad, box[1] + gpad, box[2] - 2 * gpad, header)
         lines = lines_of(group.label, words[2] - 2 * m.lpad, m.lpx)
         if lines > 1:
             problems.append(f"the label of group {group.id} ({group.label!r}) takes {lines} lines in "
@@ -425,7 +458,8 @@ def _flow(obj, m: _M, problems: list, held) -> dict | None:
             requests.append((link.id, link.label, centre, w_max, along, True))
     obstacles = list(box_of.values()) + [tuple(g["label_box"]) for g in groups]
     placed: dict = {}
-    _place_labels(requests, m, obstacles, problems, placed)
+    _place_labels(requests, m, obstacles, problems, placed,
+                  {link["id"]: link["points"] for link in out_links})
     for link in out_links:
         if link["id"] in placed:
             box, lines = placed[link["id"]]
@@ -503,7 +537,8 @@ def _hierarchy(obj, m: _M, problems: list, held) -> dict | None:
             requests.append((link.id, link.label, (cx_, (ybus + c[1]) / 2),
                              min(w + sg - 2, m.link_w_max), (0, 1), True))
     placed: dict = {}
-    _place_labels(requests, m, list(box_of.values()), problems, placed)
+    _place_labels(requests, m, list(box_of.values()), problems, placed,
+                  {link["id"]: link["points"] for link in out_links})
     for link in out_links:
         if link["id"] in placed:
             box, lines = placed[link["id"]]
@@ -585,7 +620,8 @@ def _cycle(obj, m: _M, problems: list, held) -> dict | None:
             requests.append((link.id, link.label, mid, min(m.link_w_max, m.W / 2),
                              (v[0] / norm, v[1] / norm), False))
     placed: dict = {}
-    _place_labels(requests, m, list(boxes), problems, placed)
+    _place_labels(requests, m, list(boxes), problems, placed,
+                  {link["id"]: link["points"] for link in out_links})
     for link in out_links:
         if link["id"] in placed:
             box, lines = placed[link["id"]]

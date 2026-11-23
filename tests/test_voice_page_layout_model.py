@@ -9,9 +9,10 @@ headless Chromium at frames across the whole range, and the size the browser
 draws each picture is the size the proof computed, within MODEL_PX; every
 object the capacity model (deck_capacity) says fits its slot is drawn
 within it, nothing cut off, and every chart keeps its least plot; every
-diagram's nodes and groups (the diagram deck's four kinds, and the hard
-deck's flow) are drawn where diagram_layout put them, within MODEL_PX, with
-no word cut off. A change
+diagram's nodes and groups, its link words, whens and group labels and
+every point of its connectors and axis (the diagram deck's four kinds, and
+the hard deck's flow) are drawn where diagram_layout put them, within
+MODEL_PX, with no word cut off. A change
 to the CSS or the renderer that the models do not follow fails here, in CI,
 on this fixture deck: no package is drawn in a browser on its way.
 
@@ -153,14 +154,27 @@ def test_every_object_within_capacity_is_drawn_within_its_slot(built):
     assert not off, "\n".join(off)
 
 
-# Each diagram on the current slide: its own box, and each node's and
-# group's box inside it, and whether any of its words is cut off.
+# Each diagram on the current slide: its own box, each node's and group's
+# box inside it, each placed word's box (a link's words, a node's when, a
+# group's label, by whose they are), every connector's and the axis's points
+# as drawn, and whether any of its words is cut off.
 DIAGRAM_BOXES = """() => [...document.querySelectorAll('.slide.current .presentation-diagram')].map(d => {
   const at = d.getBoundingClientRect();
   const of = e => { const r = e.getBoundingClientRect(); return [r.left - at.left, r.top - at.top, r.width, r.height]; };
+  const svg = d.querySelector('.presentation-diagram-links'), s = svg.getBoundingClientRect();
+  const shift = p => [p[0] + s.left - at.left, p[1] + s.top - at.top];
+  const words = cls => Object.fromEntries([...d.querySelectorAll(cls)].map(e => [e.dataset.labelOf, of(e)]));
+  const axis = d.querySelector('.presentation-diagram-axis');
   return {id: d.parentElement.dataset.object, size: [at.width, at.height],
     boxes: Object.fromEntries([...d.querySelectorAll('.presentation-diagram-node, .presentation-diagram-group')]
       .map(e => [e.dataset.member, of(e)])),
+    link_words: words('.presentation-diagram-label'), whens: words('.presentation-diagram-when'),
+    group_words: words('.presentation-diagram-group-label'),
+    points: Object.fromEntries([...d.querySelectorAll('.presentation-diagram-connector')].map(g => [g.dataset.member,
+      (g.querySelector('path').getAttribute('d') || '').slice(1).split(' L').filter(Boolean)
+        .map(q => shift(q.split(',').map(Number)))])),
+    axis: axis ? ['x1', 'y1', 'x2', 'y2'].map(k => Number(axis.getAttribute(k)))
+      .reduce((o, v, k) => (k % 2 ? o[o.length - 1].push(v) : o.push([v]), o), []).map(shift) : null,
     cut: [...d.querySelectorAll('.presentation-diagram-text, .presentation-diagram-label, .presentation-diagram-when, .presentation-diagram-group-label')]
       .filter(e => e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)};
 })"""
@@ -218,6 +232,31 @@ def test_the_browser_draws_every_diagram_where_its_layout_put_it(diagrams, built
                                 if any(abs(a - b) > MODEL_PX for a, b in zip(got, model)):
                                     off.append(f"{where}/{item['id']}: drawn {[round(v, 2) for v in got]}, "
                                                f"model {[round(v, 2) for v in model]}")
+                            placed = [*[(f"{l['id']} words", l["label_box"], seen["link_words"].get(l["id"]))
+                                        for l in obj._drawn["links"] if l.get("label_box")],
+                                      *[(f"{n['id']} when", n["when_box"], seen["whens"].get(n["id"]))
+                                        for n in obj._drawn["nodes"] if n.get("when_box")],
+                                      *[(f"{g['id']} label", g["label_box"], seen["group_words"].get(g["id"]))
+                                        for g in obj._drawn["groups"]]]
+                            for name, (x, y, bw, bh), got in placed:
+                                model = [x * w, y * h, bw * w, bh * h]
+                                checked += 1
+                                if got is None or any(abs(a - b) > MODEL_PX for a, b in zip(got, model)):
+                                    off.append(f"{where}/{name}: drawn {got and [round(v, 2) for v in got]}, "
+                                               f"model {[round(v, 2) for v in model]}")
+                            lines = [(l["id"], l["points"], seen["points"].get(l["id"]))
+                                     for l in obj._drawn["links"]]
+                            if obj._drawn.get("axis"):
+                                a = obj._drawn["axis"]
+                                lines.append(("axis", [a["from"], a["to"]], seen["axis"]))
+                            for name, points, got in lines:
+                                model = [[px_ * w, py_ * h] for px_, py_ in points]
+                                checked += 1
+                                if (got is None or len(got) != len(model)
+                                        or any(abs(a - b) > MODEL_PX for p, q in zip(got, model)
+                                               for a, b in zip(p, q))):
+                                    off.append(f"{where}/{name} points: drawn {got}, model "
+                                               f"{[[round(v, 2) for v in q] for q in model]}")
                             if seen["cut"]:
                                 off.append(f"{where}: words cut off: {seen['cut']}")
         finally:

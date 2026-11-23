@@ -165,6 +165,14 @@ def test_the_layout_is_the_same_every_time_and_nothing_overlaps(name):
         assert 0 <= a[0] and 0 <= a[1] and a[0] + a[2] <= 1 + 1e-6 and a[1] + a[3] <= 1 + 1e-6
         for b in every[i + 1:]:
             assert not diagram_layout._overlap(a, b), (name, a, b)
+    # Link words are backed, so no other connector runs under them.
+    for link in first["links"]:
+        if not link.get("label_box"):
+            continue
+        for other in first["links"]:
+            if other["id"] != link["id"]:
+                assert not diagram_layout._crosses(link["label_box"], other["points"], 0.0), \
+                    (name, link["id"], other["id"])
     if first["kind"] != "timeline":
         for g in first["groups"]:
             for n in first["nodes"]:
@@ -275,6 +283,14 @@ def test_the_diagram_deck_compiles_proves_and_lights_every_node_connector_and_gr
     assert flow["kind"] == "flow" and flow["orientation"] == "across"
     assert {n["id"] for n in flow["nodes"]} >= {"pedido", "stock"}
     assert flow["connectors"][0]["points"] and flow["groups"][0]["box_px"]["smallest"]
+    assert all(n["lines"] >= 1 for n in flow["nodes"])
+    worded = [c for c in flow["connectors"] if c["label"]]
+    assert worded and all(c["label_lines"] >= 1 and c["label_px"]["largest"] for c in worded)
+    assert all(len(c["points_px"]) == len(c["points"]) for c in flow["connectors"])
+    assert flow["groups"][0]["label_px"]["smallest"] and flow["groups"][0]["label_lines"] == 1
+    line = next(o for s in proof["slides"] for o in s["objects"] if o.get("kind") == "timeline")
+    assert all(n["when_px"]["smallest"] for n in line["nodes"])
+    assert line["axis"]["from_px"]["largest"] and len(line["axis"]["markers_px"]) == len(line["nodes"])
     assert flow["capacity"]["fits"] and flow["capacity"]["holds"]["ranks"] >= 4
     assert flow["text_px"]["node"]["smallest"] >= layout_spec.spec()["text"]["min_px"]
     data = (made.package_source / "presentation-data.js").read_text()
@@ -287,6 +303,21 @@ def test_the_diagram_deck_compiles_proves_and_lights_every_node_connector_and_gr
     deck = (made.package_source / "deck-data.js").read_text()
     assert "Almacén del puerto" in deck, "the shared deck's own text carries a diagram's words"
     assert presentation_proof.reprove(made.package_source) == []
+
+
+def test_link_words_move_clear_of_a_connector_that_runs_under_them():
+    """A path crossing where words would go is an obstacle like a node."""
+    assert diagram_layout._crosses((0, 0, 10, 10), [(-5, 5), (15, 5)])
+    assert diagram_layout._crosses((0, 0, 10, 10), [(5, -5), (5, 2)])
+    assert not diagram_layout._crosses((0, 0, 10, 10), [(-5, 12), (15, 12)])
+    assert not diagram_layout._crosses((0, 0, 10, 10), [(12, -5), (12, 15)])
+    m = diagram_layout._M(diagram_layout.room(BODY))
+    across = [(m.W / 2 - 200, m.H / 2), (m.W / 2 + 200, m.H / 2)]
+    free = diagram_layout._label("words", (m.W / 2, m.H / 2), m.link_w_max, m, (0, 1), [])
+    clear = diagram_layout._label("words", (m.W / 2, m.H / 2), m.link_w_max, m, (0, 1), [],
+                                  paths=(across,))
+    assert diagram_layout._crosses(free[0], across)
+    assert clear and not diagram_layout._crosses(clear[0], across)
 
 
 def test_a_word_out_of_its_place_at_a_frame_fails_the_proof():
