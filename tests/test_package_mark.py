@@ -283,6 +283,57 @@ def test_marked_once_and_every_run_reuses_it(tmp_path, gh, checkout, transcript,
     assert sum(len(v) for v in roles.given.values()) == calls
 
 
+def _units_now(doc: dict) -> dict:
+    """Each gathered file's mark unit as the mark step names it now."""
+    place = pe.place_of(doc)
+    rows = pe.read_manifest(place)
+    gathered = pe.gathered_rows(rows)
+    names = {r.stored for r in gathered if r.stored}
+    files = [f for f in package_mark.type_files(place, rows) if f.stored in names]
+    texts = {f.stored: f.text for f in files}
+    return {f.stored: package_mark.unit_of(doc, place, f, gathered, texts) for f in files}
+
+
+def test_a_file_changed_marks_again_every_file_marked_beside_it(
+        tmp_path, gh, checkout, transcript, monkeypatch, roles):  # noqa: F811
+    """Files are marked and scored together, sharing pages: once one of them
+    changes, every file marked in its batch is marked again, its kept marks
+    made beside the old file never reused."""
+    from jarvis import step_cache
+    doc = _gathered(tmp_path, checkout, monkeypatch)
+    doc = pj.get(doc["id"])
+    package_mark.mark(doc)
+    units = _units_now(doc)
+    batch = step_cache.lookup(next(iter(units.values())), doc).value["batch"]
+    assert sorted(b[0] for b in batch) == sorted(units), "the whole batch is named"
+    calls = len(roles.given.get("classification", []))
+    changed = next(name for name in units if name.endswith(".md"))
+    folder = pe.place_of(doc).folder
+    (folder / changed).write_text((folder / changed).read_text() + "\nOne more line.\n")
+    package_mark.mark(doc)
+    assert len(roles.given.get("classification", [])) > calls
+    now = _units_now(doc)
+    new_sha = now[changed].inputs["sha"]
+    for name, unit in now.items():
+        entry = step_cache.lookup(unit, doc)
+        assert entry is not None and [changed, new_sha] in entry.value["batch"], \
+            f"{name} marked again beside the changed file"
+
+
+def test_marks_are_kept_only_while_their_batch_is_as_it_was():
+    import dataclasses
+    from jarvis import step_cache
+    entry = step_cache.Entry("mark-file", "a", "k", "d", {}, {"batch": [["a", "1"], ["b", "2"]]},
+                             {}, 0.0, None)
+    assert package_mark.batch_kept(entry, {"a": "1", "b": "2"})
+    assert package_mark.batch_kept(entry, {"a": "1", "b": "2", "c": "3"}), \
+        "a file added since was not beside it"
+    assert not package_mark.batch_kept(entry, {"a": "1", "b": "changed"})
+    assert not package_mark.batch_kept(entry, {"a": "1"}), "a file gone since"
+    assert not package_mark.batch_kept(dataclasses.replace(entry, value=None), {"a": "1"}), \
+        "kept with no batch named"
+
+
 def test_a_session_that_cannot_answer_puts_the_run_in_error(tmp_path, gh, checkout,  # noqa: F811
                                                             transcript, monkeypatch, roles):
     doc = _gathered(tmp_path, checkout, monkeypatch)

@@ -554,10 +554,6 @@ EXEMPT = {
         "the sender as data; what it writes into the swarm's conversation is the program's fixed "
         "words, the run's own paths and the deck's layout data, a turn between role sessions, "
         "never a brain header, never said. Driven by tests/test_package_deck.py"),
-    "step_cache.role_tool": (
-        "it puts the run's own requested engine (JARVIS's own record of who asked) into a "
-        "step cache key and the role's engine and model JARVIS picked for it, hashed, never "
-        "shown, never a brain header, never said. Driven by tests/test_step_cache.py"),
     "package_swarm.go": (
         "the swarm step's own flow: in a revision it reads the run's own revision record (who "
         "said what is wrong, the slide ids that changed) to say the program's fixed words, those "

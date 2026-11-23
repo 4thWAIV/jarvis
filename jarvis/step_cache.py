@@ -271,28 +271,38 @@ def _listed(engine: str) -> list[str]:
     return _LISTED[engine]
 
 
-def role_tool(name: str, doc: Optional[dict], *, author_engine: Optional[str] = None) -> dict:
+def role_tool(name: str, doc: Optional[dict], *, author_engine: Optional[str] = None,
+              had: Optional[dict] = None) -> dict:
     """A model role as a key names it: the role (tier, effort, kind,
     lifetime, release), its approved prompt (system and material, word for
-    word, hashed), and the engine and model that run it: model_tiers.pick
+    word, hashed), and the engine and model that run it. A participant
+    resumed on the session it had (`had`, its kept engine and model) runs
+    on that model, whatever a pick says now; any other, model_tiers.pick
     for the run's requester, as the sessions pick it (the owners on the
     other brain from the author's when Settings says so), the tier
     resolved to its model on that brain (on Codex the newest its live list
-    holds), the models this package's runs found refused passed over."""
+    holds), the models this package's runs found refused passed over. Why
+    it was picked is not named: a model picked and the same model resumed
+    are one key."""
     from jarvis import model_tiers, role_prompts, roles
     role = roles.role(name)
     prompt = role_prompts.PROMPTS.get(name)
     requester = (doc or {}).get("engine")
-    try:
-        pick = model_tiers.pick(role.kind, role.tier, requester=requester,
-                                author_engine=author_engine, listed=_listed,
-                                refused=refused(doc) if doc else None)
-        engine, model, why = pick.engine, pick.model, pick.why
-    except Exception as e:  # noqa: BLE001 - an unreadable choice is itself named
-        engine, model, why = None, None, f"unreadable: {e}"
+    unreadable = None
+    if had and had.get("engine") and had.get("model"):
+        engine, model = had["engine"], had["model"]
+    else:
+        try:
+            pick = model_tiers.pick(role.kind, role.tier, requester=requester,
+                                    author_engine=author_engine, listed=_listed,
+                                    refused=refused(doc) if doc else None)
+            engine, model = pick.engine, pick.model
+        except Exception as e:  # noqa: BLE001 - an unreadable choice is itself named
+            engine, model, unreadable = None, None, str(e)
     return {"role": dataclasses.asdict(role),
             "prompt": digest(dataclasses.asdict(prompt)) if prompt is not None else None,
-            "engine": engine, "model": model, "why": why}
+            "engine": engine, "model": model,
+            **({"unreadable": unreadable} if unreadable is not None else {})}
 
 
 def embedding_key() -> Optional[str]:
@@ -312,17 +322,20 @@ def labels_key() -> str:
 
 
 def roles_tool(names: Iterable[str], doc: Optional[dict],
-               author: Optional[str] = "author") -> dict:
+               author: Optional[str] = "author", had: Optional[dict] = None) -> dict:
     """Several roles of one step (`role_tool`), the owners' engine worked
-    out from the author's as the swarm picks it."""
+    out from the author's as the swarm picks it; `had`, each resumed
+    participant's kept engine and model by name (the swarm's
+    `participants`)."""
+    had = had or {}
     out = {}
     author_engine = None
     if author:
-        out[author] = role_tool(author, doc)
+        out[author] = role_tool(author, doc, had=had.get(author))
         author_engine = out[author]["engine"]
     for name in names:
         if name not in out:
-            out[name] = role_tool(name, doc, author_engine=author_engine)
+            out[name] = role_tool(name, doc, author_engine=author_engine, had=had.get(name))
     return out
 
 

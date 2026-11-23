@@ -214,7 +214,7 @@ def plan(marked, monkeypatch):
     monkeypatch.setattr(ps, "CHAT", _chat_factory(plan))
     monkeypatch.setattr(ps, "PICK", lambda kind, tier, **kw: model_tiers.Pick(
         "claude", {1: "fable", 2: "opus"}.get(tier, "sonnet"), tier, "test", ["x"]))
-    monkeypatch.setattr(package_mark, "MARKING", lambda doc: Marking())
+    monkeypatch.setattr(package_mark, "MARKING", lambda doc, **pin: Marking())
     plan.searched = []
 
     def search(text, under, kinds):
@@ -569,3 +569,72 @@ def test_only_rounds_of_questions_count_toward_five(marked):
     assert pj.question_rounds(pj.get(marked["id"])) == pj.MAX_ROUNDS
 
 
+
+
+def test_a_stage_resumed_after_the_model_list_changed_is_kept_under_the_model_it_ran_on(
+        marked, plan, monkeypatch):
+    """The model a pick names changes while a stage waits on the sender (a
+    newer model listed): the stage goes on, every participant on the model
+    it was started on, its own spoken or not, and is kept under the key
+    begun with, which names those models, never the newer one."""
+    from jarvis import step_cache
+    now = ["m1"]
+
+    def pick(kind, tier, **kw):
+        return model_tiers.Pick("claude", f"{now[0]}-t{tier}", tier, "test", [])
+    monkeypatch.setattr(model_tiers, "pick", pick)
+    monkeypatch.setattr(ps, "PICK", pick)
+    plan.asks = {"context_owner": [["When did CI last pass?"]]}
+    assert _research_and_swarm(marked) == pj.WAITING
+    folder = Path(marked["folder"])
+    kept = json.loads((folder / ps.STATE).read_text())
+    begun = kept["pending"]
+    assert "editor" not in kept["participants"], "the editor has not spoken yet"
+    assert kept["models"]["editor"]["model"].startswith("m1-")
+    job = pj.get(marked["id"])
+    pj.answer(marked["id"], {q["id"]: "Tuesday." for q in job["rounds"][-1]["questions"]},
+              session=job["session"])
+    now[0] = "m2"
+    plan.opened.clear()
+    assert ps.swarm(pj.get(marked["id"])) is None
+    kept = json.loads((folder / ps.STATE).read_text())
+    record = next((u for u in kept["units"] if u["key"] == begun), None)
+    assert record is not None, "kept under the key it was begun with"
+    entry = json.loads((step_cache._dir(pj.get(marked["id"]), record["kind"], begun)
+                        / step_cache.ENTRY).read_text())
+    roles_ = entry["inputs"]["tool"]["roles"]
+    assert {r["model"].split("-")[0] for r in roles_.values()} == {"m1"}
+    assert entry["inputs"]["tool"]["marking"]["model"].startswith("m1-"), \
+        "the script marked on the model the run marks on"
+    assert {m["model"].split("-")[0] for m in kept["models"].values()} == {"m1"}, \
+        "the editor too started on the model the run started it on"
+    # A new run of the package starts every session afresh, on the newer
+    # model, and its keys name it.
+    assert ps.tool_of(pj.get(marked["id"]))["roles"]["editor"]["model"].startswith("m2-")
+
+
+def test_a_resumed_participant_s_key_names_its_session_s_model(marked, monkeypatch):
+    from jarvis import step_cache
+    monkeypatch.setattr(model_tiers, "pick", lambda kind, tier, **kw: model_tiers.Pick(
+        "claude", "newer", tier, "test", []))
+    kept = {"participants": {"author": {"session": "s", "engine": "codex", "model": "older"}},
+            "models": {"editor": {"engine": "claude", "model": "kept"}}}
+    roles_ = ps.tool_of(marked, kept=kept)["roles"]
+    assert (roles_["author"]["engine"], roles_["author"]["model"]) == ("codex", "older")
+    assert roles_["editor"]["model"] == "kept"
+    assert roles_["context_owner"]["model"] == "newer"
+    # Picked or resumed, the same model is one key.
+    assert step_cache.role_tool("author", marked, had={"engine": "claude", "model": "newer"}) \
+        == step_cache.role_tool("author", marked)
+
+
+def test_a_model_found_refused_is_not_held_to(marked, monkeypatch):
+    from jarvis import run_report, step_cache
+    monkeypatch.setattr(model_tiers, "pick", lambda kind, tier, **kw: model_tiers.Pick(
+        "claude", "newer", tier, "test", []))
+    kept = {"models": {"marking": {"engine": "claude", "model": "old"}}}
+    assert ps.marking_pin(marked, kept) == {"engine": "claude", "model": "old"}
+    with run_report.step(marked, "test"):
+        run_report.refused("claude", "old")
+    assert ps.marking_pin(marked, kept) == {"engine": "claude", "model": "newer"}
+    assert step_cache.refused(marked) == {"claude": ["old"]}

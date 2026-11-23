@@ -89,7 +89,7 @@ def deck_plan(marked, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ps, "CHAT", _chat_factory(plan))
     monkeypatch.setattr(ps, "PICK", lambda kind, tier, **kw: model_tiers.Pick(
         "claude", {1: "fable", 2: "opus"}.get(tier, "sonnet"), tier, "test", ["x"]))
-    monkeypatch.setattr(package_mark, "MARKING", lambda doc: Marking())
+    monkeypatch.setattr(package_mark, "MARKING", lambda doc, **pin: Marking())
     embedder = FakeEmbedder(64)
     monkeypatch.setattr(ps, "EMBED", lambda texts: [list(v) for v in
                                                     embedder.embed(texts, "query")])

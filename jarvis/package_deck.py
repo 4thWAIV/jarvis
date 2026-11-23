@@ -480,19 +480,23 @@ def pipeline_digest() -> str:
                               "templates": presentation_proof.template_hashes()})
 
 
-def writing_tool(doc: dict) -> dict:
+def writing_tool(doc: dict, kept: Optional[dict] = None) -> dict:
     """What the deck source is written with: the author's role, prompt and
-    engine choice, the format it is told and the code."""
-    return {"author": step_cache.role_tool(ps.AUTHOR, doc),
+    engine choice (the model `kept` runs it on in this run, ps._had), the
+    format it is told and the code."""
+    had = ps._had(kept).get(ps.AUTHOR)
+    return {"author": step_cache.role_tool(ps.AUTHOR, doc, had=had),
             "format": format_digest(),
             "code": step_cache.code(*step_cache.MODEL_CODE, *ps.SWARM_CODE, *DECK_CODE)}
 
 
-def review_tool(doc: dict) -> dict:
+def review_tool(doc: dict, kept: Optional[dict] = None) -> dict:
     """What each slide is reviewed with: every participant's role, prompt
-    and engine choice, the deck's concerns and questions, the labels and
-    the code (package_swarm.tool_of)."""
-    return {**ps.tool_of(doc, more=DECK_CONCERNS), "questions": [list(q) for q in DECK_QUESTIONS],
+    and engine choice (the model `kept` runs each on, ps._had), the
+    deck's concerns and questions, the labels and the code
+    (package_swarm.tool_of)."""
+    return {**ps.tool_of(doc, more=DECK_CONCERNS, kept=kept),
+            "questions": [list(q) for q in DECK_QUESTIONS],
             "program": list(PROGRAM_QUESTIONS),
             "code": step_cache.code(*step_cache.MODEL_CODE, *ps.SWARM_CODE, *DECK_CODE)}
 
@@ -809,11 +813,11 @@ class Plan:
     """The deck's units as they stand for this run: the header and each
     slide's source, kept or to write (step_cache.py)."""
 
-    def __init__(self, run: ps.Run, script: dict):
+    def __init__(self, run: ps.Run, script: dict, kept: Optional[dict] = None):
         self.run = run
         self.slides = [s for s in script.get("slides") or [] if isinstance(s, dict)]
         self.ids = [s.get("id") for s in self.slides]
-        tool = writing_tool(run.doc)
+        tool = writing_tool(run.doc, kept)
         # The sender's answers to a deck that never built: the writing's
         # inputs, said to the author before it writes.
         self.findings = ps.findings_for(run.doc, WRITE_LABEL)
@@ -903,22 +907,27 @@ class Plan:
                 self.parts[sid] = parts[sid]
 
 
-def review_units(run: ps.Run, built: Built, script: dict) -> dict[str, step_cache.Unit]:
+def review_units(run: ps.Run, built: Built, script: dict,
+                 kept: Optional[dict] = None) -> dict[str, step_cache.Unit]:
     """Each slide's review unit: its source part as built, its layout data,
-    its script slide, the deck's questions and the sender's answers to an
-    earlier run's findings on the review."""
+    its script slide, the deck's questions, the sender's answers to an
+    earlier run's findings on the review, and the revisions the run is
+    asked (each one's words and who said them: Tim's Reject, the sender's
+    change at its check), so a slide kept as it was is reviewed again
+    against them."""
     _, parts = parts_of(_read_source(run))
     by_id = {s.get("id"): s for s in script.get("slides") or [] if isinstance(s, dict)}
     layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     findings = ps.findings_for(run.doc, REVIEW_LABEL)
-    tool = review_tool(run.doc)
+    tool = review_tool(run.doc, kept)
+    revisions = [[r.get("by") or "", r.get("words") or ""] for r in ps.revisions_of(run.doc)]
     out = {}
     for sid, part in parts.items():
         out[sid] = step_cache.Unit(SLIDE_REVIEW, sid, {
             "part": step_cache.digest(part), "layout": step_cache.digest(
                 {k: v for k, v in (layout.get(sid) or {}).items() if k != "slide"}),
             "script": step_cache.digest(by_id.get(sid)), "tool": tool,
-            "findings": findings})
+            "findings": findings, "revisions": revisions})
     return out
 
 
@@ -956,7 +965,7 @@ def deck(doc: dict) -> Optional[str]:
 
     def begin_review(built: Built) -> list[str]:
         """Each slide's review reused when kept; the slides left to review."""
-        reviews = review_units(run, built, script)
+        reviews = review_units(run, built, script, kept)
         reviewed: dict[str, dict] = {}
         only = [sid for sid in plan.ids if sid in reviews
                 and not _reuse_review(run, reviews[sid], reviewed)]
@@ -967,7 +976,7 @@ def deck(doc: dict) -> Optional[str]:
                      "slides": only if len(only) < len(plan.ids) else None})
         return only
 
-    plan = Plan(run, script)
+    plan = Plan(run, script, kept)
     if units.get("phase") != "review":
         plan.reuse()
         if plan.complete:

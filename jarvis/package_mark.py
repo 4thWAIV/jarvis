@@ -93,9 +93,12 @@ def _extraction(doc: dict):
     return sessions.BrainExtractionSession(Path(doc["folder"]), **pick_args(doc))
 
 
-def _marking(doc: dict):
+def _marking(doc: dict, engine: Optional[str] = None, model: Optional[str] = None):
+    """The run's MarkingSession; `engine` and `model`, the model the run
+    marks on when one is held to it (package_swarm.marking_pin)."""
     from jarvis import sessions
-    return sessions.BrainMarkingSession(Path(doc["folder"]), **pick_args(doc))
+    pin = {"engine": engine, "model": model} if model else {}
+    return sessions.BrainMarkingSession(Path(doc["folder"]), **pick_args(doc), **pin)
 
 
 def _classification(doc: dict):
@@ -104,7 +107,7 @@ def _classification(doc: dict):
 
 
 EXTRACTION: Callable[[dict], object] = _extraction
-MARKING: Callable[[dict], object] = _marking
+MARKING: Callable[..., object] = _marking
 CLASSIFICATION: Callable[[dict], object] = _classification
 
 
@@ -441,6 +444,26 @@ def unit_of(doc: dict, place: pe.Place, f: FileMarks, rows: list[Row],
         "tool": tool if tool is not None else tool_of(doc), "tim": tim})
 
 
+def batch_of(files: list[FileMarks], shas: dict[str, Optional[str]]) -> list[list]:
+    """The batch files are marked with, as each one's kept marks name it:
+    every file read and scored together with it ([stored, SHA-256]), since
+    any of them may share a page of marking or classification with it
+    (`grouped`, pages.py)."""
+    return sorted([f.stored, shas.get(f.stored)] for f in files)
+
+
+def batch_kept(entry: step_cache.Entry, shas: dict[str, Optional[str]]) -> bool:
+    """Whether a file's kept marks were made with files that are all still
+    gathered and unchanged (`shas`, each file's SHA-256 now): marks made
+    beside a file that changed or is gone are not reused. Marks kept with
+    no batch named are not."""
+    batch = entry.value.get("batch") if isinstance(entry.value, dict) else None
+    if not isinstance(batch, list):
+        return False
+    return all(isinstance(b, list) and len(b) == 2 and b[0] in shas and shas[b[0]] == b[1]
+               for b in batch)
+
+
 def marked(place: pe.Place) -> Optional[dict]:
     """The package's marked evidence: `mark/marked.json`, each file's marks
     in it under `marks`; None before it is marked."""
@@ -456,7 +479,8 @@ def marked(place: pe.Place) -> Optional[dict]:
 def mark(doc: dict) -> None:
     """The mark step of one run (package_jobs.PRODUCERS["mark"]): each
     gathered file's marks reused from the step cache when its inputs are
-    kept, the rest read and marked together."""
+    kept and every file it was marked with is still gathered as it was
+    (`batch_kept`), the rest read and marked together."""
     from jarvis import package_jobs
     from jarvis.package_jobs import Blocked
     place = pe.place_of(doc)
@@ -473,8 +497,16 @@ def mark(doc: dict) -> None:
     units = {f.stored: unit_of(doc, place, f, gathered, texts, tool) for f in files}
     marks: dict[str, dict] = {}
     todo = []
+    now = {f.stored: units[f.stored].inputs["sha"] for f in files}
+    stale: set[str] = set()
     for f in files:
-        entry = step_cache.reuse(units[f.stored], doc)
+        there = step_cache.lookup(units[f.stored], doc)
+        if there is not None and not batch_kept(there, now):
+            # Kept, but marked with files that are not as they were: marked
+            # again, its new marks in place of the kept ones.
+            stale.add(units[f.stored].key)
+            there = None
+        entry = step_cache.reuse(units[f.stored], doc) if there is not None else None
         if entry is None:
             todo.append(f)
             continue
@@ -491,13 +523,16 @@ def mark(doc: dict) -> None:
         took = time.time() - began
         sizes = {f.stored: max(1, len(f.text or "")) for f in todo}
         whole = sum(sizes.values())
+        batch = batch_of(todo, now)
         for f in todo:
             marks[f.stored] = f.json(place)
             _write_marks(place, marks[f.stored])
             step_cache.computed(units[f.stored], doc, began, seconds=took * sizes[f.stored] / whole,
                                 files_from={KEPT: json.dumps(
                                     {**marks[f.stored], "item": ""}, indent=1,
-                                    ensure_ascii=False).encode("utf-8")})
+                                    ensure_ascii=False).encode("utf-8")},
+                                value={"batch": batch},
+                                replace=units[f.stored].key in stale)
     _write_index(place, doc, [marks[f.stored] for f in files])
     pe.wait_indexed(place, STEP, vectors=False)      # gather waited for every vector
     records.update(place.record, lambda d: {**(d or {}), "marked_at": time.time(),

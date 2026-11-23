@@ -419,8 +419,44 @@ def _keep(run: Run, swarm: sessions.BrainSwarmSession, kept: dict) -> None:
         if getattr(chat, "session", None) and swarm.spoke(name):
             kept.setdefault("participants", {})[name] = {
                 "session": chat.session, "engine": chat.pick.engine, "model": chat.model}
+    # The engine and model each participant runs on in this run, spoken
+    # yet or not: a later process starts one not yet spoken on the same
+    # model (build), and every stage's key names it (_had).
+    kept["models"] = {**(kept.get("models") or {}),
+                      **{name: {"engine": chat.pick.engine, "model": chat.model}
+                         for name, chat in swarm.participants.items()}}
     kept["swarm"] = swarm.saved()
     _save(run, kept)
+
+
+def _had(kept: Optional[dict]) -> dict[str, dict]:
+    """The engine and model each participant runs on in this run, by name:
+    the session it resumes (`participants`), else the model it was started
+    on in an earlier process of the run (`models`); a participant named in
+    neither is picked when its swarm is built."""
+    kept = kept or {}
+    return {**(kept.get("models") or {}), **(kept.get("participants") or {})}
+
+
+def _still_running(doc: dict, was: Optional[dict]) -> bool:
+    """Whether a model a run was started on is still the one it runs on: a
+    model the package's runs found refused since is picked again."""
+    if not (was or {}).get("model"):
+        return False
+    return was["model"] not in (step_cache.refused(doc).get(was.get("engine")) or [])
+
+
+def marking_pin(doc: dict, kept: dict) -> dict:
+    """The engine and model the script is marked on in this run: the one an
+    earlier process of the run marked it on (`models`), else the pick now,
+    kept for the run's later processes; as package_mark.MARKING takes it."""
+    models = kept.setdefault("models", {})
+    if not _still_running(doc, models.get("marking")):
+        tool = step_cache.role_tool("marking", doc)
+        if tool.get("model"):
+            models["marking"] = {"engine": tool["engine"], "model": tool["model"]}
+    pin = models.get("marking") or {}
+    return {"engine": pin["engine"], "model": pin["model"]} if pin else {}
 
 
 def _read(path: Path) -> str:
@@ -526,10 +562,11 @@ def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
           effort: Optional[dict[str, str]] = None) -> sessions.BrainSwarmSession:
     """The swarm: each participant on its role, its model picked (the
     author first, the owners then on the other brain from it when Settings
-    says so), or resumed on the session it had; `more`, the concerns the
-    deck review adds (package_deck); `effort`, a participant's effort for
-    this launch in place of its role's (the author's research turn).
-    Raises NoModel."""
+    says so), or resumed on the session it had, or, not spoken yet,
+    started on the model an earlier process of the run started it on;
+    `more`, the concerns the deck review adds (package_deck); `effort`, a
+    participant's effort for this launch in place of its role's (the
+    author's research turn). Raises NoModel."""
     material = evidence(run)
     participants: dict[str, sessions.ChatSession] = {}
     author_engine = None
@@ -544,6 +581,11 @@ def build(run: Run, kept: dict, more: tuple[sessions.Concern, ...] = (),
                                     [had["model"]])
             chat = CHAT(name, system_of(name), run.folder, pick=pick, resume=had["session"],
                         **common)
+        elif _still_running(run.doc, (kept.get("models") or {}).get(name)):
+            was = kept["models"][name]
+            pick = model_tiers.Pick(was["engine"], was["model"], role.tier, "kept",
+                                    [was["model"]])
+            chat = CHAT(name, system_of(name), run.folder, pick=pick, **common)
         else:
             pick = PICK(role.kind, role.tier, author_engine=author_engine,
                         **package_mark.pick_args(run.doc))
@@ -701,22 +743,24 @@ SWARM_CODE = ("jarvis.package_swarm", "jarvis.package_script", "jarvis.script_vi
               "jarvis.work_research", "jarvis.package_mark", "jarvis.package_evidence")
 
 
-def tool_of(doc: dict, names: tuple[str, ...] = NAMES, more: tuple = ()) -> dict:
+def tool_of(doc: dict, names: tuple[str, ...] = NAMES, more: tuple = (),
+            kept: Optional[dict] = None) -> dict:
     """What a stage is made with, as its key names it: each participant's
     role (its approved prompt, tier, effort and release, and the engine and
-    model that runs it, step_cache.role_tool), the concerns signed off
+    model that runs it, step_cache.role_tool: the model `kept` runs it on
+    in this run, _had), the concerns signed off
     (every one's id, question and owner, and `more`, the deck's), the
     labels the script is marked with, whole, the embedding model that
     groups what is asked and left by meaning, and the code."""
-    return {"roles": step_cache.roles_tool(names, doc),
+    return {"roles": step_cache.roles_tool(names, doc, had=_had(kept)),
             "concerns": [dataclasses.asdict(c) for c in list(concerns()) + list(more)],
             "labels": step_cache.labels_key(),
-            "marking": step_cache.role_tool("marking", doc),
+            "marking": step_cache.role_tool("marking", doc, had=_had(kept).get("marking")),
             "embedding": step_cache.embedding_key(),
             "code": step_cache.code(*step_cache.MODEL_CODE, *SWARM_CODE)}
 
 
-def research_unit(run: Run) -> step_cache.Unit:
+def research_unit(run: Run, kept: Optional[dict] = None) -> step_cache.Unit:
     """The research step's unit (step_cache.py, one package's): its inputs
     are the run's own, the handoff (its questions, the sender's answers and
     options, its evidence as named), the package's evidence (each file's
@@ -725,12 +769,14 @@ def research_unit(run: Run) -> step_cache.Unit:
     prompt, model and code. Within the package its research is kept and
     reused unless one of these changes (Tim, 2026-11-22): what the
     program's searches and the Work item's research folder find now is
-    not a reason to research again."""
+    not a reason to research again. An author `kept` runs on in this run
+    (_had) is named by that model."""
+    had = _had(kept).get(AUTHOR)
     return step_cache.Unit(RESEARCH, "", {
         "request": run.doc.get("request"), "work": run.doc.get("work"),
         "evidence": sorted([r.stored, r.sha256] for r in run.rows if r.stored),
         "marks": package_mark.marks_digest(run.place),
-        "tool": {"author": step_cache.role_tool(AUTHOR, run.doc),
+        "tool": {"author": step_cache.role_tool(AUTHOR, run.doc, had=had),
                  "code": step_cache.code(*step_cache.MODEL_CODE, *SWARM_CODE)}})
 
 
@@ -742,7 +788,7 @@ def research(doc: dict) -> None:
     back through its tools for anything more it needs."""
     run = _run(doc, RESEARCH)
     kept = _kept(run)
-    unit = research_unit(run)
+    unit = research_unit(run, kept)
     if _in_place(kept, unit) or adopt(run, unit) is not None:
         return
     began = time.time()
@@ -853,6 +899,7 @@ def _fresh_sessions(kept: dict) -> None:
     seen = saved.setdefault("seen", {})
     for name in list(kept.get("participants") or {}):
         del kept["participants"][name]
+    kept.pop("models", None)
     for name in NAMES:
         seen[name] = 0
     saved["introduced"] = []
@@ -1424,7 +1471,7 @@ def swarm(doc: dict) -> Optional[str]:
         raise package_jobs.Blocked(SWARM, "The research step did not finish.",
                                    "JARVIS reached the swarm step.", "A new run.")
     specs = stage_specs(doc)
-    tool = tool_of(doc)
+    tool = tool_of(doc, kept=kept)
     before, todo = research_digest, None
     for i, (kind, name, more) in enumerate(specs):
         unit = stage_unit(doc, kind, name, more, before, tool)
@@ -1438,6 +1485,9 @@ def swarm(doc: dict) -> Optional[str]:
                 todo = i
                 break
             kept, record = adopted, _in_place(adopted, unit)
+            # Adopted: every participant starts a session of its own now,
+            # on the model picked for it.
+            tool = tool_of(doc, kept=kept)
         before = record["digest"]
     if todo is None:
         return _swarm_passed(run, kept)
@@ -1456,7 +1506,7 @@ def swarm(doc: dict) -> Optional[str]:
     async def go():
         nonlocal flow, before
         swarm_ = build(run, kept)
-        marking = package_mark.MARKING(doc)
+        marking = package_mark.MARKING(doc, **marking_pin(doc, kept))
         base: dict = {}
 
         async def mark() -> None:
@@ -1616,6 +1666,9 @@ def swarm(doc: dict) -> Optional[str]:
             await swarm_.open()
             _take_answers(run, swarm_, kept)
             for kind, name, more in specs[todo:]:
+                # Each stage's key names the model each participant runs
+                # it on in this run (_had).
+                tool = tool_of(doc, kept=kept)
                 unit = stage_unit(doc, kind, name, more, before, tool)
                 label = unit.label
                 if kept.get("pending") != unit.key:

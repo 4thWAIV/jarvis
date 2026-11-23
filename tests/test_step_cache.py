@@ -186,24 +186,27 @@ def test_a_change_naming_one_slide_recomputes_only_that_slide(marked, deck_plan,
     deck_plan.decks = [deck]
     marked_calls = len(Marking.calls)
     done = _run(later["id"], deck_plan)
+    # Only the slide named is written again; every slide is reviewed again,
+    # against the sender's words (a slide kept as it was among them).
     assert _computed(done) == {"swarm-revision:1",
                                "deck-source:what-changed", "deck-build",
-                               "deck-review:what-changed", "deck",
-                               "deliver"}
+                               "deck-review:opening", "deck-review:what-changed",
+                               "deck-review:where", "deck", "deliver"}
+    assert {"deck-source:opening", "deck-source:where", "deck-header"} <= _reused(done)
     new = Path(done["folder"])
     passed = ps.package_script.read(new / ps.SCRIPT)
     assert passed["slides"][0] == deck_plan.script["slides"][0] | {
         "narration": "It moves every item."}, "the slide not named is put back"
     assert done["revision"]["slides_changed"] == ["what-changed"]
     assert done["revision"]["put_back"] == ["opening"]
-    assert done["deck"]["slides_reviewed"] == ["what-changed"]
+    assert done["deck"]["slides_reviewed"] == ["opening", "what-changed", "where"]
     assert len(Marking.calls) == marked_calls + 1
     conversation = json.loads((new / ps.STATE).read_text())["swarm"]["conversation"]
     assert any(m["from"] == "sender" and words in m["text"] for m in conversation)
     review = json.loads((new / pd.REVIEW).read_text())
     turns = [m["text"] for m in review["conversation"] if m["from"] == pd.PROGRAM
              and "built and proven" in m["text"]]
-    assert '<slide id="what-changed">' in turns[-1] and '<slide id="opening">' not in turns[-1]
+    assert '<slide id="what-changed">' in turns[-1] and '<slide id="opening">' in turns[-1]
 
 
 def test_tim_s_reject_is_a_revision_too(marked, deck_plan, keygen):  # noqa: F811
@@ -217,6 +220,35 @@ def test_tim_s_reject_is_a_revision_too(marked, deck_plan, keygen):  # noqa: F81
     assert "Lead with the cost." in "".join(deck_plan.sent["author"][sent:])
     kept = json.loads((Path(done["folder"]) / ps.STATE).read_text())
     assert {"from": "tim", "text": "Lead with the cost."} in kept["swarm"]["conversation"]
+
+
+def _no_build(doc: dict) -> pd.Built:
+    folder = Path(doc["folder"])
+    return pd.Built(folder / "deck.zip", folder, {"slides": []}, {})
+
+
+def test_every_slide_is_reviewed_again_against_a_revision_s_words(marked, deck_plan,  # noqa: F811
+                                                                  keygen):
+    """A revision that leaves the script as it was: every slide is put back
+    and its source reused, but no slide review of the run before stands,
+    since none saw his words; the next revision's words review them again
+    too, and who said them counts."""
+    first = _run(marked["id"], deck_plan)
+    words = "Lead with the cost."
+    later = pj.new_run(first["id"], "Tim rejected it", revision={"words": words, "by": ps.TIM})
+    done = _run(later["id"], deck_plan)
+    slides = {"deck-review:opening", "deck-review:what-changed", "deck-review:where"}
+    assert slides <= _computed(done)
+    assert {"deck-source:opening", "deck-source:what-changed", "deck-source:where",
+            "deck-header"} <= _reused(done), "the slides themselves stay as they were"
+    script = json.loads(json.dumps(deck_plan.script))
+    by_tim = pd.review_units(ps._run(done, pd.DECK), _no_build(done), script)
+    assert {tuple(u.inputs["revisions"][0]) for u in by_tim.values()} == {(ps.TIM, words)}
+    # The same words said by the sender are another input.
+    sender = {**done, "inputs": {**done["inputs"], "revisions": [
+        {"run": "run-1", "by": ps.SENDER, "words": words}]}}
+    by_sender = pd.review_units(ps._run(sender, pd.DECK), _no_build(done), script)
+    assert {k: u.key for k, u in by_tim.items()} != {k: u.key for k, u in by_sender.items()}
 
 
 class DeckLeft:
@@ -290,8 +322,8 @@ class BothMarkings(Marking):
     the real MarkingSession on the test's roles (a changed file is marked
     again)."""
 
-    def __init__(self, doc):
-        self.real = package_mark._marking(doc)
+    def __init__(self, doc, **pin):
+        self.real = package_mark._marking(doc, **pin)
 
     def __getattr__(self, name):
         return getattr(self.real, name)
@@ -300,6 +332,15 @@ class BothMarkings(Marking):
 @pytest.fixture
 def files_marked(deck_plan, monkeypatch):  # noqa: F811
     monkeypatch.setattr(package_mark, "MARKING", BothMarkings)
+
+
+@pytest.fixture
+def real_picks(deck_plan, monkeypatch):  # noqa: F811
+    """Each participant picked as JARVIS picks it (model_tiers.pick), so the
+    model it runs on is the one a changed choice or list names."""
+    from jarvis import model_tiers
+    monkeypatch.setattr(ps, "PICK", lambda kind, tier, **kw: model_tiers.pick(
+        kind, tier, listed=step_cache._listed, **kw))
 
 
 def _again(first: dict, plan) -> dict:
@@ -326,7 +367,7 @@ def test_a_changed_prompt_redoes_only_the_steps_of_that_role(marked, deck_plan, 
 
 
 def test_a_changed_engine_choice_redoes_the_role_s_steps(marked, deck_plan, keygen,  # noqa: F811
-                                                        monkeypatch):
+                                                        monkeypatch, real_picks):
     from jarvis import engine_choice
     first = _run(marked["id"], deck_plan)
     real = engine_choice.choose
@@ -643,7 +684,8 @@ def test_a_rerun_of_the_same_package_reuses_everything_unchanged(marked, deck_pl
 
 
 def test_a_changed_resolved_model_recomputes_the_model_steps(marked, deck_plan, keygen,  # noqa: F811
-                                                             files_marked, monkeypatch):
+                                                             files_marked, monkeypatch,
+                                                             real_picks):
     from jarvis import model_tiers
     first = _run(marked["id"], deck_plan)
     before = step_cache.role_tool(ps.AUTHOR, first)["model"]
