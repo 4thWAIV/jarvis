@@ -28,8 +28,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from jarvis import (package_jobs, package_script, package_signature, package_swarm as ps,
-                    step_cache)
+from jarvis import (agent_keys, package_jobs, package_script, package_signature,
+                    package_swarm as ps, step_cache)
 
 DELIVER = "deliver"
 FOLDER = "package"                       # the signed package, in the run's folder
@@ -80,11 +80,20 @@ def message_of(script: dict, request: dict) -> str:
     return "\n".join(lines).strip()
 
 
+def signer_fingerprint() -> str:
+    """The fingerprint of JARVIS's own key, which signs every package it
+    makes (package_jobs.sign; made now when it has none, as signing makes
+    it)."""
+    _, public = agent_keys.jarvis_key()
+    return agent_keys.fingerprint(public)
+
+
 def deliver(doc: dict) -> Optional[str]:
     """The deliver step of one run (package_jobs.PRODUCERS["deliver"]): the
     package assembled, its message written and signed with JARVIS's own key
     (reused from the step cache when its inputs, the built deck, the
-    briefing, the message and who asked, are kept), then sent to its sender
+    briefing, the message, who asked and the fingerprint of the key that
+    signs it, are kept), then sent to its sender
     to check; WAITING on that check."""
     run = ps._run(doc, DELIVER)
     noted = _deck_noted(doc)
@@ -100,6 +109,8 @@ def deliver(doc: dict) -> Optional[str]:
         "briefing": {k: step_cache.digest(v.decode("utf-8", "replace"))
                      for k, v in briefing.items()},
         "message": message, "requested_by": doc.get("requested_by"),
+        # The key it is signed with: a JARVIS key made again signs again.
+        "signer": signer_fingerprint(),
         "code": step_cache.code("jarvis.package_deliver", "jarvis.package_signature",
                                 "jarvis.agent_keys")})
 

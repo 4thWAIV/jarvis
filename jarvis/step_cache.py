@@ -7,10 +7,17 @@ its kind, the name of what it makes within the kind, its inputs) has a key,
 the SHA-256 of its inputs in canonical JSON (`key`): content hashes of the
 files it reads, the outputs (by their digest) of the units it reads, and
 the words it is given. Its output (files, and a value) is kept under that
-key with how long it took (`keep`), in one folder a key under
-`data_paths.package_cache_dir()`, shared by every package and run. A run
-works out each unit's key and reuses the kept output when it exists
-(`reuse`): only units whose inputs changed, and those that read them, run.
+key with how long it took (`keep`), in one folder a key under the
+package's own folder (`root`: `<package folder>/.step-cache/`, beside its
+`evidence/` and `runs/`; never indexed, knowledge_content.run_bookkeeping).
+The cache is one package's (Tim, 2026-11-22: "the step cache is scoped to
+one package"; reusing work across two different packages has no value,
+they are two different problems): every run of the same package (findings
+answered, an Error run again, the sender's change, his Reject) reuses
+whatever its changes did not touch, and a new package always starts
+fresh, whatever its handoff. A run works out each unit's key and reuses
+the kept output when it exists (`reuse`): only units whose inputs
+changed, and those that read them, run.
 
 Model calls are not deterministic, so a key is of the inputs, never of the
 output; a unit that reads another names that unit's output digest
@@ -33,15 +40,23 @@ the source of the code that shapes the output (`code`: each named
 module's SHA-256 and every jarvis module it imports, at any depth, read
 from the source by `ast` with no import run, so no list can miss one;
 never a hand-raised number), and for a model step each role's
-approved prompt, its tier, effort and release, and the engine and model
-its engines.json kind chooses (`role_tool`). A changed prompt, role,
-engine choice or line of code changes every key that depends on it.
+approved prompt, its tier, effort and release, and the engine and the
+model that runs it (`role_tool`: model_tiers.pick's model, the one the
+sessions are opened on, never the tier's name alone; on Codex the newest
+of its live list). A model the brain refused in one of the package's runs
+is kept in the package's cache (`refused`, `note_refused`, from
+sessions.BrainChatSession's sweep through run_report.refused) and passed
+over by every pick of the package after it (package_mark.pick_args), so
+the key names the model the sweep ends on. A changed prompt, role, engine
+choice, resolved model or line of code changes every key that depends on
+it.
 
 Each entry's `used` file is touched whenever it is reused; entries unused
-for `PRUNE_AFTER_SEC` (30 days) are removed at server start (`prune`).
+for `PRUNE_AFTER_SEC` (30 days) are removed at server start (`prune`), and
+so is the shared `<data>/package-cache` the cache was before.
 
-The units (package_jobs.STEPS): `gather` (noted, never kept: it is read
-again for every new package), with `gather-lookups` (what retrieval looked
+The units (package_jobs.STEPS): `gather` (noted, never kept: a package's
+evidence is gathered once, at its first run), with `gather-lookups` (what retrieval looked
 up, kept as the lookups to run again) and `gather-labels` (retrieval's
 answer, keyed on what those lookups find now); `mark-file` (one a file of
 the evidence); `research`; the swarm's stages `swarm-outline`, `swarm-fill`, `swarm-passes` and
@@ -72,6 +87,12 @@ log = logging.getLogger("jarvis.step_cache")
 # The cache's own layout (entry.json and files/); what a unit computes is
 # versioned by its code's hash in its key (`code`), never by hand.
 VERSION = "step-cache/1"
+# The cache's folder in a package's own folder, and the models its runs
+# found refused.
+CACHE_DIR = ".step-cache"
+REFUSED_FILE = "refused.json"
+# Where the cache was before it was one package's: removed by `prune`.
+SHARED_BEFORE = "package-cache"
 REUSED, COMPUTED, RECOMPUTED, REPLACED = "reused", "computed", "recomputed", "replaced"
 OUTCOMES = (REUSED, COMPUTED, RECOMPUTED, REPLACED)
 ENTRY = "entry.json"
@@ -238,27 +259,49 @@ MODEL_CODE = ("jarvis.sessions", "jarvis.roles", "jarvis.role_prompts", "jarvis.
               "jarvis.engine_choice", "jarvis.step_cache")
 
 
-def role_tool(name: str, *, requester: Optional[str] = None,
-              author_engine: Optional[str] = None) -> dict:
+# Each engine's live model list, read once a process for the keys (a
+# Codex list is one app server call); the sessions read their own.
+_LISTED: dict[str, list[str]] = {}
+
+
+def _listed(engine: str) -> list[str]:
+    from jarvis import model_tiers
+    if engine not in _LISTED:
+        _LISTED[engine] = list(model_tiers.listed_models(engine))
+    return _LISTED[engine]
+
+
+def role_tool(name: str, doc: Optional[dict], *, author_engine: Optional[str] = None) -> dict:
     """A model role as a key names it: the role (tier, effort, kind,
     lifetime, release), its approved prompt (system and material, word for
-    word, hashed), and the engine and model its engines.json kind chooses
-    for this requester (engine_choice.choose; the owners on the other
-    brain from the author's when Settings says so)."""
-    from jarvis import engine_choice, role_prompts, roles
+    word, hashed), and the engine and model that run it: model_tiers.pick
+    for the run's requester, as the sessions pick it (the owners on the
+    other brain from the author's when Settings says so), the tier
+    resolved to its model on that brain (on Codex the newest its live list
+    holds), the models this package's runs found refused passed over."""
+    from jarvis import model_tiers, role_prompts, roles
     role = roles.role(name)
     prompt = role_prompts.PROMPTS.get(name)
+    requester = (doc or {}).get("engine")
     try:
-        choice = engine_choice.choose(role.kind, requester=requester)
-        engine, model, why = choice.engine, choice.model, choice.why
+        pick = model_tiers.pick(role.kind, role.tier, requester=requester,
+                                author_engine=author_engine, listed=_listed,
+                                refused=refused(doc) if doc else None)
+        engine, model, why = pick.engine, pick.model, pick.why
     except Exception as e:  # noqa: BLE001 - an unreadable choice is itself named
         engine, model, why = None, None, f"unreadable: {e}"
-    other = engine_choice.other_brain_for_owners(role.kind, author_engine)
-    if other:
-        engine, model, why = other, None, "owners_other_brain"
     return {"role": dataclasses.asdict(role),
             "prompt": digest(dataclasses.asdict(prompt)) if prompt is not None else None,
             "engine": engine, "model": model, "why": why}
+
+
+def embedding_key() -> Optional[str]:
+    """The engine's embedding model as a key names it (its vector space:
+    the model and its pinned revision), None while none is installed: it
+    groups by meaning what the swarm and the mark step put together."""
+    from jarvis import embedding_models
+    model = embedding_models.DEFAULT
+    return model.space if embedding_models.model_problem(None, model) is None else None
 
 
 def labels_key() -> str:
@@ -268,18 +311,18 @@ def labels_key() -> str:
     return digest([dataclasses.asdict(label) for label in briefing_labels.LABELS])
 
 
-def roles_tool(names: Iterable[str], requester: Optional[str] = None,
+def roles_tool(names: Iterable[str], doc: Optional[dict],
                author: Optional[str] = "author") -> dict:
     """Several roles of one step (`role_tool`), the owners' engine worked
     out from the author's as the swarm picks it."""
     out = {}
     author_engine = None
     if author:
-        out[author] = role_tool(author, requester=requester)
+        out[author] = role_tool(author, doc)
         author_engine = out[author]["engine"]
     for name in names:
         if name not in out:
-            out[name] = role_tool(name, requester=requester, author_engine=author_engine)
+            out[name] = role_tool(name, doc, author_engine=author_engine)
     return out
 
 
@@ -322,12 +365,43 @@ class Entry:
         return self.file(rel).read_text(encoding="utf-8")
 
 
-def root() -> Path:
-    return data_paths.package_cache_dir()
+def root(doc: Optional[dict]) -> Path:
+    """The package's own cache: `.step-cache/` in its folder (beside its
+    evidence and runs). A unit is always one package's: a doc that names
+    no package has none."""
+    from jarvis import package_evidence
+    if not doc or not doc.get("package"):
+        raise ValueError("the step cache is one package's: the run names no package")
+    return package_evidence.place_of(doc).folder.parent / CACHE_DIR
 
 
-def _dir(kind: str, key: str) -> Path:
-    return root() / kind / key[:2] / key
+def _dir(doc: Optional[dict], kind: str, key: str) -> Path:
+    return root(doc) / kind / key[:2] / key
+
+
+def refused(doc: Optional[dict]) -> dict[str, list[str]]:
+    """The models the package's runs found refused, by engine."""
+    try:
+        body = json.loads((root(doc) / REFUSED_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): [str(m) for m in v] for k, v in body.items() if isinstance(v, list)}
+
+
+def note_refused(doc: Optional[dict], engine: str, model: str) -> None:
+    """A model the brain refused in one of the package's runs, kept so
+    every later pick of the package passes over it, as the sweep did."""
+    if not doc or not doc.get("package") or not model:
+        return
+    have = refused(doc)
+    if model in have.get(engine, []):
+        return
+    have.setdefault(engine, []).append(model)
+    path = root(doc) / REFUSED_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}")
+    tmp.write_text(json.dumps(have, indent=1, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def expand(folder: Path, names: Iterable[str], missing: bool = False) -> list[str]:
@@ -345,10 +419,10 @@ def expand(folder: Path, names: Iterable[str], missing: bool = False) -> list[st
     return list(dict.fromkeys(out))
 
 
-def lookup(unit: Unit) -> Optional[Entry]:
-    """The unit's kept output, or None. One whose files are not all there
-    (a cache cleared part way) is not kept."""
-    path = _dir(unit.kind, unit.key)
+def lookup(unit: Unit, doc: Optional[dict]) -> Optional[Entry]:
+    """The unit's kept output in the package's cache, or None. One whose
+    files are not all there (a cache cleared part way) is not kept."""
+    path = _dir(doc, unit.kind, unit.key)
     try:
         body = json.loads((path / ENTRY).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -405,10 +479,10 @@ def keep(unit: Unit, doc: Optional[dict], *, folder: Optional[Path] = None,
     before) when one was kept already; with `replace` (the kept output was
     rejected downstream), the new output takes its place: (REPLACED, the
     new entry)."""
-    there = lookup(unit)
+    there = lookup(unit, doc)
     if there is not None and not replace:
         return RECOMPUTED, there
-    final = _dir(unit.kind, unit.key)
+    final = _dir(doc, unit.kind, unit.key)
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=f".{unit.key[:12]}-", dir=final.parent))
     shas: dict[str, str] = {}
@@ -436,7 +510,7 @@ def keep(unit: Unit, doc: Optional[dict], *, folder: Optional[Path] = None,
             os.replace(final, aside)
             os.replace(tmp, final)
             shutil.rmtree(aside, ignore_errors=True)
-            found = lookup(unit)
+            found = lookup(unit, doc)
             assert found is not None
             return REPLACED, found
         try:
@@ -444,14 +518,14 @@ def keep(unit: Unit, doc: Optional[dict], *, folder: Optional[Path] = None,
         except OSError:
             # Another run kept it meanwhile: theirs stands.
             shutil.rmtree(tmp, ignore_errors=True)
-            found = lookup(unit)
+            found = lookup(unit, doc)
             if found is not None:
                 return RECOMPUTED, found
             raise
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
-    found = lookup(unit)
+    found = lookup(unit, doc)
     assert found is not None
     return COMPUTED, found
 
@@ -460,7 +534,7 @@ def reuse(unit: Unit, doc: Optional[dict], folder: Optional[Path] = None) -> Opt
     """The unit's kept output, restored into `folder` when given and noted
     as reused; None when nothing is kept under its key."""
     began = time.time()
-    entry = lookup(unit)
+    entry = lookup(unit, doc)
     if entry is None:
         return None
     if folder is not None:
@@ -489,16 +563,30 @@ def computed(unit: Unit, doc: Optional[dict], began: float, seconds: Optional[fl
     return entry
 
 
+def caches() -> list[Path]:
+    """Every package's cache on disk: under each Work item's packages and
+    each package made for no Work item."""
+    found = list(data_paths.work_dir().glob(f"*/packages/*/{CACHE_DIR}"))
+    found += data_paths.package_dir().glob(f"*/{CACHE_DIR}")
+    return sorted(p for p in found if p.is_dir())
+
+
 def prune(older_than: float = PRUNE_AFTER_SEC, now: Optional[float] = None) -> int:
-    """Every entry not used for `older_than` seconds removed (its `used`
-    file, else its entry.json, says when it was last used), with any part
-    kept by a run that stopped while keeping; how many were removed. Run
-    at server start."""
+    """Every entry of every package's cache not used for `older_than`
+    seconds removed (its `used` file, else its entry.json, says when it was
+    last used), with any part kept by a run that stopped while keeping, and
+    the shared cache of before (`SHARED_BEFORE`) removed whole; how many
+    entries were removed. Run at server start."""
     now = time.time() if now is None else now
     removed = 0
-    base = root()
-    if not base.is_dir():
-        return 0
+    shutil.rmtree(data_paths.data_dir() / SHARED_BEFORE, ignore_errors=True)
+    for base in caches():
+        removed += _prune_one(base, older_than, now)
+    return removed
+
+
+def _prune_one(base: Path, older_than: float, now: float) -> int:
+    removed = 0
     for kind in base.iterdir():
         if not kind.is_dir():
             continue

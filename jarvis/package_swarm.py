@@ -88,21 +88,22 @@ participant's session resumed with it, and the flow goes on from the stage
 it reached (`flow`).
 
 Every run goes through the step cache (step_cache.py, construction-drafts.md
-"Step cache keyed by inputs", Tim 2026-11-22). Research is one unit, keyed
-by the handoff, the evidence as gathered, what the mark step read in it,
-the Work item's own research folder as it stands, and the author's role,
-prompt, engine choice and the code (`research_unit`); each stage of the
-swarm is one unit (`swarm-outline`, `swarm-fill`, `swarm-passes`), keyed
-by the output of the unit before it, the sender's answers to an earlier
-run's findings on that stage, and what it is made with (`tool_of`: every
-participant's role, prompt and engine choice, the concerns, the labels and
+"Step cache keyed by inputs", Tim 2026-11-22; the cache is one
+package's, so only another run of the same package reuses a stage).
+Research is one unit, keyed by the handoff, the package's evidence, what
+the mark step read in it, and the author's role, prompt, model and the
+code (`research_unit`); each stage of the swarm is one unit
+(`swarm-outline`, `swarm-fill`, `swarm-passes`), keyed by the output of
+the unit before it, the sender's answers to an earlier run's findings on
+that stage, and what it is made with (`tool_of`: every participant's
+role, prompt and model, the concerns, the labels, the embedding model and
 the code). A run reuses each stage whose key is kept (its files and
 swarm.json copied into its folder; every participant, on either brain,
 starts a new session given the whole conversation as the stage left it,
-so no session carries what was said after it, and no two packages resume
-one thread) and runs the first whose inputs changed and every one after
-it. A finished stage is kept; a stage that failed or waits on the sender
-keeps nothing until it finishes.
+so no session carries what was said after it, and no two runs resume one
+thread) and runs the first whose inputs changed and every one after it. A
+finished stage is kept; a stage that failed or waits on the sender keeps
+nothing until it finishes.
 
 A revision (the sender said what is wrong at its check, or Tim rejected the
 package; package_jobs.new_run's inputs) is one more stage,
@@ -703,30 +704,33 @@ SWARM_CODE = ("jarvis.package_swarm", "jarvis.package_script", "jarvis.script_vi
 def tool_of(doc: dict, names: tuple[str, ...] = NAMES, more: tuple = ()) -> dict:
     """What a stage is made with, as its key names it: each participant's
     role (its approved prompt, tier, effort and release, and the engine and
-    model its kind chooses, step_cache.role_tool), the concerns signed off
+    model that runs it, step_cache.role_tool), the concerns signed off
     (every one's id, question and owner, and `more`, the deck's), the
-    labels the script is marked with, whole, and the code."""
-    return {"roles": step_cache.roles_tool(names, doc.get("engine")),
+    labels the script is marked with, whole, the embedding model that
+    groups what is asked and left by meaning, and the code."""
+    return {"roles": step_cache.roles_tool(names, doc),
             "concerns": [dataclasses.asdict(c) for c in list(concerns()) + list(more)],
             "labels": step_cache.labels_key(),
-            "marking": step_cache.role_tool("marking", requester=doc.get("engine")),
+            "marking": step_cache.role_tool("marking", doc),
+            "embedding": step_cache.embedding_key(),
             "code": step_cache.code(*step_cache.MODEL_CODE, *SWARM_CODE)}
 
 
 def research_unit(run: Run) -> step_cache.Unit:
-    """The research step's unit (step_cache.py): its inputs are the handoff
-    (its questions, the sender's answers and options, its evidence as
-    named), the evidence as gathered (each file's SHA-256), what the mark
-    step read in it, the Work item's own research folder as it stands now
-    (each file's SHA-256: work_research rewrites it on every change of the
-    item), and the author's role, prompt, engine choice and code."""
-    folder = run.work_research
+    """The research step's unit (step_cache.py, one package's): its inputs
+    are the run's own, the handoff (its questions, the sender's answers and
+    options, its evidence as named), the package's evidence (each file's
+    SHA-256: the sender's answers, his words at the check and Tim's Reject
+    join it), what the mark step read in it, and the author's role,
+    prompt, model and code. Within the package its research is kept and
+    reused unless one of these changes (Tim, 2026-11-22): what the
+    program's searches and the Work item's research folder find now is
+    not a reason to research again."""
     return step_cache.Unit(RESEARCH, "", {
         "request": run.doc.get("request"), "work": run.doc.get("work"),
         "evidence": sorted([r.stored, r.sha256] for r in run.rows if r.stored),
         "marks": package_mark.marks_digest(run.place),
-        "work_research": step_cache.tree_sha(folder) if folder is not None else None,
-        "tool": {"author": step_cache.role_tool(AUTHOR, requester=run.doc.get("engine")),
+        "tool": {"author": step_cache.role_tool(AUTHOR, run.doc),
                  "code": step_cache.code(*step_cache.MODEL_CODE, *SWARM_CODE)}})
 
 
@@ -809,8 +813,8 @@ def digest_of(kept: dict, kind: str, name: str = "") -> Optional[str]:
 
 def adopt(run: Run, unit: step_cache.Unit) -> Optional[dict]:
     """The unit's kept output restored into this run's folder (step_cache
-    reuse), its swarm.json made this run's, and the unit added to what is
-    done here; swarm.json as it now stands, or None when nothing is kept
+    reuse, from another run of the same package), its swarm.json made this
+    run's, and the unit added to what is done here; swarm.json as it now stands, or None when nothing is kept
     under the unit's key."""
     entry = step_cache.reuse(unit, run.doc, run.folder)
     if entry is None:
@@ -841,9 +845,8 @@ def _fresh_sessions(kept: dict) -> None:
     run's job is answered yet, and every participant, on either brain,
     starts a new session given the whole conversation as the stage left
     it. A session kept by another run holds what was said after the stage
-    it was kept at (the run before's later stages, or another package's
-    whole run), which no key covers, and two packages must never resume
-    one thread."""
+    it was kept at (the run before's later stages), which no key covers,
+    and two runs must never resume one thread."""
     asking = kept.get("asking") or {}
     kept["asking"] = {"answers_said": 0, "groups": asking.get("groups") or []}
     saved = kept.setdefault("swarm", {})

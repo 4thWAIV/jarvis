@@ -432,7 +432,7 @@ def pipeline_digest() -> str:
 def writing_tool(doc: dict) -> dict:
     """What the deck source is written with: the author's role, prompt and
     engine choice, the format it is told and the code."""
-    return {"author": step_cache.role_tool(ps.AUTHOR, requester=doc.get("engine")),
+    return {"author": step_cache.role_tool(ps.AUTHOR, doc),
             "format": format_digest(),
             "code": step_cache.code(*step_cache.MODEL_CODE, *ps.SWARM_CODE, *DECK_CODE)}
 
@@ -983,8 +983,11 @@ def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, st
     if passed and built is not None:
         built = _final(run, plan, reviews, units.get("reviewed") or {}, build_now) or built
     passed = passed and built is not None
+    # The review's record carries the build's program verdict (`program`,
+    # from the final build's proof): the build's own key is in the step's.
     step = step_cache.Unit(STEP_UNIT, "", {"reviews": sorted(u.key for u in reviews.values()),
-                                           "source": step_cache.file_sha(source_of(run))})
+                                           "source": step_cache.file_sha(source_of(run)),
+                                           "build": build_unit(run).key})
     if not (passed and "swarm" not in outcome and step_cache.reuse(step, doc, run.folder)):
         swarm = outcome.get("swarm") or {**(kept.get("swarm") or {})}
         result = {**swarm, "result": "passed" if passed else "not passed",

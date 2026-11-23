@@ -89,9 +89,10 @@ STEP_FAILS_AFTER_SEC = 5 * 60.0
 # ── the collector in the run's own process ────────────────────────────────
 
 class _Step:
-    def __init__(self, name: str):
+    def __init__(self, name: str, doc: Optional[dict] = None):
         from jarvis import awake
         self.name = name
+        self.doc = doc
         self.clock = awake.Clock()
         self.began = self.clock.began
         self.calls: list[dict] = []
@@ -103,6 +104,20 @@ class _Step:
 
 _lock = threading.Lock()
 _current: Optional[_Step] = None
+
+
+def refused(engine: str, model: str) -> None:
+    """A model the brain refused in the step under way, kept in its
+    package's cache (step_cache.note_refused) so every later pick of the
+    package passes over it; nothing outside a step."""
+    with _lock:
+        doc = _current.doc if _current is not None else None
+    if doc is not None:
+        from jarvis import step_cache
+        try:
+            step_cache.note_refused(doc, engine, model)
+        except (OSError, ValueError):
+            pass
 
 
 def call(record: dict) -> None:
@@ -304,7 +319,7 @@ def step(doc: dict, name: str) -> Iterator[None]:
     written into the run's timing.json when it ends, however it ends."""
     global _current
     folder = Path(doc["folder"])
-    entry = _Step(name)
+    entry = _Step(name, doc)
     with _lock:
         _current = entry
     outcome = "done"

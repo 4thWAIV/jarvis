@@ -235,11 +235,15 @@ def run_bookkeeping(rel: str, is_dir: bool) -> bool:
     """Whether a path in a Work item's or a package's folder is a package
     run's bookkeeping (run_report.BOOKKEEPING: timing.json, quality.json,
     swarm.json, run.job, job.log, research-log.jsonl, research-used.json,
-    each directly in a run's folder, `.../runs/<run id>/`) or the role
-    servers' configuration folder (run_report.ROLE_CONFIG). Never indexed,
-    so no search returns it; one indexed before leaves on the next scan."""
-    from jarvis import run_report
+    each directly in a run's folder, `.../runs/<run id>/`), the role
+    servers' configuration folder (run_report.ROLE_CONFIG) or the package's
+    step cache and anything in it (step_cache.CACHE_DIR: copies of what its
+    runs made, indexed where they are restored). Never indexed, so no
+    search returns it; one indexed before leaves on the next scan."""
+    from jarvis import run_report, step_cache
     parts = rel.split("/")
+    if step_cache.CACHE_DIR in parts:
+        return True
     if is_dir:
         return parts[-1] == run_report.ROLE_CONFIG
     return (len(parts) >= 3 and parts[-3] == "runs"

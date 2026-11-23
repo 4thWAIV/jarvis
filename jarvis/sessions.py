@@ -241,12 +241,14 @@ class BrainChatSession:
     @classmethod
     def for_role(cls, role: str, prompt: str, folder: Path, *, requester: Optional[str] = None,
                  engine: Optional[str] = None, model: Optional[str] = None,
-                 author_engine: Optional[str] = None, **kwargs) -> "BrainChatSession":
-        """The role's brain and model picked (model_tiers.pick). Raises
+                 author_engine: Optional[str] = None,
+                 refused: Optional[dict] = None, **kwargs) -> "BrainChatSession":
+        """The role's brain and model picked (model_tiers.pick; `refused`,
+        the models the package's runs found refused, passed over). Raises
         model_tiers.NoModel when the sweep finds none."""
         spec = kwargs.get("role_spec") or roles.role(role)
         pick = model_tiers.pick(spec.kind, spec.tier, requester=requester, engine=engine,
-                                model=model, author_engine=author_engine)
+                                model=model, author_engine=author_engine, refused=refused)
         return cls(role, prompt, folder, pick=pick, **kwargs)
 
     @property
@@ -334,6 +336,8 @@ class BrainChatSession:
 
     def _refused(self, model: str, error: str) -> None:
         self._on_log(f"{self.role.name}: {self.pick.engine} refused {model}: {error}")
+        # Kept for the package: its later picks, and its keys, pass over it.
+        run_report.refused(self.pick.engine, model)
 
     async def _open_next(self, last: str = "") -> None:
         """Opened on the next model of the sweep the brain takes. Raises

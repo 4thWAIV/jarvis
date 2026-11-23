@@ -82,8 +82,10 @@ BY_PROGRAM, BY_EXTRACTION = "program", "extraction"
 
 def pick_args(doc: dict) -> dict:
     """Each session's model: its role's tier on the brain the run's kind of
-    agent goes on (model_tiers.pick), the request's engine its requester."""
-    return {"requester": doc.get("engine")}
+    agent goes on (model_tiers.pick), the request's engine its requester,
+    the models the package's runs found refused passed over
+    (step_cache.refused), as its keys name them (step_cache.role_tool)."""
+    return {"requester": doc.get("engine"), "refused": step_cache.refused(doc)}
 
 
 def _extraction(doc: dict):
@@ -415,8 +417,8 @@ def tool_of(doc: dict) -> dict:
     """What a file is marked with, as its key names it: the reading roles
     (step_cache.role_tool), the labels whole (step_cache.labels_key) and
     the code."""
-    return {"roles": step_cache.roles_tool(READING_ROLES, doc.get("engine"), author=None),
-            "labels": step_cache.labels_key(),
+    return {"roles": step_cache.roles_tool(READING_ROLES, doc, author=None),
+            "labels": step_cache.labels_key(), "embedding": step_cache.embedding_key(),
             "code": step_cache.code(*step_cache.MODEL_CODE, *MARK_CODE)}
 
 

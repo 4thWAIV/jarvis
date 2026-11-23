@@ -147,10 +147,14 @@ def listed_models(engine: str) -> list[str]:
 def pick(kind: str, tier: int, *, requester: Optional[str] = None,
          engine: Optional[str] = None, model: Optional[str] = None,
          author_engine: Optional[str] = None,
-         listed: Callable[[str], list[str]] = listed_models) -> Pick:
+         listed: Callable[[str], list[str]] = listed_models,
+         refused: Optional[dict[str, list[str]]] = None) -> Pick:
     """The brain and model for one role. `kind` is its engines.json entry;
     `engine` and `model` what was named for this one; `author_engine` the
-    author's brain, for the owners' Settings option. Raises NoModel."""
+    author's brain, for the owners' Settings option; `refused`, by engine,
+    the models the brain refused before in the same package's runs
+    (step_cache.refused), passed over as the sweep passed over them, so
+    the model picked is the one the sweep ends on. Raises NoModel."""
     from jarvis import engine_choice
     choice = engine_choice.choose(kind, engine=engine, model=model, requester=requester)
     chosen, why, named = choice.engine, choice.why, choice.model
@@ -160,7 +164,8 @@ def pick(kind: str, tier: int, *, requester: Optional[str] = None,
     available = listed(chosen)
     if named:
         return Pick(chosen, named, tier_of(chosen, named) or tier, why, [named])
-    tried = sweep(chosen, tier, available)
+    gone = set((refused or {}).get(chosen) or ())
+    tried = [m for m in sweep(chosen, tier, available) if m not in gone]
     if not tried:
         raise NoModel(f"no {chosen} model in tier {tier} or the next one up is available "
                       f"(listed: {', '.join(available) or 'none'})")

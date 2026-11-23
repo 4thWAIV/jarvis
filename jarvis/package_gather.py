@@ -64,6 +64,7 @@ def _retrieval(doc: dict):
     answer's input (`found_digest`)."""
     from jarvis import sessions
     return sessions.BrainRetrievalSession(Path(doc["folder"]), requester=doc.get("engine"),
+                                          refused=step_cache.refused(doc),
                                           search_log=lookups_log(doc))
 
 
@@ -588,7 +589,7 @@ def lookups_unit(doc: dict, labels: list[tuple[int, dict]], read: str) -> step_c
     tool's discovered inputs are checked."""
     return step_cache.Unit(LOOKUPS, "", {
         "labels": [[n, e.get("text") or ""] for n, e in labels], "read": read,
-        "tool": {"role": step_cache.role_tool("retrieval", requester=doc.get("engine")),
+        "tool": {"role": step_cache.role_tool("retrieval", doc),
                  "code": step_cache.code(*step_cache.MODEL_CODE, *GATHER_CODE,
                                          "jarvis.role_lookups", "jarvis.role_mcp")}})
 

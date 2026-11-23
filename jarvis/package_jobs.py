@@ -49,7 +49,9 @@ follows with the answers (server._answer_package_job, `new_run`).
 Every run of a package goes through one mechanism, the step cache
 (step_cache.py, construction-drafts.md "Step cache keyed by inputs", Tim
 2026-11-22): each step, and each unit within it, is keyed by its inputs and
-reused when they are kept, so only what changed is done again. A new run
+reused when they are kept, so only what changed is done again. The cache is
+the package's own (Tim, 2026-11-22): only its runs reuse what it kept, and
+a new package, whatever its handoff, starts fresh. A new run
 carries the inputs of the run before (`inputs`: the revisions asked, each
 change at the check or Reject with its words, and the sender's answers to
 each stage's findings, with the stage they are for) and adds its own; a run

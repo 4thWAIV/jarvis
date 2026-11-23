@@ -3,7 +3,8 @@ construction-drafts.md "Step cache keyed by inputs", approved by Tim
 2026-11-22): every run of a package, whatever started it, reuses each step
 and unit whose inputs are unchanged and does again only what its new
 inputs change; timing.json says which units were reused and which
-computed, and no unit is ever computed with inputs already kept."""
+computed, and no unit is ever computed with inputs already kept. The
+cache is one package's (Tim, 2026-11-22): a new package reuses nothing."""
 from __future__ import annotations
 
 import json
@@ -44,20 +45,37 @@ def test_an_output_is_kept_with_its_timing_and_restored_where_asked(tmp_path):
     (made / "script.yaml").write_text("version: script/1\n")
     (made / "deck" / "pic.png").write_bytes(b"png")
     unit = step_cache.Unit("swarm-fill", "", {"before": "abc"})
-    assert step_cache.lookup(unit) is None
-    outcome, entry = step_cache.keep(unit, {"id": "job-1", "run": "run-1"}, folder=made,
+    doc = {"id": "job-1", "run": "run-1", "package": "pkg-a"}
+    assert step_cache.lookup(unit, doc) is None
+    outcome, entry = step_cache.keep(unit, doc, folder=made,
                                      files=["script.yaml", "deck"], value={"n": 1},
                                      seconds=12.5)
     assert outcome == step_cache.COMPUTED
     assert set(entry.files) == {"script.yaml", "deck/pic.png"} and entry.value == {"n": 1}
     assert entry.seconds == 12.5 and entry.made["run"] == "run-1"
     elsewhere = tmp_path / "elsewhere"
-    step_cache.restore(step_cache.lookup(unit), elsewhere)
+    step_cache.restore(step_cache.lookup(unit, doc), elsewhere)
     assert (elsewhere / "deck" / "pic.png").read_bytes() == b"png"
     # Kept once: computing it again with the same inputs is never expected,
     # and says so.
-    again, there = step_cache.keep(unit, None, folder=made, files=["script.yaml"])
+    again, there = step_cache.keep(unit, doc, folder=made, files=["script.yaml"])
     assert again == step_cache.RECOMPUTED and there.digest == entry.digest
+    # Kept in the package's own folder, and only for it: another package
+    # with the same inputs has nothing kept.
+    assert entry.path.is_relative_to(step_cache.root(doc))
+    assert step_cache.root(doc).parent.name == "pkg-a"
+    assert step_cache.lookup(unit, {**doc, "package": "pkg-b"}) is None
+    with pytest.raises(ValueError, match="one package's"):
+        step_cache.lookup(unit, {"id": "job-1"})
+
+
+def test_the_package_s_cache_is_never_indexed():
+    from jarvis import knowledge_content
+    assert knowledge_content.run_bookkeeping("w1/packages/pkg-a/.step-cache", True)
+    assert knowledge_content.run_bookkeeping(
+        "w1/packages/pkg-a/.step-cache/research/ab/abc/files/research.md", False)
+    assert not knowledge_content.run_bookkeeping("w1/packages/pkg-a/evidence/handoff.json",
+                                                 False)
 
 
 def test_each_unit_reused_or_computed_is_in_the_step_s_timing(tmp_path):
@@ -247,19 +265,22 @@ def test_a_findings_answer_on_the_swarm_recomputes_only_its_fix_passes_onward(
     assert not [c for c in computed if c.startswith("mark-file")]
 
 
-def test_a_new_request_with_the_same_handoff_reuses_everything(marked, deck_plan, keygen):  # noqa: F811
+def test_a_new_package_with_the_same_handoff_reuses_nothing(marked, deck_plan, keygen,  # noqa: F811
+                                                            files_marked):
     first = _run(marked["id"], deck_plan)
     fresh = pj.accept(first["request"], session=first["session"], work=first["work"] or "",
                       engine=first["engine"] or "", submitted=first["submitted"])
     assert fresh["package"] != first["package"]
     turns = _turns(deck_plan)
     done = _run(fresh["id"], deck_plan)
-    # Gather reads everything again (its inputs are live); what it read is
-    # the same, so nothing after it is computed, and retrieval is not asked.
-    assert _computed(done) == {"gather"}
-    assert {"gather-lookups", "gather-labels"} <= _reused(done)
-    assert _turns(deck_plan) == turns
+    # Two packages are two problems (Tim, 2026-11-22): the second starts
+    # fresh, every unit computed and every model asked, nothing reused.
+    assert _reused(done) == set()
+    assert {"gather", "research", "swarm-outline", "swarm-fill", "swarm-passes",
+            "deck-header", "deck-build", "deck", "deliver"} <= _computed(done)
+    assert _turns(deck_plan) > turns
     assert done["state"] == pj.WAITING
+    assert step_cache.root(done) != step_cache.root(first)
 
 
 # ── one input changed at a time: exactly what reads it is computed ────────
@@ -281,67 +302,12 @@ def files_marked(deck_plan, monkeypatch):  # noqa: F811
     monkeypatch.setattr(package_mark, "MARKING", BothMarkings)
 
 
-def _asked_again(first: dict, plan) -> dict:
-    """A new request with the same handoff, by the same session: a new
-    package, whose gather reads everything again."""
-    fresh = pj.accept(first["request"], session=first["session"], work=first["work"] or "",
-                      engine=first["engine"] or "", submitted=first["submitted"])
-    return _run(fresh["id"], plan)
-
-
 def _again(first: dict, plan) -> dict:
     """The same package run again after an Error, nothing new asked."""
     pj.error(first["id"], "deliver", "stopped", "tried", "fix")
     return _run(pj.new_run(first["id"], "asked again")["id"], plan)
 
 
-SWARM = {"research", "swarm-outline", "swarm-fill", "swarm-passes"}
-# Every file of the evidence that is marked as prose: marked with Tim's
-# material, so with every file he knows or had access to.
-PROSE = {"mark-file:files/situation.md", "mark-file:given/3.md", "mark-file:handoff.json",
-         "mark-file:jarvis/tim.md", "mark-file:retrieved/pr-171.md",
-         "mark-file:jarvis/work-item.md"}
-
-
-def test_one_evidence_file_changed_marks_only_it_and_redoes_research_onward(
-        marked, deck_plan, keygen, files_marked, tmp_path):  # noqa: F811
-    first = _run(marked["id"], deck_plan)
-    (tmp_path / "situation.md").write_text("# Situation\n\nThe move is on the live data now.\n")
-    done = _asked_again(first, deck_plan)
-    # gather reads it again; retrieval is asked again (what the program read
-    # changed); only that file is marked again; research and the swarm's
-    # stages read the marks, so they are made again. The script came out
-    # the same, so the deck, its review and the delivery are reused.
-    assert _computed(done) == {"gather", "gather-lookups", "gather-labels",
-                               "mark-file:files/situation.md"} | SWARM
-    assert "mark-file:jarvis/work-item.md" in _reused(done)
-    assert {"deck-build", "deck", "deliver"} <= _reused(done)
-
-
-def test_a_changed_work_item_is_read_again_and_what_reads_it_is_redone(
-        marked, deck_plan, keygen, files_marked):  # noqa: F811
-    first = _run(marked["id"], deck_plan)
-    work_store.record(work_store.WorkEvent(first["work"], "piece", "Tested the move.", {
-        "key": "test", "title": "The test", "who": {"kind": "tim"}, "state": "working"}))
-    done = _asked_again(first, deck_plan)
-    # The Work item's record, and every prose file marked with Tim's
-    # material (which holds the Work item he knows), are marked again.
-    assert _computed(done) == {"gather", "gather-lookups", "gather-labels"} | PROSE | SWARM
-    assert {"mark-file:retrieved/ci_run-99881.md", "mark-file:jarvis/sender-session.md",
-            "deck-build", "deliver"} <= _reused(done)
-
-
-def test_his_record_changed_is_read_again_for_a_later_package(marked, deck_plan, keygen,  # noqa: F811
-                                                             files_marked):
-    first = _run(marked["id"], deck_plan)
-    # His Reject of the first package: a later package's tim.md carries it.
-    pj.rejected(first["id"], "Say what it costs first.")
-    done = _asked_again(first, deck_plan)
-    tim = ps.pe.place_of(done).folder / ps.pe.TIM_RECORD
-    assert "Say what it costs first." in tim.read_text()
-    assert _computed(done) == {"gather", "gather-lookups", "gather-labels"} | PROSE | SWARM
-    assert {"mark-file:retrieved/ci_run-99881.md", "mark-file:jarvis/sender-session.md"} \
-        <= _reused(done)
 
 
 def test_a_changed_prompt_redoes_only_the_steps_of_that_role(marked, deck_plan, keygen,  # noqa: F811
@@ -366,6 +332,9 @@ def test_a_changed_engine_choice_redoes_the_role_s_steps(marked, deck_plan, keyg
     real = engine_choice.choose
     monkeypatch.setattr(engine_choice, "choose", lambda kind, **kw: engine_choice.Choice(
         "codex", None, "fixed") if kind == "package_author" else real(kind, **kw))
+    # Codex's live list, as its app server would give it.
+    monkeypatch.setitem(step_cache._LISTED, "codex", ["gpt-6.2-astra", "gpt-6.2-sol",
+                                                      "gpt-6.1-terra", "gpt-6-luna"])
     done = _again(first, deck_plan)
     assert {"research", "swarm-outline", "deck-header", "deck-source:where"} <= _computed(done)
     assert not [c for c in _computed(done) if c.startswith("mark-file")]
@@ -466,17 +435,24 @@ def test_a_restored_stage_starts_every_participant_afresh_on_either_brain():
 
 
 def test_entries_unused_for_thirty_days_are_pruned():
+    from jarvis import data_paths
     old = step_cache.Unit("research", "", {"n": 1})
     new = step_cache.Unit("research", "", {"n": 2})
-    step_cache.keep(old, None, value=1)
-    step_cache.keep(new, None, value=2)
+    loose = {"package": "pkg-loose"}
+    for_work = {"package": "pkg-w", "work": "w1"}
+    step_cache.keep(old, loose, value=1)
+    step_cache.keep(new, for_work, value=2)
     gone = time.time() - step_cache.PRUNE_AFTER_SEC - 60
-    entry = step_cache.lookup(old)
+    entry = step_cache.lookup(old, loose)
     os.utime(entry.path / step_cache.USED, (gone, gone))
-    os.utime(step_cache.lookup(new).path / step_cache.USED, (gone, gone))
-    step_cache.reuse(new, None)                 # used now
+    os.utime(step_cache.lookup(new, for_work).path / step_cache.USED, (gone, gone))
+    step_cache.reuse(new, for_work)             # used now
+    shared = data_paths.data_dir() / step_cache.SHARED_BEFORE / "research"
+    shared.mkdir(parents=True)
+    assert set(step_cache.caches()) == {step_cache.root(loose), step_cache.root(for_work)}
     assert step_cache.prune() == 1
-    assert step_cache.lookup(old) is None and step_cache.lookup(new) is not None
+    assert step_cache.lookup(old, loose) is None and step_cache.lookup(new, for_work) is not None
+    assert not shared.parent.exists(), "the shared cache of before is removed"
 
 
 # ── asking for it again ───────────────────────────────────────────────────
@@ -621,20 +597,107 @@ def test_retrieval_is_asked_again_when_what_its_lookups_find_changed(
     monkeypatch.setitem(FOUND, "now", FOUND["now"])
     first = _run(marked["id"], deck_plan)
     # The fixture's retrieval logged nothing: with what it was asked with
-    # no longer kept, a new package asks the logging retrieval.
+    # no longer kept, the package's evidence gathered again (a gather
+    # stopped part way) asks the logging retrieval.
     import shutil
-    shutil.rmtree(step_cache.root() / package_gather.LOOKUPS)
+    shutil.rmtree(step_cache.root(first) / package_gather.LOOKUPS)
     LoggingRetrieval.asked = 0
-    asked = _asked_again(first, deck_plan)
+    asked = _gathered_again(first, deck_plan)
     assert {"gather-lookups", "gather-labels"} <= _computed(asked)
     assert LoggingRetrieval.asked == 1
     n = LoggingRetrieval.asked
     # The same lookups find the same: retrieval's answer is reused, its
     # lookups made again first.
-    same = _asked_again(asked, deck_plan)
+    same = _gathered_again(asked, deck_plan)
     assert "gather-labels" in _reused(same) and LoggingRetrieval.asked == n
     assert ("retrieval", "github_run_list", {"repo": "4thWAIV/jarvis"}) in replayed
     # What they find changed: retrieval is asked again.
     FOUND["now"] = '[{"databaseId": 99881, "conclusion": "success"}]'
-    changed = _asked_again(same, deck_plan)
+    changed = _gathered_again(same, deck_plan)
     assert "gather-labels" in _computed(changed) and LoggingRetrieval.asked == n + 1
+
+
+def _gathered_again(before: dict, plan) -> dict:
+    """The same package run again with its evidence not yet gathered (a
+    run that stopped while gathering): gather reads everything again."""
+    from jarvis import records
+    place = ps.pe.place_of(before)
+    records.update(place.record, lambda d: {**(d or {}), "gathered_at": None},
+                   by=records.JARVIS, change="test: gathered again", summary="test")
+    return _again(before, plan)
+
+
+# ── what runs a model step, and what signs ────────────────────────────────
+
+MODEL_STEPS = {"research", "swarm-outline", "swarm-fill", "swarm-passes", "deck-header",
+               "deck-source:where", "deck-review:where"}
+
+
+def test_a_rerun_of_the_same_package_reuses_everything_unchanged(marked, deck_plan,  # noqa: F811
+                                                                 keygen):
+    first = _run(marked["id"], deck_plan)
+    turns = _turns(deck_plan)
+    done = _again(first, deck_plan)
+    assert _computed(done) == set() and _turns(deck_plan) == turns
+    assert MODEL_STEPS | {"deck-build", "deck", "deliver"} <= _reused(done)
+
+
+def test_a_changed_resolved_model_recomputes_the_model_steps(marked, deck_plan, keygen,  # noqa: F811
+                                                             files_marked, monkeypatch):
+    from jarvis import model_tiers
+    first = _run(marked["id"], deck_plan)
+    before = step_cache.role_tool(ps.AUTHOR, first)["model"]
+    # The same tier, the same engine choice: only the model it resolves to
+    # now differs (a newer model in the brain's list).
+    real = model_tiers.resolve
+    monkeypatch.setattr(model_tiers, "resolve", lambda engine, family, listed: [
+        f"{m}-next" for m in real(engine, family, listed)])
+    assert step_cache.role_tool(ps.AUTHOR, first)["model"] == f"{before}-next"
+    done = _again(first, deck_plan)
+    assert MODEL_STEPS <= _computed(done)
+    assert [c for c in _computed(done) if c.startswith("mark-file")], "the reading roles too"
+    assert "deck-build" in _reused(done), "the build runs no model"
+
+
+def test_a_model_refused_in_the_package_is_passed_over_in_its_keys(marked, deck_plan,  # noqa: F811
+                                                                   keygen, files_marked):
+    first = _run(marked["id"], deck_plan)
+    # Marking's tier has a model above it for the sweep to move to.
+    tool = step_cache.role_tool("marking", first)
+    # A session of the package found the model refused, swept to the next:
+    # the run's step notes it (run_report.refused), and every later pick of
+    # the package, its keys and its sessions alike, passes over it.
+    with run_report.step(first, "test"):
+        run_report.refused(tool["engine"], tool["model"])
+    assert step_cache.refused(first) == {tool["engine"]: [tool["model"]]}
+    swept = step_cache.role_tool("marking", first)["model"]
+    assert swept and swept != tool["model"]
+    assert package_mark.pick_args(first)["refused"] == {tool["engine"]: [tool["model"]]}
+    done = _again(first, deck_plan)
+    # Marking reads every file and the swarm's script: those are made again
+    # on the model the sweep ends on; the author's research is not.
+    assert {"swarm-outline", "swarm-fill", "swarm-passes"} <= _computed(done)
+    assert [c for c in _computed(done) if c.startswith("mark-file")]
+    assert "research" in _reused(done)
+    # Another package has seen no refusal.
+    assert step_cache.refused({**first, "package": "pkg-other"}) == {}
+
+
+def test_a_changed_signing_key_signs_again(marked, deck_plan, keygen, monkeypatch):  # noqa: F811
+    from jarvis import package_deliver
+    first = _run(marked["id"], deck_plan)
+    monkeypatch.setattr(package_deliver, "signer_fingerprint", lambda: "SHA256:made-again")
+    done = _again(first, deck_plan)
+    assert _computed(done) == {"deliver"}, "only the delivery is signed again"
+
+
+def test_the_deck_step_s_record_is_made_again_when_only_the_build_changed(
+        marked, deck_plan, keygen, monkeypatch):  # noqa: F811
+    first = _run(marked["id"], deck_plan)
+    real = pd.pipeline_digest
+    monkeypatch.setattr(pd, "pipeline_digest", lambda: real() + "-changed")
+    done = _again(first, deck_plan)
+    # The review's record carries the build's verdict: rebuilt, it is made
+    # again; the slides' reviews are not.
+    assert {"deck-build", "deck"} <= _computed(done)
+    assert "deck-review:where" in _reused(done)

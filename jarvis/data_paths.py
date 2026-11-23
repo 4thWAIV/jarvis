@@ -647,16 +647,6 @@ def package_dir() -> Path:
     return path
 
 
-def package_cache_dir() -> Path:
-    """The package steps' kept outputs, one folder a step's key
-    (step_cache.py), shared by every package and run so a run reuses what
-    any run made from the same inputs. No content root maps it: what is
-    kept is copied into a run's folder, which is indexed there."""
-    path = data_dir() / "package-cache"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def packages_dir() -> Path:
     """Work packages received from teammates and unpacked to be run here
     (work_packages.py), one folder each."""
