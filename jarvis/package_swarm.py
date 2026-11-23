@@ -1117,7 +1117,8 @@ async def author_writes(swarm: sessions.BrainSwarmSession, work, stage: str, add
     author also names the slides it changes, added to `named`."""
     form = author_form(work)
     if named is not None:
-        form = {**form, "properties": {**form["properties"], "changed": CHANGED}}
+        form = {**form, "properties": {**form["properties"], "changed": CHANGED},
+                "required": [*form.get("required", []), "changed"]}
     for attempt in range(ROUNDS_MAX + 1):
         answer = await swarm.answer(swarm.author, TIMEOUT, add if attempt == 0 else "", form)
         swarm.ask(swarm.author, answer, stage)

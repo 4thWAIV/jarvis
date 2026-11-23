@@ -640,3 +640,38 @@ def test_a_model_found_refused_is_not_held_to(marked, monkeypatch):
         run_report.refused("claude", "old")
     assert ps.marking_pin(marked, kept) == {"engine": "claude", "model": "newer"}
     assert step_cache.refused(marked) == {"claude": ["old"]}
+
+
+def test_a_revision_s_author_form_names_every_property_as_required():
+    """Codex answers to a strict schema only: every property must be
+    required, or the turn is refused (a real revision failed so)."""
+    import asyncio
+    from jarvis import package_swarm as ps
+    seen = {}
+
+    class Swarm:
+        author = "author"
+
+        async def answer(self, who, timeout, add, form):
+            seen["form"] = form
+            return {}
+
+        def ask(self, *a):
+            pass
+
+        def say(self, *a):
+            pass
+
+    class Work:
+        key = "script"
+
+        def take(self, answer):
+            return []
+
+    import unittest.mock as m
+    with m.patch.object(ps, "author_form", lambda work: {"type": "object", "properties": {"a": {"type": "string"}},
+                                                          "required": ["a"], "additionalProperties": False}), \
+         m.patch.object(ps, "forms_changed", lambda *a: None):
+        asyncio.run(ps.author_writes(Swarm(), Work(), "revise", "", named=[]))
+    form = seen["form"]
+    assert set(form["required"]) == set(form["properties"]) == {"a", "changed"}
