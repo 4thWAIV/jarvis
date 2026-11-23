@@ -426,7 +426,7 @@ _LINES = re.compile(r"\b(?:lines?|L)\s*(\d+)(?:\s*(?:-|\u2013|\u2014|to|through)
 _CHARS = re.compile(r"\b(?:characters?|chars?|offsets?)\s*(\d+)\s*"
                     r"(?:-|\u2013|\u2014|to|through)\s*(\d+)", re.I)
 _SECTION = re.compile(r"\bsection\s+(.+)", re.I)
-_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+_HEADING = re.compile(r"(#{1,6})\s+(.*\S)\s*")
 
 
 def _run_in(words: list[str], within: list[str]) -> bool:
@@ -459,11 +459,11 @@ def located(text: str, position: str) -> Optional[str]:
         name = spoken_words.folded_words(found.group(1))
         lines = text.splitlines()
         for n, line in enumerate(lines):
-            heading = _HEADING.match(line)
+            heading = _HEADING.fullmatch(line)
             if heading and _run_in(name, spoken_words.folded_words(heading.group(2))):
                 level = len(heading.group(1))
                 end = next((m for m in range(n + 1, len(lines))
-                            if (h := _HEADING.match(lines[m])) and len(h.group(1)) <= level),
+                            if (h := _HEADING.fullmatch(lines[m])) and len(h.group(1)) <= level),
                            len(lines))
                 return "\n".join(lines[n:end])
     return None
