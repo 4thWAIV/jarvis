@@ -387,7 +387,7 @@ def test_tim_s_words_on_a_decision_slide_are_drawn_on_it():
     assert shown["paragraphs"][0]["runs"][0]["emphasis"] == "his-words"
     assert package_deck.script_problems(script, deck) == []
     deck["decisions"][0]["say"] = "Choose."
-    assert any("Slide choose's narration does not say Tim's words" in p
+    assert any("Slide choose's narration does not say the current user's words" in p
                for p in package_deck.script_problems(script, deck))
 
 

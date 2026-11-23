@@ -381,6 +381,29 @@ class _Walk:
                 if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)]
         return bool(uses) and all(self.consumed(u, fn, seen) for u in uses)
 
+    def _walled_callback_return(self, node, handler) -> bool:
+        owner = self.parents[id(node)]
+        while not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = self.parents[id(owner)]
+        if owner is handler:
+            return False
+        uses = [n for n in ast.walk(handler) if isinstance(n, ast.Name) and n.id == owner.name]
+        for use in uses:
+            call = self.parents[id(use)]
+            if not isinstance(call, ast.Call):
+                return False
+            if call.func is use and self.consumed(call, handler):
+                continue
+            # _knowledge_tool runs its work callback and walls its answer
+            # only when the caller explicitly requests that behavior.
+            if (isinstance(call.func, ast.Name) and call.func.id == "_knowledge_tool"
+                    and call.args[1:2] == [use]
+                    and any(k.arg == "walled" and isinstance(k.value, ast.Constant)
+                            and k.value.value is True for k in call.keywords)):
+                continue
+            return False
+        return bool(uses)
+
     def sites(self, fn, tainted: set, handler: bool) -> list:
         """(lineno, description) for every place a tainted value is printed."""
         logged = self._logged(fn)
@@ -417,7 +440,8 @@ class _Walk:
                         or (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute)
                             and v.func.attr == "format"):
                     continue                    # reported by the rules above
-                if not self.sanitised(v) and self.carries_taint(v, tainted):
+                if (not self.sanitised(v) and self.carries_taint(v, tainted)
+                        and not self._walled_callback_return(node, fn)):
                     out.append((node.lineno, f"return {ast.unparse(v)}"))
         return sorted(set(out))
 
@@ -691,6 +715,23 @@ def test_the_walk_sees_every_shape_of_echo():
     # a helper that takes `args` but is not in the dispatch table returns
     # to its CALLER: its bare return is not a site
     assert found["_helper_with_args"] == [], found["_helper_with_args"]
+
+
+def test_only_walled_callback_returns_are_exempt():
+    source = """
+def tool_search(args):
+    def work():
+        return args.get("query")
+    return OUTPUT
+"""
+    for output in ('_wrap_untrusted("query", work())',
+                   '_knowledge_tool(args, work, "query", "search", walled=True)'):
+        assert _universe_of(source.replace("OUTPUT", output))["tool_search"] == []
+    for output in ('work()', '_knowledge_tool(args, work, "query", "search", walled=False)'):
+        sites = _universe_of(source.replace("OUTPUT", output))["tool_search"]
+        assert any(desc == "return args.get('query')" for _, desc in sites)
+    sites = _universe_of(source.replace("OUTPUT", "args.get('raw')"))["tool_search"]
+    assert any(desc == "return args.get('raw')" for _, desc in sites)
 
 
 # --- the class, statically ---------------------------------------------------

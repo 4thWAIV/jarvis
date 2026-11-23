@@ -207,7 +207,7 @@ def _imports(module: str, path: Path) -> frozenset:
                 base = node.module or ""
             if base:
                 found.add(base)
-                found.update(f"{base}.{alias.name}" for alias in node.names
+                found.update(".".join((base, alias.name)) for alias in node.names
                              if alias.name != "*")
     out = frozenset(m for m in found if m == top or m.startswith(top + "."))
     _IMPORTS[mark] = out

@@ -13669,8 +13669,9 @@ def _look_on(args: dict, searched: asyncio.Task) -> None:
             if unneeded():
                 return
             _spawn(_handle_utterance(
-                f"The knowledge search you told him you were looking for (for {query!r}) has "
-                f"answered. Tell him now what it found, in your own words:\n{said}",
+                "The knowledge search you told him you were looking for has answered. "
+                f"The search query was:\n{_wrap_untrusted('search query', query)}\n"
+                f"Tell him now what it found, in your own words:\n{said}",
                 origin="system"))
         finally:
             _lookups.discard(task)

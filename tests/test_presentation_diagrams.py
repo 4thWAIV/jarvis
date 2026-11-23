@@ -326,7 +326,7 @@ def test_a_word_out_of_its_place_at_a_frame_fails_the_proof():
     crushed["nodes"][0]["box"][3] /= 4
     frame = layout_spec.corners()[0]
     assert any("node ask" in p for p in diagram_layout.frame_problems(crushed, BODY, frame))
-    source = SimpleNamespace(document=SimpleNamespace(slides=[]))
+    source = SimpleNamespace(document=SimpleNamespace(slides=[], decisions=[]))
     assert presentation_proof.prove_diagrams(source) == []
 
 
