@@ -218,14 +218,16 @@ def _slide_ids(doc: dict) -> list[str]:
 
 
 def problems(script, question_ids: list[str], sources: Optional[visuals.Sources] = None,
-             outline: Optional[dict] = None) -> list[str]:
+             outline: Optional[dict] = None, deck: Optional[dict] = None) -> list[str]:
     """Everything in `script` that is not script/1 as `schema` gives it;
     empty when it checks. Its visuals are checked by program too: each
     piece's content, every content slide laid out within its slots'
     capacity, every number (and every chart word naming a source) found in
     its source at its position and every picture a file that is there and
     drawn (when `sources` reads them), and each slide showing the visual
-    its outline slide names (when `outline` is given)."""
+    its outline slide names (when `outline` is given). A slide that asks a
+    decision is sized as the deck will draw its decision slide, with the
+    author's part of it from the deck source (`deck`) once there is one."""
     out: list[str] = []
     _against(script, schema(question_ids), "the script", out)
     if out:
@@ -245,7 +247,7 @@ def problems(script, question_ids: list[str], sources: Optional[visuals.Sources]
         at = f"slide {n + 1} ({slide['id']})"
         out += visuals.value_problems(slide, at, sources)
         out += visuals.picture_problems(slide, at, sources)
-        out += visuals.fit_problems(slide, at)
+        out += visuals.fit_problems(slide, at, script, deck)
     return out + visuals.plan_problems(script, outline)
 
 
@@ -642,15 +644,19 @@ class ScriptFile(StructuredFile):
     the script against it, and keeps the change only when the script
     checks (`form_changes`, the changes the last answer made)."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, deck: Optional[Path] = None, **kwargs):
         super().__init__(*args, **kwargs)
+        # The deck source written from the script (the deck step): its
+        # decisions are sized with the author's part of them.
+        self.deck = Path(deck) if deck else None
         if self.outline is not None:
             self.form = {**self.form, "forms": FORMS}
         self.form_changes: list[dict] = []
 
     def _check(self, doc) -> list[str]:
         outline = read(self.outline) if self.outline else None
-        return problems(doc, self.question_ids, self.sources, outline)
+        deck = read(self.deck) if self.deck else None
+        return problems(doc, self.question_ids, self.sources, outline, deck)
 
     def take(self, answer: dict) -> list[str]:
         self.form_changes = []

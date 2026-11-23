@@ -246,12 +246,14 @@ class Run:
     def outline(self) -> Path:
         return self.folder / OUTLINE
 
-    def script_file(self) -> package_script.ScriptFile:
+    def script_file(self, deck: Optional[Path] = None) -> package_script.ScriptFile:
         """The script in its structured form, checked against the handoff's
         questions, its visuals' numbers against their sources and its
-        slides against the outline's visual plan."""
+        slides against the outline's visual plan; at the deck (`deck`, the
+        deck source), each decision slide with the author's part of it."""
         return package_script.ScriptFile(self.script, question_ids(self.doc),
-                                         sources=self.sources(), outline=self.outline)
+                                         sources=self.sources(), outline=self.outline,
+                                         deck=deck)
 
     def sources(self) -> script_visuals.Sources:
         """Where a value's source path is read by the program: the evidence

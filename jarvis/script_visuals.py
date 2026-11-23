@@ -786,14 +786,18 @@ class Built:
 
     def decision_part(self) -> dict:
         """What JARVIS sets of a decision slide's decision from the script:
-        its id, question and options (each one's name and what it says),
+        its id, question, short name (the slide's title) and options (each
+        one's name and what it says),
         its context (the slide's words), what JARVIS says over it (`say`,
         the slide's narration) and its objects, each in its context area
         (slot `shown`); everything else of the decision (its recommendation
-        and reason, its short name, the answers that need his words, each
-        option's picture and what it opens) is the author's."""
+        and reason, the answers that need his words, each option's picture
+        and what it opens) is the author's. Its short name, its name in the
+        border's Chapters and on the answers slide, is the script slide's
+        title."""
         asked = self.slide["decision"]
         out: dict = {"id": asked["id"], "question": asked["question"],
+                     "short": self.slide["title"],
                      "options": [{"id": o["id"], "name": o["name"], "says": o["says"]}
                                  for o in asked.get("options") or []]}
         if self.context.strip():
@@ -808,6 +812,7 @@ class Built:
     def decision_origins(self) -> None:
         """Each word of the decision part by its origin in the script."""
         self._from(DECISION, ("question",), "decision.question")
+        self._from(DECISION, ("short",), "title")
         for n, o in enumerate(self.slide["decision"].get("options") or []):
             for key in ("name", "says"):
                 self._from(DECISION, ("options", n, key), f"decision.options[{n}].{key}")
@@ -889,23 +894,69 @@ def _fits(built: Built, slide: dict) -> list[str]:
     return [message for _, message in deck_capacity.problems(model)]
 
 
-def decision_fits(built: Built) -> list[str]:
-    """What does not fit on a decision slide built from the script (its
-    question, options, words and objects; deck_capacity.decision_problems),
-    with the shortest recommendation the author can give: the least it
-    takes."""
-    part = built.decision_part()
+# A stand-in for what the author writes on a decision at the deck, used
+# only while there is no deck yet (the swarm): its recommendation the option
+# whose name is longest (the recommended tag rides on that card) and a reason
+# of one line; the options sized both pictured and not, the worse kept.
+STAND_IN_REASON = "."
+PICTURED = "picture"
+
+
+def _stand_in(part: dict, pictured: bool) -> dict:
     options = part["options"]
-    try:
-        model = Decision.model_validate({**part, "recommended": options[0]["id"] if options
-                                         else "", "reason": ".", "text_only": "."})
-        broken = _resolved(model.objects, built.datasets)
-        if broken:
-            return broken
-    except (ValueError, presentation_data.DataProblem) as error:
-        return [str(error).splitlines()[0]]
-    return [message for _, message in deck_capacity.decision_problems(model, 0, [model],
-                                                                          built.id)]
+    longest = max(options, key=lambda o: len(o["name"]))["id"] if options else ""
+    return {**part, "recommended": longest, "reason": STAND_IN_REASON,
+            "options": [{**o, "picture": PICTURED} if pictured else o for o in options],
+            **({} if pictured else {"text_only": STAND_IN_REASON})}
+
+
+def _theirs(deck: Optional[dict], decision_id: str) -> Optional[dict]:
+    return next((d for d in (deck or {}).get("decisions") or [] if isinstance(d, dict)
+                 and d.get("id") == decision_id), None)
+
+
+def _decision_model(built: Built, deck: Optional[dict], pictured: bool) -> Decision:
+    """A decision slide's decision as the deck will draw it: the author's
+    (its recommendation and reason, its options' pictures, what each opens)
+    with JARVIS's part from the script put on it, when the deck has it;
+    else the stand-in, its options pictured or not."""
+    part = built.decision_part()
+    theirs = _theirs(deck, part["id"])
+    if theirs is not None:
+        try:
+            return Decision.model_validate(merged_decision(theirs, built))
+        except ValueError:
+            pass
+    return Decision.model_validate(_stand_in(part, pictured))
+
+
+def decision_fits(built: Built, script: Optional[dict] = None,
+                  deck: Optional[dict] = None) -> list[str]:
+    """What does not fit on a decision slide built from the script, sized
+    as the deck will draw it (deck_capacity.decision_problems): its
+    question, short name, options, words and objects; its lead-in, decision
+    k of n among the script's decisions; the author's recommendation and
+    reason and its options' pictures from the deck (`deck`, its source) once
+    there is one, else a recommendation on the longest option with a reason
+    of one line, its options sized pictured and not and the worse kept."""
+    asked = [b for b in _built(script) if b.decision] if script else []
+    if built.id not in {b.id for b in asked}:
+        asked = [built]
+    index = [b.id for b in asked].index(built.id)
+    out: Optional[list[str]] = None
+    for pictured in ((False,) if _theirs(deck, built.decision_part()["id"]) else (False, True)):
+        try:
+            models = [_decision_model(b, deck, pictured) for b in asked]
+            broken = _resolved(models[index].objects, built.datasets)
+            if broken:
+                return broken
+        except (ValueError, presentation_data.DataProblem) as error:
+            return [str(error).splitlines()[0]]
+        found = [message for _, message in deck_capacity.decision_problems(
+            models[index], index, models, built.id)]
+        if out is None or len(found) > len(out):
+            out = found
+    return out or []
 
 
 def arrange(built: Built) -> tuple[Optional[tuple[str, dict]], list[str]]:
@@ -925,15 +976,18 @@ def arrange(built: Built) -> tuple[Optional[tuple[str, dict]], list[str]]:
     return None, best
 
 
-def fit_problems(slide: dict, at: str) -> list[str]:
+def fit_problems(slide: dict, at: str, script: Optional[dict] = None,
+                 deck: Optional[dict] = None) -> list[str]:
     """A slide of the script laid out by program (deck_capacity at the
     smallest frame): a content slide refused when no layout holds it; a
     slide that asks a decision when its decision slide (its question,
     options and words, and its objects in its context area) is over what it
-    holds."""
+    holds as the deck will draw it (`decision_fits`: among the decisions of
+    `script`, with the author's part of it from `deck` once there is one)."""
     built = Built(slide)
     if built.decision:
-        return [f"{at} (its decision slide) does not fit: {p}" for p in decision_fits(built)]
+        return [f"{at} (its decision slide) does not fit: {p}"
+                for p in decision_fits(built, script, deck)]
     if not built.objects:
         return [f"{at} shows nothing on screen: give it its visual."]
     _, problems = arrange(built)
@@ -972,14 +1026,16 @@ def merged_decision(theirs: dict, built: Built) -> dict:
     """The author's decision with what JARVIS sets from the script put on
     it (`Built.decision_part`): the question, the options' names and words
     in the script's order (each option's picture and what it opens kept by
-    its id), the context, the say and the objects; the decision's own
-    picture dropped (what the slide shows is the script's, its objects)."""
+    its id), its short name (the script slide's title), the context, the
+    say and the objects; the decision's own picture dropped (what the slide
+    shows is the script's, its objects)."""
     part = built.decision_part()
     theirs_options = {o.get("id"): o for o in theirs.get("options") or [] if isinstance(o, dict)}
     out = {k: v for k, v in theirs.items()
-           if k not in ("question", "context", "say", "objects", "picture", "options")}
+           if k not in ("question", "short", "context", "say", "objects", "picture", "options")}
     out.setdefault("id", part["id"])
     out["question"] = part["question"]
+    out["short"] = part["short"]
     out["options"] = [{**o, **{k: v for k, v in (theirs_options.get(o["id"]) or {}).items()
                                if k not in ("id", "name", "says")}}
                       for o in part["options"]]
@@ -1162,7 +1218,8 @@ SCRIPT_ITEM = ("that is a change of the script slide itself: an owner raises it 
 
 def _decision_view(decision: dict) -> dict:
     """What JARVIS sets of a decision from the script, as the source has it."""
-    return {"question": decision.get("question"), "context": decision.get("context"),
+    return {"question": decision.get("question"), "short": decision.get("short"),
+            "context": decision.get("context"),
             "say": decision.get("say"), "objects": decision.get("objects") or [],
             "picture": decision.get("picture"),
             "options": [{k: o.get(k) for k in ("id", "name", "says")}
@@ -1190,8 +1247,9 @@ def unmatched(script: dict, source: dict) -> list[str]:
             for key in want:
                 if want[key] != have[key]:
                     out.append(f"Decision slide {built.id}'s {key} is not the script's: JARVIS "
-                               f"builds a decision's question, options, words, say and what it "
-                               f"shows from its script slide; the deck only arranges.")
+                               f"builds a decision's question, short name (the slide's title), "
+                               f"options, words, say and what it shows from its script slide; "
+                               f"the deck only arranges.")
         else:
             if slide.get("type") != "content":
                 continue
@@ -1275,8 +1333,8 @@ def script_edits(script: dict, edited: dict) -> tuple[list[dict], list[str]]:
     field, its offsets within that field's words, its old and new text; why
     a change cannot be one). Both empty: the edit changed only what the
     deck arranges (a layout, a slot, the narration's cues, the header, a
-    decision's recommendation, reason, short name, the answers that need
-    his words, its options' pictures). A change is compared with the deck
+    decision's recommendation, reason, the answers that need his words,
+    its options' pictures). A change is compared with the deck
     as JARVIS builds it from the script with the author's arrangement kept
     (`apply`), and each built word changed is put back where it came from
     (`Built.origins`); a part added or removed, or anything else JARVIS
@@ -1364,7 +1422,7 @@ def script_edits(script: dict, edited: dict) -> tuple[list[dict], list[str]]:
                     for key in ("name", "says"):
                         if a[key] != b[key]:
                             change(built, DECISION, ("options", n, key), a[key], b[key])
-            for key in ("question", "say", "context"):
+            for key in ("question", "short", "say", "context"):
                 if mine[key] != yours[key]:
                     if isinstance(yours[key], str) and isinstance(mine[key], str):
                         change(built, DECISION, (key,), mine[key], yours[key])

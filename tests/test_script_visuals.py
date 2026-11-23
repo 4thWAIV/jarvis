@@ -421,6 +421,71 @@ def test_an_edit_of_a_decision_s_words_is_an_edit_of_its_script_slide():
     assert sv.SCRIPT_ITEM in sv.script_edits(script, more)[1][0]
 
 
+def test_a_decision_s_short_name_is_its_script_slide_s_title():
+    # Its name in the border's Chapters and on the answers slide comes from
+    # the script by program, never the author.
+    script = a_script()
+    script["slides"].append(a_decision_slide(
+        {"kind": "text", "text": "The office is cheapest.", "source": "", "position": "",
+         "path": "", "rows": []}))
+    part = sv.built_slides(script)["decisions"][0]
+    assert part["short"] == "Where should Friday's lunch be?"
+    theirs = _with_decision(sv.built_slides(script))
+    theirs["decisions"][0]["short"] = "Lunch"
+    deck = sv.apply(theirs, script)
+    assert deck["decisions"][0]["short"] == "Where should Friday's lunch be?"
+    from jarvis import package_deck
+    assert package_deck.script_problems(script, deck) == []
+    renamed = copy.deepcopy(deck)
+    renamed["decisions"][0]["short"] = "Lunch"
+    assert any("Decision slide choose's short is not the script's" in p
+               for p in sv.unmatched(script, renamed))
+    # An owner's edit of it is the same edit of the script slide's title.
+    titled = copy.deepcopy(deck)
+    titled["decisions"][0]["short"] = "Where should lunch be?"
+    [edit], why = sv.script_edits(script, titled)
+    assert not why and edit["field"] == "title" and edit["new"] == "Where should lunch be?"
+
+
+def test_the_script_sizes_a_decision_slide_as_the_deck_will_draw_it(tmp_path):
+    # Its lead-in is decision k of n among the script's decisions; before
+    # the deck its options are sized pictured and not, the worse kept; at
+    # the deck with the author's own recommendation, reason and pictures.
+    script = a_script()
+    first = a_decision_slide({"kind": "text", "text": "Two places were asked.", "source": "",
+                              "position": "", "path": "", "rows": []})
+    second = copy.deepcopy(first)
+    second["id"] = "choose-day"
+    second["decision"] = {"id": "day", "question": "Which day?", "options": [
+        {"id": "friday", "name": "Friday", "says": "As now."},
+        {"id": "thursday", "name": "Thursday", "says": "A day earlier."}]}
+    script["slides"] += [first, second]
+    sized: list = []
+    real = sv.deck_capacity.decision_problems
+
+    def seen(model, index, decisions, slide_id):
+        sized.append((slide_id, index, len(decisions), model.reason,
+                      any(o.picture for o in model.options)))
+        return real(model, index, decisions, slide_id)
+    import pytest
+    with pytest.MonkeyPatch.context() as mp_:
+        mp_.setattr(sv.deck_capacity, "decision_problems", seen)
+        assert script_.problems(script, ["lunch"]) == []
+        assert ("choose-day", 1, 2, sv.STAND_IN_REASON, True) in sized
+        assert ("choose-day", 1, 2, sv.STAND_IN_REASON, False) in sized
+        sized.clear()
+        deck = {"decisions": [{"id": "where", "recommended": "office",
+                               "reason": "It costs least of the two.", "text_only": "Rooms.",
+                               "options": [{"id": "office"}, {"id": "bistro"}]}]}
+        assert script_.problems(script, ["lunch"], deck=deck) == []
+        assert ("choose", 0, 2, "It costs least of the two.", False) in sized
+        assert not [x for x in sized if x[0] == "choose" and x[4]]
+    # A reason too long for the slide is refused at the deck's script check.
+    deck["decisions"][0]["reason"] = "Where we eat on Friday matters to the whole team. " * 40
+    assert any("slide 3 (choose) (its decision slide) does not fit" in p and "`reason`" in p
+               for p in script_.problems(script, ["lunch"], deck=deck))
+
+
 # ── a deck owner's edit of a built word is an edit of the script ─────────
 
 def test_an_edit_of_a_built_word_is_the_same_edit_of_the_script():

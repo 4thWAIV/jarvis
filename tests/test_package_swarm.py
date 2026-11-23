@@ -140,7 +140,7 @@ class Plan:
                     "signoff": [{"concern": c, "state": state,
                                  "reason": f"{name}: {c} is fine" if state == "resolved"
                                  else "", "left": left} for c in concerns]}
-        assert set(props) <= {"message", "slides", "forms"}
+        assert set(props) <= {"message", "slides", "forms", "outline"}
         if "Write your research in" in text:
             assert name == "author"
             (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")
@@ -189,9 +189,11 @@ def script_of(words: str, source: str, slide: str = "opening") -> dict:
 
 class Marking:
     calls: list[tuple[str, list]] = []
+    slides: list[list[str]] = []        # each call's slides, in order
 
     async def mark_slides(self, units, context, labels, knowledge, timeout):
         Marking.calls.append((context, knowledge))
+        Marking.slides.append(list(dict.fromkeys(u.slide for u in units)))
         return [{"id": f"{u.slide}/{u.field}/{s.id}", "segment": s.text, "kind": s.kind,
                  "slide": u.slide, "field": u.field,
                  "position": {"start": s.start, "end": s.end}, "within": s.within,

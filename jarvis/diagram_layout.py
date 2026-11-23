@@ -329,7 +329,7 @@ def _flow(obj, m: _M, problems: list, held) -> dict | None:
         if w < m.w_min:
             most = int((m.W - 2 * margin - 2 * gpad + rank_gap) // (m.w_min + rank_gap))
             problems.append(f"the flow has {R} ranks in a row; with its links' words and routes its "
-                            f"slot holds {most} at most: split it across slides")
+                            f"slot holds {most} at most: {deck_capacity.split_words()}")
             return None
         h = _height(nodes, w, m, problems)
         ms, cs = w, h
@@ -347,7 +347,7 @@ def _flow(obj, m: _M, problems: list, held) -> dict | None:
             problems.append(f"the flow has {slots} nodes side by side"
                             + (f" across its {L} lanes" if grouped else "")
                             + f"; with its lanes and routes its slot holds {max(1, most)} at most: "
-                              f"split it across slides")
+                              f"{deck_capacity.split_words()}")
             return None
         h = _height(nodes, w, m, problems)
         ms, cs = h, w
@@ -357,11 +357,11 @@ def _flow(obj, m: _M, problems: list, held) -> dict | None:
     MAIN, CROSS = (m.W, m.H) if across else (m.H, m.W)
     if main_total > MAIN + 0.5:
         problems.append(f"the flow has {R} ranks, {main_total:.0f} px of the {MAIN:.0f} its slot "
-                        f"holds: split it across slides")
+                        f"holds: {deck_capacity.split_words()}")
     if cross_total > CROSS + 0.5:
         problems.append(f"the flow's nodes side by side take {cross_total:.0f} px of the "
                         f"{CROSS:.0f} its slot holds ({max(lane_slots)} in a rank"
-                        + (f", {L} lanes" if grouped else "") + "): split it across slides")
+                        + (f", {L} lanes" if grouped else "") + f"): {deck_capacity.split_words()}")
     if problems:
         return None
     main0 = (MAIN - main_total) / 2
@@ -500,13 +500,13 @@ def _hierarchy(obj, m: _M, problems: list, held) -> dict | None:
     w = _width(nodes, (m.W - (len(leaves) - 1) * sg) / len(leaves), m)
     if w < m.w_min:
         problems.append(f"the hierarchy has {len(leaves)} nodes at its widest, its slot holds "
-                        f"{held()['leaves']} side by side at most: split it across slides")
+                        f"{held()['leaves']} side by side at most: {deck_capacity.split_words()}")
         return None
     h = _height(nodes, w, m, problems)
     total_h = D * h + (D - 1) * lg
     if total_h > m.H + 0.5:
         problems.append(f"the hierarchy is {D} levels deep, {total_h:.0f} px of the {m.H:.0f} its "
-                        f"slot holds ({held()['levels']} levels at most): split it across slides")
+                        f"slot holds ({held()['levels']} levels at most): {deck_capacity.split_words()}")
     if problems:
         return None
     total_w = len(leaves) * w + (len(leaves) - 1) * sg
@@ -600,7 +600,7 @@ def _cycle(obj, m: _M, problems: list, held) -> dict | None:
         w -= step
     if found is None:
         problems.append(f"the cycle has {n} nodes, its slot holds {held()['nodes']} round the ring at "
-                        f"most: split it across slides or shorten their words")
+                        f"most: {deck_capacity.split_words()} or shorten their words")
         return None
     w, h, (boxes, arcs, (cx, cy)), quiet = found
     problems.extend(quiet)
@@ -671,7 +671,7 @@ def _timeline(obj, m: _M, problems: list, held) -> dict | None:
             best = alternate if alternate["w"] >= m.w_min else single
             if best["w"] < m.w_min - 1e-6:
                 problems.append(f"the timeline has {n} nodes, its slot holds {held()['nodes']} along "
-                                f"its axis at most: split it across slides")
+                                f"its axis at most: {deck_capacity.split_words()}")
             elif best["quiet"]:
                 problems.extend(best["quiet"])
             elif best["wl"] > when_max:
@@ -679,7 +679,7 @@ def _timeline(obj, m: _M, problems: list, held) -> dict | None:
                                 f"at most {when_max}: shorten it")
             else:
                 problems.append(f"the timeline takes {best['total']:.0f} px of the {m.H:.0f} its "
-                                f"slot holds: split it across slides or shorten its words")
+                                f"slot holds: {deck_capacity.split_words()} or shorten its words")
             return None
         w, h, when_h, stack = choice["w"], choice["h"], choice["when_h"], choice["stack"]
         s = (m.W - w) / (n - 1)
@@ -735,7 +735,7 @@ def _timeline(obj, m: _M, problems: list, held) -> dict | None:
         s = (m.H - h) / (n - 1)
         if s < h + gap - 1e-6:
             problems.append(f"the timeline has {n} nodes, its slot holds {held()['nodes']} along its "
-                            f"axis at most: split it across slides")
+                            f"axis at most: {deck_capacity.split_words()}")
         if problems:
             return None
         boxes, whens, markers = [], [], []

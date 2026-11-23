@@ -67,11 +67,13 @@ class DeckPlan(Plan):
         self.decks: list[dict] = [deck_with_his_words()]
 
         self.deck_edits: dict[str, list[dict]] = {}
-        # Each deck turn's script slides the author changes (`slides`).
+        # Each deck turn's script slides the author changes (`slides`), and
+        # the outline slides of new ones (`outline`).
         self.script_slides: list[list[dict]] = []
+        self.outlines: list[list[dict]] = []
 
     def answer(self, name, text, form):
-        if name == "author" and set(form["properties"]) == {"message", "slides", "forms"} and (
+        if name == "author" and set(form["properties"]) == {"message", "slides", "forms", "outline"} and (
                 "Now write the deck" in text or "Revise the deck" in text):
             self.sent.setdefault(name, []).append(text)
             deck = self.decks.pop(0) if len(self.decks) > 1 else self.decks[0]
@@ -79,7 +81,9 @@ class DeckPlan(Plan):
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_text(yaml.safe_dump(deck, sort_keys=False))
             slides = self.script_slides.pop(0) if self.script_slides else []
-            return {"message": "author writes the deck", "slides": slides, "forms": []}
+            outline = self.outlines.pop(0) if slides and self.outlines else []
+            return {"message": "author writes the deck", "slides": slides, "forms": [],
+                    "outline": outline}
         answer = super().answer(name, text, form)
         if "signoff" in form["properties"] and "deck-says:" + name in str(form):
             answer["edits"] = self.deck_edits.pop(name, [])
@@ -97,6 +101,7 @@ def deck_plan(marked, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ps, "EMBED", lambda texts: [list(v) for v in
                                                     embedder.embed(texts, "query")])
     Marking.calls = []
+    Marking.slides = []
     return plan
 
 
@@ -264,39 +269,143 @@ def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
         "Script slide where asks no decision: its deck slide is a content slide."]
 
 
-def test_a_slide_that_needs_another_step_goes_back_to_the_script_for_that_slide_only(
-        marked, deck_plan):
-    # Never a dead end at the deck: what only a change of a script slide
-    # gives (another step, a different form) the author gives as that slide
-    # of the script, whole; JARVIS checks it, puts it in the script and
-    # builds the slide again from it.
-    from jarvis import package_script, step_cache
-    passed = deck_script()
+def _steps_slide(passed: dict) -> dict:
     changed = copy.deepcopy(passed["slides"][1])
     changed["on_screen"] = [{"kind": "steps", "steps": [
         {"title": "Order by Thursday noon", "says": ""},
         {"title": "Food is brought in", "says": "The team budget pays."}]}]
+    return changed
+
+
+def _signed_at(review: dict, stage: str) -> set[tuple[str, str]]:
+    return {(s["concern"], s["owner"]) for s in review["signoffs"] if s["stage"] == stage}
+
+
+def test_a_slide_that_needs_another_step_goes_back_to_the_script_stage_for_that_slide_only(
+        marked, deck_plan):
+    # Never a dead end at the deck: what only a change of a script slide
+    # gives (another step, a different form) the author gives as that slide
+    # of the script, whole; JARVIS checks it and puts it in the script, and
+    # the slide goes back through the script stage for that slide only:
+    # marked against the labels, every owner's concern on the script signed
+    # off again for it; then its deck slide is written again and reviewed.
+    from jarvis import package_script, step_cache
+    passed = deck_script()
+    changed = _steps_slide(passed)
     deck_plan.script_slides = [[{**changed, "id": "no-such-slide"}], [changed]]
     doc = _passed(marked)
+    Marking.slides = []
     assert pd.deck(doc) is None
     folder = Path(doc["folder"])
     script = package_script.read(folder / package_script.FILE)
     assert script["slides"][1] == changed and script["slides"][0] == passed["slides"][0]
     source = yaml.safe_load((folder / pd.FOLDER / pd.SOURCE).read_text())
     assert [o["type"] for o in source["slides"][1]["objects"]] == ["steps"]
-    said = _said_on_the_deck(json.loads((folder / pd.REVIEW).read_text()))
-    assert any("the script has no slide 'no-such-slide'" in t for t in said)
-    assert any("JARVIS put script slide(s) what-changed in the script" in t for t in said)
+    review = json.loads((folder / pd.REVIEW).read_text())
+    said = _said_on_the_deck(review)
+    assert any("'no-such-slide' is a new slide, so it comes right after the slide" in t
+               for t in said)
+    assert any("JARVIS put script slide(s) what-changed in the script as you gave them. They "
+               "go back through the script stage" in t for t in said)
+    assert any("The script stage passed script slide(s) what-changed" in t for t in said)
+    # Marked for that slide alone.
+    assert Marking.slides == [["what-changed"]]
+    kept = json.loads((folder / ps.STATE).read_text())
+    assert {m["slide"] for m in kept["marked"] if m["slide"] == "what-changed"} == \
+        {"what-changed"}
+    # Every owner's concern on the script signed off again, in the script
+    # stage, for that slide only.
+    assert _signed_at(review, "deck-script-pass-1") == {
+        (c.id, c.owner) for c in ps.concerns() if c.id in ps.SCRIPT_CONCERNS}
+    told = [t for t in deck_plan.sent["tims_reader"] if "script stage for those slides" in t]
+    assert told and "Script slide(s) what-changed changed at the deck" in told[0]
+    # Then its deck slide written again, and the deck reviewed with it.
+    assert any("The script stage passed slide(s) what-changed. Revise the deck" in t
+               for t in deck_plan.sent["author"])
+    assert ("tims_reader" in {s["owner"] for s in review["signoffs"]
+                              if s["stage"] == "deck-pass-1"})
     assert pj.get(doc["id"])["deck"]["result"] == "passed"
-    # The slide as changed is kept, keyed by the slide the swarm passed, so a
-    # later run takes it back rather than ask again.
-    kept = [json.loads(p.read_text()) for p in
-            (step_cache.root(doc) / pd.SCRIPT_CHANGE).glob(f"*/*/{step_cache.ENTRY}")]
-    assert [(e["name"], e["value"]["slide"]) for e in kept] == [("what-changed", changed)]
+    # The slide as changed is kept, with its marks, keyed by the slide the
+    # swarm passed, so a later run takes it back rather than ask again.
+    entries = [json.loads(p.read_text()) for p in
+               (step_cache.root(doc) / pd.SCRIPT_CHANGE).glob(f"*/*/{step_cache.ENTRY}")]
+    assert [(e["name"], e["value"]["slides"]) for e in entries] == [("what-changed", [changed])]
+    assert entries[0]["value"]["marks"] and {m["slide"] for m in entries[0]["value"]["marks"]} \
+        == {"what-changed"}
     run = ps._run(pj.get(doc["id"]), pd.DECK)
     package_script.write(run.script, passed)
-    assert pd.restore_script_changes(run, passed, ps._kept(run)) == ["what-changed"]
+    state = ps._kept(run)
+    state["marked"] = [m for m in state["marked"] if m["slide"] != "what-changed"]
+    assert pd.restore_script_changes(run, passed, state) == ["what-changed"]
     assert package_script.read(run.script)["slides"][1] == changed
+    assert {m["slide"] for m in state["marked"]} >= {"what-changed"}
+
+
+def test_a_slide_that_needs_splitting_goes_back_to_the_script_stage_which_adds_it(
+        marked, deck_plan):
+    # A slide that needs splitting is never refused at the deck as a dead
+    # end: the author gives the slide and the new one after it, with the new
+    # one's outline slide; the outline gains it and the owners sign it off,
+    # the script stage marks and signs both, and the deck gets the new slide.
+    from jarvis import package_script, step_cache
+    passed = deck_script()
+    first = _steps_slide(passed)
+    second = {**copy.deepcopy(passed["slides"][1]), "id": "what-changed-more",
+              "title": "Who pays"}
+    line = {"id": "what-changed-more", "title": "Who pays", "point": "The budget pays.",
+            "answers": "merge-171", "background": True, "evidence": ["files/situation.md"],
+            "visual": "text", "why": "One sentence."}
+    deck_plan.script_slides = [[first, second]]
+    deck_plan.outlines = [[line]]
+    split = deck_with_his_words()
+    split["slides"].insert(2, {**copy.deepcopy(split["slides"][1]), "id": "what-changed-more",
+                               "narration": [{"id": "more-cue", "say": "Who pays.",
+                                              "focus": []}]})
+    deck_plan.decks = [deck_with_his_words(), split]
+    doc = _passed(marked)
+    Marking.slides = []
+    assert pd.deck(doc) is None
+    folder = Path(doc["folder"])
+    script = package_script.read(folder / package_script.FILE)
+    assert package_script.slide_ids(script) == ["opening", "what-changed", "what-changed-more",
+                                                "where"]
+    outline = package_script.read(folder / package_script.OUTLINE_FILE)
+    assert line in outline["slides"]
+    review = json.loads((folder / pd.REVIEW).read_text())
+    assert _signed_at(review, "deck-script-outline") == {
+        (c.id, c.owner) for c in ps.concerns() if c.id in ps.OUTLINE_CONCERNS}
+    assert Marking.slides == [["what-changed", "what-changed-more"]]
+    source = yaml.safe_load((folder / pd.FOLDER / pd.SOURCE).read_text())
+    assert [s["id"] for s in source["slides"]] == package_script.slide_ids(script)
+    assert pj.get(doc["id"])["deck"]["result"] == "passed"
+    [entry] = [json.loads(p.read_text()) for p in
+               (step_cache.root(doc) / pd.SCRIPT_CHANGE).glob(f"*/*/{step_cache.ENTRY}")]
+    assert [s["id"] for s in entry["value"]["slides"]] == ["what-changed", "what-changed-more"]
+    assert entry["value"]["outline"] == [line]
+    # A new slide given without its outline slide does not check.
+    run = ps._run(pj.get(doc["id"]), pd.DECK)
+    assert pd.script_change(run, {"slides": [first, {**second, "id": "another"}]})[2] == [
+        "outline: the new slide 'another' needs its outline slide, with the same id."]
+
+
+def test_a_slide_changed_in_a_close_of_the_deck_review_is_reviewed_again_in_full(
+        marked, deck_plan):
+    # In a close, a script slide the author gives goes through the script
+    # stage, its deck slide is written again, and every owner and the
+    # editor review it in full for every deck concern, not only the owners
+    # who raised items.
+    from tests.test_package_swarm import LEFT
+    changed = _steps_slide(deck_script())
+    doc = _passed(marked)
+    deck_plan.signoffs = {"editor": [("not_yet", LEFT)]}
+    deck_plan.script_slides = [[], [changed]]
+    assert pd.deck(doc) is None
+    review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
+    assert _signed_at(review, "deck-script-pass-1")
+    assert _signed_at(review, "deck-slides-1") == {(c.id, c.owner) for c in pd.DECK_CONCERNS}
+    full = [t for t in deck_plan.sent["context_owner"] if "Review those slides in full" in t]
+    assert full and "Slide(s) what-changed went back through the script stage" in full[0]
+    assert pj.get(doc["id"])["deck"]["result"] == "passed"
 
 
 def test_a_deck_not_signed_off_in_two_passes_sends_the_sender_what_is_left(marked,
@@ -375,6 +484,11 @@ def test_a_slot_over_its_capacity_goes_back_to_the_author_never_the_sender(marke
     assert said[0].startswith("The deck did not build.")
     assert "The words slot of slide what-changed (two-pictures) is over its capacity" in said[0]
     assert "lines of body text where it holds" in said[0] and "%) over" in said[0]
+    # It offers only what can be done at the deck; a split goes back to the
+    # script stage.
+    from jarvis import deck_capacity
+    assert "At the deck: " + deck_capacity.AT_DECK_WAYS in said[0]
+    assert "split it across slides" not in said[0] and "Split the slide in two" not in said[0]
     assert pj.get(doc["id"])["deck"]["result"] == "passed"
     assert pj.get(doc["id"])["rounds"] == [], "nothing goes to the sender"
 

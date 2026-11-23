@@ -634,6 +634,20 @@ EXEMPT = {
         "and names a slide id the script does not have, quoted; said into the package swarm's "
         "own conversation as the program's turn to the author, never a brain header, never "
         "said. Driven by tests/test_package_deck.py"),
+    "package_deck.given": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.go": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.mark": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.outline_signoff": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.revise": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.through_script": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
+    "package_deck.written": (
+        "the deck step's script stage (package_deck.ScriptStage, deck.go's nested turns): it reads the run's own script slide ids and the author's and owners' structured answers to say the program's fixed words, those ids and the stage's slides into the package swarm's own conversation between role sessions; never a brain header, never said. Driven by tests/test_package_deck.py"),
     "presentation._object_targets": (
         "it lists a presentation/1 object's targets with their accessible names, the author's "
         "words as data in target-index.json and the deck's model; it prints nothing to the "

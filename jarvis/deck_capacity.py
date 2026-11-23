@@ -35,6 +35,8 @@ floor) stays as rendering: within capacity, it always finds a size.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import math
 import re
 from dataclasses import dataclass
@@ -49,6 +51,41 @@ SHOW_IT = ("show what can be shown: a sequence as numbered steps, numbers as a c
            "dataset or as key figures, a comparison as a comparison or a table, a warning or a "
            "finding as a callout, a process, a loop, a structure or a schedule as a diagram (a "
            "flow, a cycle, a hierarchy or a timeline)")
+
+
+# At the deck step (package_deck), a deck slide is built from its script
+# slide by program: what the author can do there is say less or show it in
+# another form (that slide of the script, whole, in `slides`; a form in
+# `forms`) or give it a larger slot; a slide that needs splitting goes back
+# to the script stage, which may add a slide with its outline slide. A
+# refusal there offers only that (`at_the_deck`).
+_AT_DECK = contextvars.ContextVar("deck_capacity_at_deck", default=False)
+SPLIT = "split it across slides"
+AT_DECK_WAYS = ("say less in it or show it in another form (that slide of the script, whole, "
+                "in `slides`; a changed visual form in `forms` with why), or give it a larger "
+                "slot (another layout or slot); a slide that needs splitting goes back to the "
+                "script stage: give each new slide in `slides` after the one it comes from, "
+                "with its outline slide in `outline`")
+
+
+@contextlib.contextmanager
+def at_the_deck():
+    """Refusals worded for the deck step (`AT_DECK_WAYS`) while it holds."""
+    token = _AT_DECK.set(True)
+    try:
+        yield
+    finally:
+        _AT_DECK.reset(token)
+
+
+def at_deck() -> bool:
+    return _AT_DECK.get()
+
+
+def split_words() -> str:
+    """What a refusal offers where a slot holds too much of something: to
+    split it across slides, or at the deck what can be done there."""
+    return AT_DECK_WAYS if at_deck() else SPLIT
 
 
 def frame() -> tuple[float, float]:
@@ -276,6 +313,8 @@ def _over(needed: float, held: float) -> str:
 
 
 def _advice(obj) -> str:
+    if at_deck():
+        return f"At the deck: {AT_DECK_WAYS}."
     if isinstance(obj, TextObject):
         return f"Split the slide in two, or {SHOW_IT}."
     if isinstance(obj, TableObject):
@@ -296,7 +335,9 @@ def problems(slide: ContentSlide) -> list[tuple[str, str]]:
     title_lines = lines_of(slide.title, title_w, floor_px("heading"))
     if title_lines * line_px("heading") > title_h + 0.5:
         out.append((slide.id, f"The title of slide {slide.id} takes {title_lines} lines; its place "
-                              f"holds {int(title_h // line_px('heading'))} at {where}. Shorten it."))
+                              f"holds {int(title_h // line_px('heading'))} at {where}. Shorten it"
+                              + (" (its script slide's title: that slide of the script, whole, "
+                                 "in `slides`)." if at_deck() else ".")))
     boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
     for obj in slide.objects:
         need = needs(obj, boxes[obj.slot])
@@ -319,7 +360,9 @@ def problems(slide: ContentSlide) -> list[tuple[str, str]]:
         if chars > one:
             out.append((slide.id, f"Slide {slide.id} is only prose, {chars} characters; one "
                                   f"paragraph here holds about {one}. Do not put long paragraphs "
-                                  f"on a slide: {SHOW_IT}; or split it."))
+                                  f"on a slide: {SHOW_IT}"
+                                  + (f". At the deck: {AT_DECK_WAYS}." if at_deck()
+                                     else "; or split it.")))
     return out
 
 
@@ -733,7 +776,12 @@ def decision_problems(decision, index: int, decisions, slide_id: str) -> list[tu
                           f"holds at {where}: it needs {_over(needed, deck.height)}. Its "
                           f"longest parts: {named}. Say less in {top.said} (`{top.field}`, about "
                           f"{less} characters less), give fewer options, or put the background "
-                          f"on a content slide before it.")]
+                          f"on a content slide before it."
+                          + (" At the deck, the question, the options and the words are its "
+                             "script slide's (that slide of the script, whole, in `slides`), "
+                             "the recommendation and its reason yours; a content slide before "
+                             "it goes back to the script stage (the new slide in `slides`, "
+                             "with its outline slide in `outline`)." if at_deck() else ""))]
 
 
 def answers_problems(decisions) -> list[tuple[str, str]]:

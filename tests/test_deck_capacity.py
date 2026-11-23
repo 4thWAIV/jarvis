@@ -89,6 +89,30 @@ def test_text_over_its_slot_is_refused_naming_the_slot_and_how_much_over(tmp_pat
     assert "Slide what-changed is only prose" in found["what-changed"].message
 
 
+def test_at_the_deck_a_refusal_offers_only_what_can_be_done_there(tmp_path):
+    # A deck slide is built from its script slide: there the author can say
+    # less or show it in another form (the script slide, in `slides` and
+    # `forms`) or give it a larger slot; a split goes back to the script
+    # stage, which adds the slide with its outline slide. Never "split it
+    # across slides" as if the deck could.
+    deck = _example_with([_text(_paragraphs("long", [SENTENCE * 8] * 6))])
+    with deck_capacity.at_the_deck():
+        with pytest.raises(DeckCompileError) as caught:
+            read_source(_write(tmp_path, deck))
+    found = {d.member: d.message for d in caught.value.diagnostics}
+    for message in found.values():
+        assert "At the deck: " + deck_capacity.AT_DECK_WAYS in message
+        assert "Split the slide in two" not in message and "or split it." not in message
+    assert "`slides`" in deck_capacity.AT_DECK_WAYS and "`forms`" in deck_capacity.AT_DECK_WAYS \
+        and "larger slot" in deck_capacity.AT_DECK_WAYS \
+        and "goes back to the script stage" in deck_capacity.AT_DECK_WAYS \
+        and "`outline`" in deck_capacity.AT_DECK_WAYS
+    assert deck_capacity.split_words() == deck_capacity.SPLIT
+    with deck_capacity.at_the_deck():
+        assert deck_capacity.split_words() == deck_capacity.AT_DECK_WAYS
+    assert not deck_capacity.at_deck()
+
+
 def test_a_slide_of_only_prose_over_one_paragraph_goes_back_even_within_its_slot(tmp_path):
     # Four paragraphs of three sentences: within the body slot, past one paragraph.
     deck = _example_with([_text(_paragraphs("dense", [SENTENCE * 3] * 4))])

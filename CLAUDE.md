@@ -1677,8 +1677,9 @@ deck's files and the presentation assets, and the build language,
 `make_package.built_language`), `deck-review` (one a slide: its part, its
 layout data, script slide,
 `review_tool` and the findings answered on it), `deck-script` (one a
-script slide the deck step changed, the slide as changed and its outline
-slide, keyed by the slide the swarm passed, the writing and review tools,
+script slide the deck step changed or split, the slides it became after
+the script stage, their outline slides and their marks, keyed by the slide
+the swarm passed, the writing and review tools,
 the findings and the revisions, `package_deck.script_change_unit`), `deck` (the slides'
 review keys, the source and the build's key, since the review's record
 carries the build's verdict) and `deliver` (the deck, the briefing, the
@@ -2120,8 +2121,13 @@ picture JARVIS draws, `picture_problems` over `picture_proof.prove`; every
 content slide laid out in the first of
 JARVIS's layouts in which each object fits its slot by deck_capacity,
 `fit_problems`, and a slide asking a decision held to what its decision
-slide holds, its question, options, words and objects with the shortest
-recommendation, `decision_fits` over `deck_capacity.decision_problems`;
+slide holds as the deck will draw it, its question, short name, options,
+words and objects, its lead-in decision k of n among the script's
+decisions, and the author's recommendation, reason and options' pictures
+from the deck source once there is one (`ScriptFile`'s `deck`), else a
+recommendation on the longest option with a one-line reason and its
+options sized pictured and not, the worse kept (`decision_fits` over
+`deck_capacity.decision_problems`);
 each slide showing the visual its outline slide names, a decision
 slide's too (its decision's words counting as text), `plan_problems`), so
 a script that cannot be drawn is refused before the deck. A slide's form
@@ -2178,7 +2184,8 @@ program builds every slide from the script (`script_visuals.built_slides`):
 each content slide's visuals (each piece its presentation/1 object, a chart
 its dataset, laid out in the first layout that fits), and each decision
 slide's decision (`Built.decision_part`: its question and options the
-script's decision's, its context the slide's text pieces, its `say` the
+script's decision's, its `short` (its name in the border's Chapters and on
+the answers slide) the slide's title, its context the slide's text pieces, its `say` the
 slide's narration, and what else it shows, a visual, a picture, a table, his
 words, its `objects`, presentation_schema `Decision.objects`, slot `shown`,
 drawn by the shared deck on the decision slide itself in its context area,
@@ -2189,7 +2196,7 @@ to the author with `BUILT_NOTE`, and before every build put back on each
 slide (`package_deck.from_script`, `script_visuals.apply`: on a content
 slide the author's layout and slots kept where it gave every object one,
 matched by id else by type in order, its narration cues kept, lighting only
-what the slide shows; on a decision its recommendation, reason, short name,
+what the slide shows; on a decision its recommendation, reason,
 `needs_words` and options' pictures kept, its own `picture` dropped,
 `merged_decision`); `script_problems` says anything that is not the
 script's (`script_visuals.unmatched`, a decision's words too), and
@@ -2249,19 +2256,39 @@ item, never a dead end)
 and sign off each of its other questions (`DECK_CONCERNS`); what is left is merged
 into one list, the author revises the deck, and each owner re-checks its
 own items; never the author on its own deck. Every author turn at the deck
-(`author_form`) may give script slides, whole, in `slides` and changed
-visual forms in `forms`: what only a change of a script slide gives
-(another step, a node, a piece, a different form) goes back to the script
-for that slide only (`script_change`: put in script.yaml and checked whole
-through `ScriptFile.take`, the outline's form changed, said into the
-conversation); the step re-reads script.yaml after every edit written into
-it (`Plan.refresh`: only a slide whose script changed is written again;
-`review_units` and `_final`'s keys from the script as it stands), and
-keeps each script slide it changed under `deck-script`, keyed by the slide
-the swarm passed (`script_change_unit`, `keep_script_changes`), which a
-later run takes back before it plans (`restore_script_changes`), so only
-that slide's script, deck source and review are made again. In a close
-what the author revised stands (nothing put back). Passed
+(`author_form`) may give script slides, whole, in `slides`, changed visual
+forms in `forms`, and a split: each new slide in `slides` right after the
+one it comes from, with its outline slide in `outline`. What only a change
+of a script slide gives (another step, a node, a piece, a different form,
+fewer words, a split) goes back to the script stage for that slide only:
+`script_change` puts it in script.yaml (a new slide after the one given
+before it, its outline slide in outline.yaml after that one's) and checks
+it whole through `ScriptFile.take` (each decision slide sized with the
+author's part of it from the deck source), the outline's form changed;
+then `ScriptStage` (its state `deck_script_stage` in swarm.json, so a run
+that waits on the sender goes on from there): the outline's new slides
+signed off by the owners (`deck-script-outline`, an edit standing only
+while the script still checks), the stage's slides marked against the 28
+labels (`mark_slides` for them only, the rest's marks kept), and every
+owner's script concern re-signed for them in the same swarm
+(`package_swarm.fix_passes` over `SCRIPT_CONCERNS` with the `deck-script-`
+stages: owners' edits only on the stage's slides, what is left to the
+author as one list, its close giving those slides again, the owners
+re-checking, the sender asked as in the swarm; not signed off after two
+passes, its findings go to the sender). Then their deck slides are written
+again (`rewrite_note`) and reviewed in full: in the write, by the review's
+first pass (their keys changed); in a close of the review, by every owner
+and the editor for every deck concern (`deck-slides-<n>`), before the
+owners re-check their items. The step re-reads script.yaml after every edit
+written into it (`Plan.refresh`: only a slide whose script changed is
+written again; `review_units` and `_final`'s keys from the script as it
+stands), and keeps each script slide it changed or split under
+`deck-script`, keyed by the slide the swarm passed (`script_change_unit`,
+`keep_script_changes`: the slides it became, their outline slides and
+marks), which a later run takes back before it plans
+(`restore_script_changes`), so only that slide's script, deck source and
+review are made again. In a close what the author revised stands (nothing
+put back). Passed
 (the job's `deck`: the zip, the built folder, `deck-review.json`), or after
 two fix passes, or a deck the author could not make build,
 its findings go to the sender as a failed swarm's do; but a deck still
@@ -2272,7 +2299,10 @@ every text style at least the text floor at both sizes (`prove_text`).
 No build is drawn in a browser (Tim 2026-11-22: `deck_fit.py`'s headless
 Chromium and its callers are removed): a slot over its capacity
 (`deck_capacity`) does not build and is told to the author with the slot
-and how much over, to split it or show it as a visual, and an owner's edit
+and how much over and only what can be done at the deck
+(`deck_capacity.at_the_deck`, `AT_DECK_WAYS`: say less or show it in
+another form through `slides` and `forms`, or a larger slot; a slide that
+needs splitting goes back to the script stage), and an owner's edit
 that puts one over is not applied. The shared deck fits every slide as it
 draws it (deck.js `fitSlide`, deck.css "the program's own fit": its words
 as large as it allows, down to the 13 px floor, then `tight`;
