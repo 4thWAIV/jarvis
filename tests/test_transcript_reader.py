@@ -89,6 +89,24 @@ def test_a_codex_rollout_reads_the_same_way(tmp_path):
         ("result", "shell", "ok\ndone"), ("agent", None, "Green.")]
 
 
+@pytest.mark.parametrize("signature", [
+    session_steer.STEER_SIGNATURE,
+    "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your turn with your "
+    "full reply; JARVIS reads it from your transcript and tells Tim. "
+    "Do not send your answer to another session.]\n\n",
+], ids=["current", "legacy"])
+def test_signed_messages_recover_the_users_words_and_read_as_jarvis(signature):
+    text = signature + "check the build"
+    assert session_steer.message_body(text) == "check the build"
+
+    codex = {"type": "response_item", "payload": {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": text}]}}
+    claude = {"type": "user", "isMeta": True, "origin": {"kind": "peer"},
+              "message": {"role": "user", "content": text}}
+    assert [e.role for e in codex_sessions._codex_entries(0, codex)] == ["jarvis"]
+    assert [e.role for e in sw._claude_entries(0, claude)] == ["jarvis"]
+
+
 def test_the_route_serves_a_session_s_page_and_its_cursor(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)

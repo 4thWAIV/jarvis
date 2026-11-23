@@ -41,18 +41,23 @@ def outcome_code(outcome: str | None) -> str | None:
 # approval as coming from a session that had never written to it. The answer
 # belongs in its own transcript, where JARVIS reads it.
 STEER_SIGNATURE = (
+    "[From JARVIS, relaying the current user. Answer by ending your turn with your "
+    "full reply; JARVIS reads it from your transcript and tells the user. "
+    "Do not send your answer to another session.]\n\n")
+
+LEGACY_STEER_SIGNATURES = (
     "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your "
     "turn with your full reply; JARVIS reads it from your transcript and "
-    "tells Tim. Do not send your answer to another session.]\n\n")
+    "tells Tim. Do not send your answer to another session.]\n\n",
+)
+STEER_SIGNATURES = (STEER_SIGNATURE, *LEGACY_STEER_SIGNATURES)
 
 
 def message_body(text: str) -> str:
-    """What a message says after the signature: Tim's own words, which is
-    what finds the message again in the session's transcript (each provider's
-    `track`). The signature is the same on every message, so it identifies
-    none of them."""
-    if text.startswith(STEER_SIGNATURE):
-        text = text[len(STEER_SIGNATURE):]
+    """Return the user's words for matching the message in a transcript."""
+    for signature in STEER_SIGNATURES:
+        if text.startswith(signature):
+            return text[len(signature):].strip()
     return text.strip()
 
 

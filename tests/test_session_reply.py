@@ -293,7 +293,8 @@ async def test_an_answered_event_is_routed_to_the_record(wired, monkeypatch):
 def test_every_steer_is_signed_and_says_how_to_answer(wired):
     server, _root, _watcher = wired
     sig = server.STEER_SIGNATURE
-    assert sig.startswith("[From JARVIS")
-    assert "relaying Tim" in sig
-    assert "ending your turn" in sig
-    assert "Do not send your answer to another session" in sig
+    assert sig == (
+        "[From JARVIS, relaying the current user. Answer by ending your turn with your full reply; "
+        "JARVIS reads it from your transcript and tells the user. "
+        "Do not send your answer to another session.]\n\n"
+    )
