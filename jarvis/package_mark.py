@@ -1,5 +1,5 @@
 """The mark step: what gather collected, read and marked (workflow.yaml mark,
-approved by Tim 2026-11-18: "3. I approve it.").
+approved by Tim 2026-11-18).
 
 Run after gather in JARVIS's own process (package_jobs.PRODUCERS), one
 file at a time as far as what it reads goes (step_cache.py, unit

@@ -1,5 +1,5 @@
 """No gap in a package run is unexplained (construction-drafts.md, the last
-2026-11-22 entry, approved by Tim: "fix that and improve it").
+2026-11-22 entry, approved by Tim).
 
 Measured on package-9a8f7c72f87b run-1: the author's session reopened for
 the outline at 11:13:00 and its 36 s turn ended at 11:28. The cause was the

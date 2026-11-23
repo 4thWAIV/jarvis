@@ -1,7 +1,7 @@
 """
 evidence_structured.py — what a program reads in a package's gathered
 evidence before any model does (workflow.yaml mark, approved by Tim
-2026-11-18: "3. I approve it."): each file's type, the facts of a
+2026-11-18): each file's type, the facts of a
 structured file, and the prose a model is given.
 
 - `type_of` (type_files): a type from the file's content and name, one of

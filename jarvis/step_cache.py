@@ -1,5 +1,5 @@
 """The package steps' cache, keyed by their inputs (construction-drafts.md
-"Step cache keyed by inputs", approved by Tim 2026-11-22: "Yes, GO"; the
+"Step cache keyed by inputs", approved by Tim 2026-11-22; the
 standard design, as make and Bazel do it).
 
 Every package step is a function of named inputs. A unit of work (`Unit`:
@@ -10,10 +10,9 @@ the words it is given. Its output (files, and a value) is kept under that
 key with how long it took (`keep`), in one folder a key under the
 package's own folder (`root`: `<package folder>/.step-cache/`, beside its
 `evidence/` and `runs/`; never indexed, knowledge_content.run_bookkeeping).
-The cache is one package's (Tim, 2026-11-22: "the step cache is scoped to
-one package"; reusing work across two different packages has no value,
-they are two different problems): every run of the same package (findings
-answered, an Error run again, the sender's change, his Reject) reuses
+Each package has its own cache (approved by Tim 2026-11-22). Every run
+of the same package (findings answered, an Error run again, the sender's
+change, his Reject) reuses
 whatever its changes did not touch, and a new package always starts
 fresh, whatever its handoff. A run works out each unit's key and reuses
 the kept output when it exists (`reuse`): only units whose inputs

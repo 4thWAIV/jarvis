@@ -1,7 +1,6 @@
 """The script of a briefing as structured YAML: script.yaml, script/1
-(workflow.yaml swarm decided "the script's format", Tim 2026-11-20: "Yes,
-make sure scripts are writen as structured yaml to allow full structure and
-depth.").
+(workflow.yaml swarm). Tim approved structured YAML on 2026-11-20 to
+preserve the full structure and detail of each slide.
 
 A list of slides in order, each with an id, a title, what is on screen (an
 ordered list of pieces: text, Tim's own words with their source, a picture

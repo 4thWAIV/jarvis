@@ -22,15 +22,14 @@ seven-day window): stressed is ahead below 0, least stressed is the highest
 ahead. A brain not measured is never called stressed, nor chosen as least.
 An engine he names for one agent ("on Codex") is his choice and is kept.
 
-Each role of a package's making is a kind too, by the same method (his
-word, "engines per role by the main brains' method", 2026-11-19): the
-author is `package_author`; the editor, the owners, Tim's reader,
+Tim approved using the main brains' engine selection method for each
+package role on 2026-11-19. The author is `package_author`. The editor,
+the owners, Tim's reader,
 retrieval, marking, classification, extraction and summarization each have
 their own entry (`ROLE_KINDS`). A role's model is its tier on the chosen brain
-(model_tiers.pick) unless its entry names one. One more setting, "run the
-judges on the other brain from the author's" (his word 2026-11-19), now the
-owners, who took the judges' place in the cooperative swarm
-(`owners_other_brain`), is ignored while JARVIS has only one brain. A file
+(model_tiers.pick) unless its entry names one. On 2026-11-19 Tim approved the option to run the
+owners (formerly judges) on a different brain from the author.
+This setting (`owners_other_brain`) is ignored while JARVIS has only one brain. A file
 saved before the swarm became cooperative is read with its judges' entry as
 the owners', its Theory of Mind reader's as Tim's reader's (`WAS`).
 

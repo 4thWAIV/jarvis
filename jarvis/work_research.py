@@ -1,7 +1,7 @@
 """A Work item's own research, kept current on every change of the item
 (workflow.yaml research work_item_research; knowledge-graph.yaml, decided
-2026-11-18: "research would just be the thigns we loooked up and our
-summaries"; "When it chagnes ALL UDS is write -> index always").
+2026-11-18): keep the lookup results and their summaries, and index every
+UDS write.
 
 On every change of a Work item (work_store.on_changed) a program runs the
 system's queries for it, the same key searches a package's research runs

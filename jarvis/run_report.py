@@ -81,8 +81,8 @@ ROLE_CONFIG = ".jarvis-role"
 ANSWERED, REFUSED, TIME_LIMIT, RATE_LIMITED, FAILED = (
     "answered", "refused", "time_limit", "rate_limited", "failed")
 
-# Tim 2026-11-21: "MORE THAN a few minutes per step is A FAIL". A step that
-# takes longer is flagged in the report, with its numbers.
+# Tim 2026-11-21: a step over five minutes is a failure. The report
+# flags the step and records its measurements.
 STEP_FAILS_AFTER_SEC = 5 * 60.0
 
 

@@ -50,8 +50,7 @@ from typing import Optional
 
 from jarvis import evidence_types
 
-# The two questions every sender answers (Tim, 2026-11-19: "Yes, use that
-# wording."), word for word.
+# Tim approved the exact wording of both sender questions on 2026-11-19.
 QUESTIONS: dict[str, str] = {
     "plainly": ("State plainly and exactly what you are telling us. Name each thing you "
                 "mention as what it specifically is, and keep separate things separate: do not "

@@ -82,8 +82,8 @@ KEEP_FEATURES = frozenset({
     "item_ids", "sqlite", "steer", "resize_all_images",
 })
 
-# A role of a package's making starts from the lockdown (Tim's "Awesome",
-# 2026-11-19): the same features less the code-mode host, so `exec` is listed
+# Package roles start in lockdown (approved by Tim 2026-11-19): the
+# code-mode host is disabled, so `exec` is listed
 # but refuses to run and a role session can neither read a file nor call a
 # tool. Each role is then released for its run to exactly its
 # `roles.Release` (Tim, 2026-11-20), the definition Claude reads too

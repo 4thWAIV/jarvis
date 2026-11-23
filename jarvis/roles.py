@@ -65,8 +65,7 @@ class Release:
     """What a role is released to from the lockdown, the one definition
     both brains read (Tim, 2026-11-20: every role on either brain starts
     locked down, no tools, and is released for its run to exactly what it
-    needs; "THAT lockdown and release shoudl apply to Claude as well"; no
-    role is exclusive to one brain). Claude reads it in
+    needs). Every role is available on both brains. Claude reads it in
     `claude_provider.role_command`, Codex in `codex_provider.role_release`.
     The folders it reads are its run's (`Launch.reads`, beside its own run
     folder), read with its file tools (`FILE_READ_TOOLS`)."""

@@ -1,8 +1,5 @@
-"""The script describes each slide's visual (Tim 2026-11-22, construction-
-drafts.md "The script describes each slide's visual": "So if you are saying
-the script should describe the slide and how it will look with the
-information to fill it in when we build it but in a text description for
-later building that that was what I told you to do to begin with yes.").
+"""Each slide specifies its visual form and the content needed to build it
+(approved by Tim 2026-11-22, construction-drafts.md).
 
 The outline names each slide's visual form and why it carries the point
 (`FORMS`, package_script.outline_schema); the script gives each visual as

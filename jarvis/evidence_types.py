@@ -1,7 +1,7 @@
 """
 evidence_types.py — the typed evidence entries of a package's handoff, and
 the fields each one names (workflow.yaml request entry_types, approved by
-Tim 2026-11-19: "Great").
+Tim 2026-11-19).
 
 Every type but `label` is resolved by a program; a `label` (free text) is
 the one a model resolves (RetrievalSession), into entries of the types it

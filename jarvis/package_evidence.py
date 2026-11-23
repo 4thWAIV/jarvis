@@ -58,8 +58,7 @@ KNOWS, HAD_ACCESS, PROBABLY_NOT = "knows", "had_access", "probably_does_not_know
 STATES = (KNOWS, HAD_ACCESS, PROBABLY_NOT)
 # The manifest's row types beside the fourteen handoff types.
 JARVIS_TYPE, SENDER_ANSWER = "jarvis", "sender_answer"
-# Urgent indexing is waited for 10 minutes before Error (Tim, 2026-11-19:
-# "three numbers").
+# Urgent indexing may take up to 10 minutes before Error (approved by Tim 2026-11-19).
 INDEX_WAIT_SEC = 10 * 60.0
 INDEX_LOOK_SEC = 1.0
 RECORD_TYPE = "evidence"
@@ -244,8 +243,8 @@ def _root_and_rel(folder: Path):
 def index_folder(folder: Path, uds=None) -> list[str]:
     """Every file under a folder of JARVIS's read into the engine now by the
     content child's own reader (knowledge_content.Indexer), ahead of the
-    background reading ("When it chagnes ALL UDS is write -> index
-    always"); the item paths of the files it holds. A file the reader
+    background scan so writes are indexed immediately; returns the item
+    paths of the files it holds. A file the reader
     passes over (no item path, a sensitive name) is not one."""
     from jarvis import knowledge_content
     root, rel = _root_and_rel(folder)

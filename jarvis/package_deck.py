@@ -182,7 +182,7 @@ FORMAT_START, FORMAT_END = "## A deck: one presentation.yaml", "## A folder"
 # deck_review's questions, each the design's words (workflow.yaml deck
 # deck_review questions). That every quote of his is drawn in his named
 # style and narrated is the program's check, not a vote (his_words_check,
-# Tim 2026-11-20: "Aproved").
+# approved by Tim 2026-11-20).
 DECK_QUESTIONS = (
     ("deck-says", "Does each slide say what the passed script says for it, nothing lost or "
                   "added?"),

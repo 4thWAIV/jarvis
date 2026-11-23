@@ -876,7 +876,7 @@ def test_the_sender_s_words_of_what_is_wrong_start_a_new_run(wired, marks, tmp_p
 ])
 def test_the_sender_s_check_is_answered_only_in_its_structured_form(wired, marks, tmp_path,
                                                                    spawned, answers):
-    """workflow.yaml deliver sender_check answer (Tim 2026-11-20, "Aproved"):
+    """workflow.yaml deliver sender_check answer (approved by Tim 2026-11-20):
     check: approve | change, with what_is_wrong required for change; no free
     text is parsed."""
     server, *_, home = wired

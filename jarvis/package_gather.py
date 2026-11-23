@@ -1,6 +1,6 @@
 """The gather step: the handoff's evidence resolved and kept, with what
-JARVIS knows from its own records (workflow.yaml gather, decided
-2026-11-18 and 2026-11-19: "THIS is just resolution not anything else").
+JARVIS knows from its own records. Tim limited this step to evidence
+resolution on 2026-11-18 and 2026-11-19 (workflow.yaml gather).
 
 Run as the first step of a package's run (package_jobs.PRODUCERS), in
 JARVIS's own process, once per package: a later run of the same package

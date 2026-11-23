@@ -2,8 +2,7 @@
 sessions.py — the sessions a package is made with (sessions.yaml, approved
 by Tim 2026-11-18 and 2026-11-19).
 
-Composition, each type with its own interface (his word, 2026-11-18:
-"Composition is most sensible but each type has it's own intrface."):
+Composition, with a separate interface for each session type (approved by Tim 2026-11-18):
 each is a `Protocol` its callers depend on, and its Brain implementation
 runs on the brain providers (the Team ones, on the team server's models,
 come later).

@@ -102,7 +102,7 @@ ENDED = (DELIVERED, ERROR, FAILED)
 QUESTIONS, FINDINGS, CHECK = "questions", "findings", "check"
 # The sender's check: its one question's id, the instructions word for word
 # (Tim 2026-11-20, approved as recommended), and its structured answer
-# (Tim 2026-11-20, "Aproved"): `check` is APPROVE or CHANGE, and CHANGE
+# (approved by Tim 2026-11-20): `check` is APPROVE or CHANGE, and CHANGE
 # needs `what_is_wrong`, its words; no free text is parsed.
 CHECK_ID = "check"
 SENDER_CHECK = ("This is the package JARVIS made from your request, before Tim sees it. Open it "

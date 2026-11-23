@@ -2,9 +2,9 @@
 role_prompts.py — the approved prompt of every role of a package's making,
 word for word.
 
-Copied from role-prompts.md (Tim, 2026-11-19: "1. Yes") and, for the
-cooperative swarm, owner-prompts.md (Tim, 2026-11-21: "I pre approve a first
-round best guess on the new prompts"): an owner's prompt is the shared part,
+Copied from role-prompts.md (approved by Tim 2026-11-19) and, for the
+cooperative swarm, owner-prompts.md (first-round wording pre-approved by
+Tim 2026-11-21): an owner's prompt is the shared part,
 then its own; the editor's is the cooperative editor's; the author's is the
 approved Author prompt with the outline part added, and its one revision
 against the marks is `AUTHOR_REVISE`, given as the program's words. Each `{...}` is filled in by the program at launch

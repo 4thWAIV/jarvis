@@ -1,10 +1,10 @@
 """
 model_tiers.py — the four model tiers, and finding a model that works.
 
-Tim's taxonomy for now (2026-11-18): "1 - Fable / Astra 2 - Opus / Sol
-3 - Sonnet / Terra 4 - haiku / Luna". A code file, not a Settings control
-(his word, 2026-11-19): each brain's model families and their tier, one
-line a family, so moving a family between tiers is one line. The scored
+Tim approved the model tiers on 2026-11-18: Fable and Astra in tier 1,
+Opus and Sol in tier 2, Sonnet and Terra in tier 3, Haiku and Luna in tier 4.
+Tim approved keeping the assignments in code on 2026-11-19. Each model
+family has its own line, so its tier can be changed independently. The scored
 ranking (model-ranking.md) replaces it later, when there is data.
 
 How a family becomes a model (`resolve`):

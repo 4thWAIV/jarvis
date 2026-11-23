@@ -2,7 +2,7 @@
 briefing_labels.py — the 28 labels a briefing is marked with
 (workflow.yaml briefing_labels, from marking-labels.md; the mark step
 approved by Tim 2026-11-18, its two practice labels, open-unknown and
-deadline-default, approved the same day: "I agree with those two.").
+deadline-default, approved the same day).
 
 Each label is its name, what a part with it is (`means`, workflow.yaml's
 words), what is done with it (`action`), whether it is kept, fixed or
