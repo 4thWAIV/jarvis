@@ -185,10 +185,23 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
    vote row leave, and the pictures size to it (a compare picture above the
    options, each option's picture filling its share of the width). */
 .slide.decision.fill .decide { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
-.slide.decision.fill .decide.with-context { display: grid; grid-template-columns: calc(290 * var(--u) * var(--fit, 1)) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.slide.decision.fill .decide.with-context { display: grid; grid-template-columns: calc(290 * var(--u) * var(--fit, 1)) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; }
 .slide.decision.fill .main { min-height: 0; display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
 .slide.decision.fill .context { min-height: 0; }
+.slide.decision.fill .context > .why { flex: none; }
 .slide.decision.fill .context .picture { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+/* A decision's own picture yields to its options and their Choose bars:
+   beside them it takes only the height its words leave, and where the
+   column beside them leaves the options too narrow it moves above them,
+   its words beside it, the options never squeezed under what they hold
+   (deck.js arrange, context-side or context-above; jarvis/deck_capacity.py
+   holds a decision to what either takes). */
+.slide.decision.fill .decide.with-context.context-above { display: flex; flex-direction: column; }
+.slide.decision.fill .context-above > .context { flex: 1 1 0; min-height: min-content; flex-direction: row; align-items: stretch; }
+.slide.decision.fill .context-above > .context > .why { flex: 1 1 0; min-width: 0; }
+.slide.decision.fill .context-above > .context > .picture { flex: 0 1 calc(240 * var(--u)); min-width: 0; min-height: 0; }
+.slide.decision.fill .context-above > .main { flex: 2 1 0; min-height: min-content; }
+.slide.decision.fill .context-above .options.has-pictures { min-height: min-content; grid-template-rows: minmax(min-content, 1fr); }
 .decide .compare { flex: 1 1 0; min-height: calc(80 * var(--u)); display: flex; flex-direction: column; }
 .options.has-pictures { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); padding-top: calc(6 * var(--u)); }
 .options.has-pictures .option { min-height: 0; }
@@ -257,16 +270,17 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 
 /* ── the program's own fit ──
    Every slide's words are drawn as large as the slide allows, and every
-   part of it is in sight at every frame, nothing clipped and nothing to
-   scroll (deck.js fitSlide): a binary search on the slide's scale (--fit)
-   finds the largest at which nothing overflows, between the scale at which
-   every word is at the 13 px floor and the ceiling (3 times the deck size,
-   never past each size's px ceiling). A slide with pictures in its flow
-   keeps its words at most at the deck size (scale 1), so the pictures take
-   the room. A slide that does not fit with its words at the floor is drawn
-   tight (smaller gaps and padding, shorter bars) and searched again; what
-   still does not fit says so on the slide (data-fit="cut"), which JARVIS's
-   measure reads (jarvis/deck_fit.py) and sends back to the author to split. */
+   part of it is in sight at every frame, nothing clipped, nothing to
+   scroll and no part's content larger than its box (deck.js fitSlide): a
+   binary search on the slide's scale (--fit) finds the largest at which
+   nothing overflows, between the scale at which every word is at the 13 px
+   floor and the ceiling (3 times the deck size, never past each size's px
+   ceiling). A slide with pictures in its flow keeps its words at most at
+   the deck size (scale 1), so the pictures take the room. A slide that
+   does not fit with its words at the floor is drawn tight (smaller gaps
+   and padding, shorter bars) and searched again; what still does not fit
+   says so on the slide (data-fit="cut"), which JARVIS's measure reads
+   (jarvis/deck_fit.py) and sends back to the author to split. */
 .slide.tight { padding: calc(8 * var(--u)) calc(20 * var(--u)) calc(6 * var(--u)); gap: calc(4 * var(--u)); }
 .slide.tight .decide, .slide.tight .main, .slide.tight .context { gap: calc(5 * var(--u)); }
 .slide.tight .options { gap: calc(8 * var(--u)); }

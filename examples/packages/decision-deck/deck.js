@@ -666,13 +666,21 @@
   }
 
   // Every box on a slide that can hold more than it shows: the slide, each
-  // part that clips or scrolls, and a presentation slide's title, whose box
-  // is fixed and whose words would run out of it.
+  // part that clips or scrolls, a presentation slide's title, whose box is
+  // fixed and whose words would run out of it, and every other part of the
+  // slide, whose content may be larger than its box and spill out of it
+  // (an option card shorter than its words and its Choose bar). Form
+  // fields (their value is theirs to scroll), pictures, inline words,
+  // table rows and parts a pixel or less across (a heading for screen
+  // readers) hold nothing of their own to measure.
+  var NO_PART = /^(INPUT|SELECT|TEXTAREA|IMG|BR|OPTION)$/;
+  var NO_BOX = /^(inline|contents|none|table|table-row|table-row-group|table-header-group|table-footer-group|table-column|table-column-group)$/;
   function boxesOf(scope) {
     return [scope].concat([].slice.call(scope.querySelectorAll("*")).filter(function (e) {
+      if (!(e instanceof HTMLElement) || NO_PART.test(e.tagName)) return false;
       if (e.classList.contains("presentation-title")) return true;
-      var st = getComputedStyle(e);
-      return st.overflowX !== "visible" || st.overflowY !== "visible";
+      if (NO_BOX.test(getComputedStyle(e).display)) return false;
+      return e.offsetWidth > 1 && e.offsetHeight > 1;
     }));
   }
 
@@ -738,28 +746,52 @@
     if (title && titleScale === null) title.style.setProperty("--fit", String(FIT_MIN));
   }
 
-  // Try each way in turn and keep the one that shows the smallest picture
-  // on the slide largest, with nothing cut off.
-  function arrange(section, box, ways) {
+  // Try each way in turn (each with what is inside it arranged again,
+  // `within`) and keep the one that shows the smallest picture on the
+  // slide largest, with nothing cut off and no part spilling out of its
+  // box; a picture the way does not show at all counts as none.
+  function arrange(section, box, ways, within) {
     var imgs = [].slice.call(section.querySelectorAll(".picture img"));
     var best = ways[0], bestArea = -1;
     ways.forEach(function (way) {
       ways.forEach(function (w) { box.classList.remove(w); });
       box.classList.add(way);
+      if (within) within();
       if (cut(section)) return;
       var area = Math.min.apply(null, imgs.map(shown));
       if (area > bestArea) { best = way; bestArea = area; }
     });
     ways.forEach(function (w) { box.classList.remove(w); });
     box.classList.add(best);
+    if (within) within();
+    return bestArea >= 0;
   }
 
   function shrinkPictures(section) {
     // Pictured options try each arrangement (picture above its words,
     // beside them, or, for two options, one option a row) and keep the one
-    // that shows the smallest picture largest with nothing cut off.
+    // that shows the smallest picture largest with nothing cut off. A
+    // decision's own picture yields to them: beside the options, or above
+    // them with its words beside it, whichever leaves every part whole.
     var opts = section.querySelector(".options.has-pictures");
-    if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
+    function options() {
+      if (opts) arrange(section, opts, ["stacked", "side"].concat(opts.children.length === 2 ? ["rows"] : []));
+    }
+    var withContext = section.querySelector(".decide.with-context");
+    function all() {
+      if (withContext) return arrange(section, withContext, ["context-side", "context-above"], options);
+      options();
+      return !cut(section);
+    }
+    // What is whole at the deck size is chosen there; what is whole only
+    // with the words at their floor, drawn tight, is chosen there.
+    if (!all()) {
+      section.classList.add("tight");
+      section.style.setProperty("--fit", String(FIT_MIN));
+      all();
+      section.classList.remove("tight");
+      section.style.removeProperty("--fit");
+    }
     var compare = section.querySelector(".compare");
     if (compare) arrange(section, compare.parentNode, ["compare-above", "compare-side"]);
     if (!section.classList.contains("fill")) {   // a filled slide's pictures already fit the space

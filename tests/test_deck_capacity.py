@@ -205,3 +205,37 @@ def test_the_answers_slide_is_held_to_what_it_holds(tmp_path):
     with pytest.raises(DeckCompileError, match="the answer .* of where-to-eat takes .* px where "
                                                "the list holds"):
         read_source(_write(tmp_path / "long", _with_decisions(long)))
+
+
+def test_a_decision_s_own_picture_beside_pictured_options_yields_to_them():
+    # The shared deck draws a decision's own picture beside pictured
+    # options, or moves it above them with its words beside it, whichever
+    # leaves every option and its Choose bar whole (deck.js arrange); the
+    # slide holds what either holds, and refuses what neither does.
+    from jarvis.presentation_schema import Decision
+
+    def asked(context, says, own=True):
+        return Decision(**{**_decision(), "text_only": None, "context": context,
+                           **({"picture": "plate"} if own else {}),
+                           "options": [{"id": f"o{n}", "name": f"Choice {n}", "says": says,
+                                        "picture": "plate"} for n in range(1, 4)],
+                           "recommended": "o1"})
+
+    def needs(d):
+        return deck_capacity._decision_parts(deck_capacity._Deck(), d, 0, [d], {})[0]
+
+    beside_held = asked(SENTENCE * 2, SENTENCE)
+    assert deck_capacity.decision_problems(beside_held, 0, [beside_held], "ask") == []
+    # Its words take the room above the options or beside them, never less
+    # than without the picture's column.
+    assert needs(beside_held) >= needs(asked(None, SENTENCE, own=False))
+    for over in (asked(SENTENCE * 12, SENTENCE), asked(SENTENCE, SENTENCE * 5)):
+        [(member, said)] = deck_capacity.decision_problems(over, 0, [over], "ask")
+        assert member == "where-to-eat" and "is over what its slide holds" in said
+    # A context only the column above the options holds is held to that.
+    long = asked(SENTENCE * 3, SENTENCE)
+    deck = deck_capacity._Deck()
+    side = deck.at(deck_capacity.css_units(".decide.with-context",
+                                           "grid-template-columns")[0], True)
+    assert deck.lines(long.context, side) * deck.body_line > deck.height
+    assert deck_capacity.decision_problems(long, 0, [long], "ask") == []

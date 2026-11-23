@@ -11,6 +11,10 @@ ran past the bottom at 662 x 489 (as long, in the same places), so the
 shared deck's layout (examples/packages/decision-deck, deck.css and
 deck.js) is held to it.
 
+Every part is judged against its own box as well (deck.js boxesOf, the
+measure the same): an option card whose words and Choose bar are taller
+than the card spills out of it though nothing scrolls or clips.
+
 What passes the write-time capacity of a decision's slide and the answers
 slide (jarvis/deck_capacity.py, worked out from deck.css at 662 x 489, every
 word at its floor) is drawn whole: decks grown to the last size the
@@ -226,12 +230,31 @@ def test_what_the_capacity_takes_is_drawn_whole_at_every_frame(tmp_path, shape):
 
 
 @pytest.mark.parametrize("grow", ["says", "context"])
-def test_pictured_options_the_capacity_takes_are_drawn_whole(tmp_path, grow):
+@pytest.mark.parametrize("own", [False, True], ids=["options pictured", "and its own picture"])
+def test_pictured_options_the_capacity_takes_are_drawn_whole(tmp_path, grow, own):
+    """Pictured options, and pictured options beside the decision's own
+    picture (the picture yields its room or moves above them, never the
+    options or their Choose bars), at the largest the capacity takes, are
+    drawn whole at every frame: no part's words spilling out of its box."""
     assets = _pictures(tmp_path / "try")
     _pictures(tmp_path / "built")
+    picture = {"picture": "plate-c"} if own else {}
     deck, n = _edge(tmp_path / "try", lambda n: _with(
         [_ask(options=_options(3, _words(n if grow == "says" else 8), pictured=True),
-              context=_words(n if grow == "context" else 12))], assets))
+              context=_words(n if grow == "context" else 12), **picture)], assets))
     folder = _built(tmp_path / "built", deck)
     fit = deck_fit.measure(folder, only=["ask-where-to-eat", "answers"])
     assert fit["fits"], f"pictured at {n}: " + "\n".join(deck_fit.problems(fit))
+
+
+def test_a_part_spilling_out_of_its_box_does_not_fit(tmp_path, beyond_capacity):
+    """An option card shorter than its words and its Choose bar is cut,
+    though nothing on the slide scrolls or clips: the deck's own fit and
+    the measure both judge every part's content against its box."""
+    assets = _pictures(tmp_path)
+    deck = _with([_ask(options=_options(4, _words(60), pictured=True), context=_words(80),
+                       picture="plate-c")], assets)
+    fit = deck_fit.measure(_built(tmp_path, deck), [(662, 489)], only=["ask-where-to-eat"])
+    [slide] = fit["slides"]
+    assert not slide["fits"] and slide["cut"][0]["fit"] == "cut"
+    assert any(p["how"] == deck_fit.SPILLS for c in slide["cut"] for p in c["parts"])

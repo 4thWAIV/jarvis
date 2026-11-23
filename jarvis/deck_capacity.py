@@ -514,49 +514,81 @@ def _decision_parts(deck: _Deck, decision, index: int, decisions, parents) -> tu
     n = len(d.options)
     pictured = any(o.picture for o in d.options)
     columns = min(4, n) if pictured else min(2, n) if d.picture else 2 if n == 4 else min(3, n)
-    side = deck.at(css_units(".decide.with-context", "grid-template-columns")[0], True)
-    side_gap = max(css_units(".decide.with-context", "gap")[0],
-                   css_units(".slide.decision.fill .decide", "gap")[0]) * u
-    main = deck.width - (side + side_gap if d.picture else 0)
     grid_gap = css_units(".slide.tight .options", "gap")[0] * u
-    column = (main - (columns - 1) * grid_gap) / columns
     pad = css_units(".slide.tight .option", "padding")
     border = css_px(".option", "border")
-    inner = column - 2 * border - 2 * pad[1] * u
     card_gap = css_units(".slide.tight .option", "gap")[0] * u
     text_gap = css_units(".slide.tight .option-text", "gap")[0] * u
     badge = css_units(".option h3 .badge", "margin-left")[0] + 2 * css_units(".badge", "padding")[0]
     badge_word = "R" * (len("Recommended") + math.ceil(badge * u / deck.char))
     choose = deck.control
-    cards = []
-    for i, o in enumerate(d.options):
-        name = f"{'ABCDEFGHIJ'[i]}. {o.name}" + (f" {badge_word}" if o.id == d.recommended else "")
-        h = 2 * border + (pad[0] + pad[2]) * u
-        if o.picture:
-            h += css_units(".options.has-pictures .option .picture", "min-height")[0] * u + card_gap
-        h += part(f"options[{i}].name", f"option {o.id}'s name", name, inner, deck.name_line)
-        h += text_gap + part(f"options[{i}].says", f"option {o.id}'s text", o.says, inner,
-                             deck.body_line)
-        if o.opens:
-            opens = "Then asks: " + ", ".join((by_id[c].short or c) if c in by_id else c
-                                              for c in o.opens)
-            h += text_gap + deck.lines(opens, inner) * deck.body_line
-        h += text_gap + choose
-        cards.append(h)
-    rows = [max(cards[r:r + columns]) for r in range(0, n, columns)]
-    options = sum(rows) + (len(rows) - 1) * grid_gap
-    if pictured:
-        options += css_units(".options.has-pictures", "padding-top")[0] * u
-    if d.compare:
-        options += css_units(".decide .compare", "min-height")[0] * u \
-            + css_units(".slide.decision.fill .decide", "gap")[0] * u
-    body = options
-    if d.picture:
-        context = 0.0
-        if d.context:
-            context = css_units(TIGHT_GROUPS, "gap")[0] * u + part(
-                "context", "the context", d.context, side, deck.body_line)
-        body = max(body, context)
+    decide_gap = css_units(".slide.decision.fill .decide", "gap")[0] * u
+
+    def options_in(main: float, part) -> float:
+        """The options' height in `main` px of width: their cards, each
+        with its picture at its least, its words and its Choose bar."""
+        column = (main - (columns - 1) * grid_gap) / columns
+        inner = column - 2 * border - 2 * pad[1] * u
+        cards = []
+        for i, o in enumerate(d.options):
+            name = f"{'ABCDEFGHIJ'[i]}. {o.name}" + (f" {badge_word}" if o.id == d.recommended else "")
+            h = 2 * border + (pad[0] + pad[2]) * u
+            if o.picture:
+                h += css_units(".options.has-pictures .option .picture", "min-height")[0] * u + card_gap
+            h += part(f"options[{i}].name", f"option {o.id}'s name", name, inner, deck.name_line)
+            h += text_gap + part(f"options[{i}].says", f"option {o.id}'s text", o.says, inner,
+                                 deck.body_line)
+            if o.opens:
+                opens = "Then asks: " + ", ".join((by_id[c].short or c) if c in by_id else c
+                                                  for c in o.opens)
+                h += text_gap + deck.lines(opens, inner) * deck.body_line
+            h += text_gap + choose
+            cards.append(h)
+        rows = [max(cards[r:r + columns]) for r in range(0, n, columns)]
+        height = sum(rows) + (len(rows) - 1) * grid_gap
+        if pictured:
+            height += css_units(".options.has-pictures", "padding-top")[0] * u
+        if d.compare:
+            height += css_units(".decide .compare", "min-height")[0] * u + decide_gap
+        return height
+
+    if not d.picture:
+        body = options_in(deck.width, part)
+    else:
+        # A decision's own picture yields to the options (deck.js arrange):
+        # beside them, in a column with its words, the options in what that
+        # column leaves (context-side); or above them, its words beside it,
+        # the options across the whole width (context-above). The deck
+        # draws whichever leaves every part whole, so the slide holds what
+        # either holds.
+        side = deck.at(css_units(".decide.with-context", "grid-template-columns")[0], True)
+        side_gap = max(css_units(".decide.with-context", "gap")[0],
+                       css_units(".slide.decision.fill .decide", "gap")[0]) * u
+        context_gap = css_units(TIGHT_GROUPS, "gap")[0] * u
+        beside = css_units(".slide.decision.fill .context-above > .context > .picture",
+                           "flex")[0] * u
+        ways = []
+        for way in ("side", "above"):
+            mine: list[Part] = []
+
+            def part_of(field, said, text, width, line, mine=mine):
+                k = deck.lines(text, width) if text else 0
+                mine.append(Part(field, said, k, k * line, width, len(text or "")))
+                return k * line
+            if way == "side":
+                options = options_in(deck.width - side - side_gap, part_of)
+                context = part_of("context", "the context", d.context, side, deck.body_line) \
+                    if d.context else 0.0
+                height = max(options, context)
+            else:
+                options = options_in(deck.width, part_of)
+                words = deck.width - beside - context_gap
+                context = part_of("context", "the context", d.context, words, deck.body_line) \
+                    if d.context else 0.0
+                height = context + decide_gap + options
+            ways.append((height, mine))
+        body, mine = min(ways, key=lambda w: w[0])
+        parts.extend(mine)
     heights.append(body)
     # The vote row: Decide later, None of these, his words, what is recorded.
     words = deck.at(css_units(".vote .words", "flex")[0], True)

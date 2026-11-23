@@ -27,13 +27,18 @@ from typing import Optional
 from jarvis import layout_spec
 
 VERSION = "deck-fit/1"
-CLIPPED, SCROLLS = "clipped", "needs scrolling"
+CLIPPED, SCROLLS, SPILLS = "clipped", "needs scrolling", "spills out of its box"
 
 # For each slide of the deck in the frame: what on it is clipped or needs
-# scrolling, by its own words or its control's name. A part one pixel or
+# scrolling, and each part whose content is larger than its box and spills
+# out of it (deck.js boxesOf: the same parts), by its own words or its
+# control's name. A part one pixel or
 # less across is hidden on purpose (a heading for screen readers) and is
 # not a part of the slide.
 _MEASURE = r"""(only) => {
+  const SPILLS = "spills out of its box";
+  const NO_PART = /^(INPUT|SELECT|TEXTAREA|IMG|BR|OPTION)$/;
+  const NO_BOX = /^(inline|contents|none|table|table-row|table-row-group|table-header-group|table-footer-group|table-column|table-column-group)$/;
   const tiny = r => r.width <= 1 || r.height <= 1;
   const scrolls = st => /(auto|scroll)/.test(st.overflowY + " " + st.overflowX);
   const words = e => {
@@ -63,10 +68,13 @@ _MEASURE = r"""(only) => {
       const r = e.getBoundingClientRect();
       for (let a = e; a && a !== s; a = a.parentElement) if (tiny(a.getBoundingClientRect())) return;
       const st = getComputedStyle(e);
-      if ((st.overflowX !== "visible" || st.overflowY !== "visible") &&
-          (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1))
-        add(e, scrolls(st) ? "needs scrolling" : "clipped",
-            Math.max(e.scrollHeight - e.clientHeight, e.scrollWidth - e.clientWidth));
+      const larger = e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1;
+      const by_ = Math.max(e.scrollHeight - e.clientHeight, e.scrollWidth - e.clientWidth);
+      if ((st.overflowX !== "visible" || st.overflowY !== "visible") && larger)
+        add(e, scrolls(st) ? "needs scrolling" : "clipped", by_);
+      else if (larger && e instanceof HTMLElement && !NO_PART.test(e.tagName) &&
+               !NO_BOX.test(st.display))
+        add(e, SPILLS, by_);
       const text = [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
       if (text || /^(BUTTON|INPUT|SELECT|TEXTAREA|IMG|SVG)$/i.test(e.tagName)) {
         const by = Math.max(r.bottom - box.bottom, r.right - box.right, box.top - r.top, box.left - r.left);
