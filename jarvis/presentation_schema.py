@@ -389,6 +389,22 @@ class Presentation(Model):
     decisions: list[Decision]
 
 
+def file_paths(source: dict) -> list[str]:
+    """The paths a deck source (or any part of one holding its `assets` and
+    `references`) names as files beside it: each asset's `path` and each
+    `file` reference's `locator`. These are the only fields that name a
+    file; no other string in a source is ever a path."""
+    out: list[str] = []
+    for asset in source.get("assets") or []:
+        if isinstance(asset, dict) and isinstance(asset.get("path"), str):
+            out.append(asset["path"])
+    for ref in source.get("references") or []:
+        if (isinstance(ref, dict) and ref.get("kind") == "file"
+                and isinstance(ref.get("locator"), str)):
+            out.append(ref["locator"])
+    return out
+
+
 def words(obj) -> list[str]:
     """The words an object shows, in reading order: what its target is
     named by and what the shared deck's own text of it says."""

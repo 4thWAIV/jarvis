@@ -167,7 +167,7 @@ from jarvis import (briefing_labels, data_paths, deck_capacity, decision_package
                     layout_spec, make_package, package_evidence as pe, package_inbox,
                     package_jobs, package_mark, package_script, package_swarm as ps,
                     presentation_proof, script_visuals, sessions, spoken_words, step_cache)
-from jarvis.presentation_schema import HIS_WORDS
+from jarvis.presentation_schema import HIS_WORDS, file_paths
 
 DECK = "deck"
 FOLDER = "deck"                         # the author's source, in the run's folder
@@ -282,8 +282,8 @@ BUILT_NOTE = (
     "deck's header yourself. Where a slide needs a change of the script itself (another step, "
     "a node, a piece, a different visual form, fewer words), give that slide of the script, "
     "whole, in `slides`, and a changed visual form in `forms` with why; where a slide needs "
-    "splitting, give each new slide in `slides` after the one it comes from, with its outline "
-    "slide in `outline`. Each goes back to the script stage for those slides only: JARVIS "
+    "splitting, give in `slides` the slide it comes from, whole, then each new slide right "
+    "after it, with its outline slide in `outline`. Each goes back to the script stage for those slides only: JARVIS "
     "checks it and puts it in the script, marks it, and the owners sign their concerns off "
     "on it; then its deck slide is written again and reviewed in full.")
 
@@ -343,8 +343,9 @@ def revise_note(run: ps.Run) -> str:
     return (f"Revise the deck in {source_of(run)}, or answer each point raised. Where a point "
             f"needs a slide of the script changed (another step, a node, a piece, a different "
             f"visual form, fewer words), give that slide, whole, in `slides` (a changed form in "
-            f"`forms` with why); where a slide needs splitting, give each new slide in `slides` "
-            f"after the one it comes from, with its outline slide in `outline`. Each goes back "
+            f"`forms` with why); where a slide needs splitting, give in `slides` the slide it "
+            f"comes from, whole, then each new slide right after it, with its outline slide in "
+            f"`outline`. Each goes back "
             f"to the script stage for those slides only, then its deck slide is written again "
             f"and reviewed in full. Say what you changed and why.")
 
@@ -617,11 +618,22 @@ def _write_source(run: ps.Run, source: dict) -> None:
                   .encode("utf-8"))
 
 
-def _files_of(run: ps.Run, value) -> list[str]:
-    """The files beside the deck source that a part names by path."""
+def _files_of(run: ps.Run, value: dict) -> list[str]:
+    """The files beside the deck source that a source, its header or a
+    slide's part names in its path fields (presentation_schema.file_paths:
+    asset paths, file references' locators); no other string is a path."""
     folder = run.folder / FOLDER
-    return sorted(v for v in _ids_in(value) if v and not v.startswith("/") and ".." not in v
-                  and len(v) < 300 and (folder / v).is_file() and v != SOURCE)
+    out = set()
+    for v in file_paths(value):
+        rel = Path(v)
+        if not v or rel.is_absolute() or ".." in rel.parts or v == SOURCE:
+            continue
+        try:
+            if (folder / rel).is_file():
+                out.add(v)
+        except OSError:
+            continue
+    return sorted(out)
 
 
 def build_unit(run: ps.Run) -> step_cache.Unit:
@@ -847,8 +859,8 @@ class DeckSource:
 # a different visual form, fewer words) is never a dead end at the deck:
 # the author gives that slide of the script, whole, in the same turn it
 # writes the deck (`slides`, a changed form in `forms` with why), and a slide
-# that needs splitting as each new slide after the one it comes from, with
-# its outline slide (`outline`). JARVIS checks the script with them
+# that needs splitting as the slide it comes from, whole, then each new slide
+# right after it, with its outline slide (`outline`; `_placed`). JARVIS checks the script with them
 # (package_script.ScriptFile: each slide's visuals, values, its decision
 # slide's fit as the deck will draw it, and the outline's form, which it
 # changes) and puts them in the script; then those slides go back through
@@ -867,7 +879,8 @@ SCRIPT_PREFIX = "deck-script-"         # its stages and sign-offs in the convers
 SLIDES_WORDS = ("Each slide of the script that needs more than its words changed (another "
                 "step, a node, a piece, a different visual form, fewer words), as it should "
                 "be, whole, in script/1, with its own id; and, where a slide needs splitting, "
-                "each new slide right after the one it comes from, with a new id. Empty when "
+                "the slide it comes from, whole, then each new slide right after it, with a "
+                "new id. Empty when "
                 "none does. JARVIS checks the script with them and puts them in the script; "
                 "they go back through the script stage, then their deck slides are written "
                 "again.")
@@ -1529,8 +1542,11 @@ def deck(doc: dict) -> Optional[str]:
             kept.pop("deck_change_base", None)
             kept.pop("deck_change_outline", None)
             rewrite = plan.refresh()
-            restaged = units.setdefault("restaged", [])
-            restaged += [sid for sid in dict.fromkeys(passed + rewrite) if sid not in restaged]
+            if "closing" in units:
+                # In a close of the review: every slide passed in it is
+                # reviewed again in full, however often it went back before.
+                closing = units["closing"]
+                closing += [sid for sid in dict.fromkeys(passed + rewrite) if sid not in closing]
             swarm_.say(PROGRAM, f"The script stage passed script slide(s) "
                                 f"{', '.join(passed) or 'none'}; their deck slides "
                                 f"({', '.join(rewrite) or 'none'}) are written again and "
@@ -1600,12 +1616,14 @@ def deck(doc: dict) -> Optional[str]:
         async def close(items: list[dict]) -> bool:
             """The author's close of the deck review; each slide that went
             back through the script stage in it is reviewed again in full,
-            by every owner and the editor, for every deck concern."""
-            before = list(units.get("restaged") or [])
+            by every owner and the editor, for every deck concern, however
+            often it went back before (`closing`: the slides through_script
+            passed in this close, kept across the run's processes)."""
+            units.setdefault("closing", [])
             if not await written(revise_note(run), close=True):
+                units.pop("closing", None)
                 return False
-            again = [sid for sid in units.get("restaged") or [] if sid not in before
-                     and sid in plan.ids]
+            again = [sid for sid in units.get("closing") or [] if sid in plan.ids]
             if again and last.get("built") is not None:
                 with clock(f"deck-slides-{flow['pass']}"):
                     await ps.owners_turn(
@@ -1617,6 +1635,7 @@ def deck(doc: dict) -> Optional[str]:
                             f"is now; every other slide was reviewed before.\n"
                             + review_turn(run, last["built"], again) + "\n"
                             + sessions._tag(DeckSource.key, source.text(), file=SOURCE)))
+            units.pop("closing", None)
             return True
 
         async def nothing() -> None:

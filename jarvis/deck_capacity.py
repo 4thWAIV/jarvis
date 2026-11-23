@@ -64,8 +64,8 @@ SPLIT = "split it across slides"
 AT_DECK_WAYS = ("say less in it or show it in another form (that slide of the script, whole, "
                 "in `slides`; a changed visual form in `forms` with why), or give it a larger "
                 "slot (another layout or slot); a slide that needs splitting goes back to the "
-                "script stage: give each new slide in `slides` after the one it comes from, "
-                "with its outline slide in `outline`")
+                "script stage: in `slides` give the slide it comes from, whole, then each new "
+                "slide right after it, with its outline slide in `outline`")
 
 
 @contextlib.contextmanager

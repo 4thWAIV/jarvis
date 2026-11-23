@@ -408,6 +408,64 @@ def test_a_slide_changed_in_a_close_of_the_deck_review_is_reviewed_again_in_full
     assert pj.get(doc["id"])["deck"]["result"] == "passed"
 
 
+def test_a_slide_back_through_the_script_stage_again_in_a_close_is_reviewed_again_in_full(
+        marked, deck_plan):
+    # A slide that already went back through the script stage when the
+    # deck was first written goes back again in a close: its deck slide is
+    # reviewed again in full then too, however often it went back before.
+    from tests.test_package_swarm import LEFT
+    first = _steps_slide(deck_script())
+    again = copy.deepcopy(first)
+    again["on_screen"][0]["steps"].append({"title": "Eat at one", "says": ""})
+    doc = _passed(marked)
+    # The author changes the slide as it first writes the deck, writes it
+    # again from the script, and changes it once more in the close the
+    # editor's item at the deck review asks for.
+    deck_plan.signoffs = {"editor": [("resolved", []), ("not_yet", LEFT)]}
+    deck_plan.script_slides = [[first], [], [again]]
+    assert pd.deck(doc) is None
+    review = json.loads((Path(doc["folder"]) / pd.REVIEW).read_text())
+    assert sum("JARVIS put script slide(s) what-changed in the script" in t
+               for t in _said_on_the_deck(review)) == 2
+    assert _signed_at(review, "deck-slides-1") == {(c.id, c.owner) for c in pd.DECK_CONCERNS}
+    full = [t for t in deck_plan.sent["context_owner"] if "Review those slides in full" in t]
+    assert full and "Slide(s) what-changed went back through the script stage" in full[0]
+    assert pj.get(doc["id"])["deck"]["result"] == "passed"
+
+
+def test_only_a_source_s_path_fields_are_files_however_long_its_words(tmp_path):
+    # A real run crashed probing a narration sentence over 255 bytes as a
+    # file: only the asset paths and file references' locators the schema
+    # declares are files; no other string is ever looked for on disk.
+    from types import SimpleNamespace
+    folder = tmp_path / pd.FOLDER
+    (folder / "pictures").mkdir(parents=True)
+    (folder / "pictures" / "plan.png").write_bytes(b"png")
+    (folder / "evidence.md").write_text("e")
+    (folder / "Food is brought in").write_text("a file named like the words")
+    # The run's own sentence (over 255 bytes, under 300), and a longer one.
+    said = ("Before merging, design one and try it on a separate copy: make a backup, then "
+            "add a message, a package and a Work history entry. Restore the old software and "
+            "its matching data. Check that the old histories return and that all three new "
+            "records can be recovered.")
+    long_words = "Before merging, design one and try it on a separate copy. " * 8
+    deck = copy.deepcopy(make_package.EXAMPLE)
+    deck["slides"][0]["narration"][0]["say"] = said
+    deck["slides"][0]["objects"][0]["paragraphs"][0]["runs"][0]["text"] = long_words
+    deck["slides"][1]["objects"][0]["paragraphs"][0]["runs"][0]["text"] = "Food is brought in"
+    deck["assets"] = [{"id": "plan", "path": "pictures/plan.png"},
+                      {"id": "gone", "path": "pictures/gone.png"},
+                      {"id": "long", "path": "x" * 400 + ".png"}]
+    deck["references"].append({"id": "notes", "kind": "file", "locator": "evidence.md",
+                               "revision": "1", "description": "Notes."})
+    run = SimpleNamespace(folder=tmp_path)
+    assert 255 < len(said.encode()) < 300 and len(long_words.encode()) > 300
+    assert pd._files_of(run, deck) == ["evidence.md", "pictures/plan.png"]
+    header, parts = pd.parts_of(deck)
+    assert pd._files_of(run, parts[deck["slides"][0]["id"]]) == []
+    assert pd._files_of(run, header) == ["evidence.md", "pictures/plan.png"]
+
+
 def test_a_deck_not_signed_off_in_two_passes_sends_the_sender_what_is_left(marked,
                                                                           deck_plan):
     from tests.test_package_swarm import LEFT
