@@ -360,6 +360,15 @@
     // leave: they size to the space, never to a fixed thumbnail.
     var pictured = (d.options || []).some(function (o) { return o.picture; });
     if (pictured || d.picture || d.compare) section.classList.add("fill");
+    // What the slide shows beside its words (its presentation/1 objects,
+    // built from its script slide): a band above the options, drawn by
+    // presentation.js, taking the height the rest of the slide leaves.
+    if ((d.objects || []).length && window.JarvisPresentation && window.JarvisPresentation.renderShown) {
+      section.classList.add("fill");
+      var band = body.appendChild(el("div", "shown"));
+      band.id = "d-" + d.id + "-shown";
+      window.JarvisPresentation.renderShown(d.id, band);
+    }
     if (d.picture) {
       body.classList.add("with-context");
       var side = body.appendChild(el("div", "context"));

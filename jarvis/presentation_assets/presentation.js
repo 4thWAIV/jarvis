@@ -195,6 +195,22 @@
     });
     return section;
   }
+  // A decision's own objects (Decision.objects, slot "shown"), drawn in
+  // the band deck.js gives them above its options: each in its column, as
+  // the content slides' are, kept at least as tall as the program laid it
+  // out (model.shown, deck units).
+  const decisions = byId(doc.decisions);
+  function renderShown(decisionId, parent) {
+    const decision=decisions.get(decisionId); if(!decision)return;
+    parent.style.setProperty("--count",String(decision.objects.length));
+    decision.objects.forEach(object=>{
+      const slot=identify(node("div"),object.id);
+      slot.className="presentation-slot";slot.dataset.object=object.id;slot.dataset.kind=object.type;slot.dataset.slot=object.slot;
+      const least=(model.shown||{})[object.id];
+      if(least)slot.style.minHeight=`calc(${least} * var(--u))`;
+      renderers[object.type](object,slot);parent.append(slot);
+    });
+  }
   function fit(stage) {
     Object.assign(stage.style,{transform:"none",left:"0px",top:"0px",width:"100%",height:"100%"});
     document.documentElement.classList.toggle("presentation-linear",window.innerWidth<500 || window.__presentationLinear===true);
@@ -243,7 +259,7 @@
     const sourceSlide=doc.slides.find(s=>s.type==="decision"&&s.decision===decision.id);
     if(sourceSlide)section.dataset.sourceSlide=sourceSlide.id;
   }
-  window.JarvisPresentation={render,fit,rectangles,inspect,decorateDecision};
+  window.JarvisPresentation={render,renderShown,fit,rectangles,inspect,decorateDecision};
   window.addEventListener("message",event=>{
     const m=event.data;
     if(event.source!==parent||!m||m.jarvis!=="package")return;

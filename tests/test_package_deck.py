@@ -67,16 +67,19 @@ class DeckPlan(Plan):
         self.decks: list[dict] = [deck_with_his_words()]
 
         self.deck_edits: dict[str, list[dict]] = {}
+        # Each deck turn's script slides the author changes (`slides`).
+        self.script_slides: list[list[dict]] = []
 
     def answer(self, name, text, form):
-        if name == "author" and set(form["properties"]) == {"message"} and (
+        if name == "author" and set(form["properties"]) == {"message", "slides", "forms"} and (
                 "Now write the deck" in text or "Revise the deck" in text):
             self.sent.setdefault(name, []).append(text)
             deck = self.decks.pop(0) if len(self.decks) > 1 else self.decks[0]
             source = self.folder / pd.FOLDER / pd.SOURCE
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_text(yaml.safe_dump(deck, sort_keys=False))
-            return {"message": "author writes the deck"}
+            slides = self.script_slides.pop(0) if self.script_slides else []
+            return {"message": "author writes the deck", "slides": slides, "forms": []}
         answer = super().answer(name, text, form)
         if "signoff" in form["properties"] and "deck-says:" + name in str(form):
             answer["edits"] = self.deck_edits.pop(name, [])
@@ -254,11 +257,46 @@ def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
     content["slides"][2] = {**deck["slides"][1], "id": "where"}
     assert pd.script_problems(script, content) == [
         "Script slide where asks the decision where-to-eat: its deck slide is a decision slide "
-        "(type decision, id where) asking where-to-eat, its words in the decision's context and "
-        "what JARVIS says over it in the decision's say."]
+        "(type decision, id where) asking where-to-eat, with its recommendation and reason; "
+        "JARVIS puts its question, options, words, say and what it shows on it."]
     script["slides"][2]["decision"] = None
     assert pd.script_problems(script, deck) == [
         "Script slide where asks no decision: its deck slide is a content slide."]
+
+
+def test_a_slide_that_needs_another_step_goes_back_to_the_script_for_that_slide_only(
+        marked, deck_plan):
+    # Never a dead end at the deck: what only a change of a script slide
+    # gives (another step, a different form) the author gives as that slide
+    # of the script, whole; JARVIS checks it, puts it in the script and
+    # builds the slide again from it.
+    from jarvis import package_script, step_cache
+    passed = deck_script()
+    changed = copy.deepcopy(passed["slides"][1])
+    changed["on_screen"] = [{"kind": "steps", "steps": [
+        {"title": "Order by Thursday noon", "says": ""},
+        {"title": "Food is brought in", "says": "The team budget pays."}]}]
+    deck_plan.script_slides = [[{**changed, "id": "no-such-slide"}], [changed]]
+    doc = _passed(marked)
+    assert pd.deck(doc) is None
+    folder = Path(doc["folder"])
+    script = package_script.read(folder / package_script.FILE)
+    assert script["slides"][1] == changed and script["slides"][0] == passed["slides"][0]
+    source = yaml.safe_load((folder / pd.FOLDER / pd.SOURCE).read_text())
+    assert [o["type"] for o in source["slides"][1]["objects"]] == ["steps"]
+    said = _said_on_the_deck(json.loads((folder / pd.REVIEW).read_text()))
+    assert any("the script has no slide 'no-such-slide'" in t for t in said)
+    assert any("JARVIS put script slide(s) what-changed in the script" in t for t in said)
+    assert pj.get(doc["id"])["deck"]["result"] == "passed"
+    # The slide as changed is kept, keyed by the slide the swarm passed, so a
+    # later run takes it back rather than ask again.
+    kept = [json.loads(p.read_text()) for p in
+            (step_cache.root(doc) / pd.SCRIPT_CHANGE).glob(f"*/*/{step_cache.ENTRY}")]
+    assert [(e["name"], e["value"]["slide"]) for e in kept] == [("what-changed", changed)]
+    run = ps._run(pj.get(doc["id"]), pd.DECK)
+    package_script.write(run.script, passed)
+    assert pd.restore_script_changes(run, passed, ps._kept(run)) == ["what-changed"]
+    assert package_script.read(run.script)["slides"][1] == changed
 
 
 def test_a_deck_not_signed_off_in_two_passes_sends_the_sender_what_is_left(marked,
@@ -342,16 +380,17 @@ def test_a_slot_over_its_capacity_goes_back_to_the_author_never_the_sender(marke
 
 
 def test_a_decision_over_its_slide_goes_back_to_the_author(marked, deck_plan):
-    # A decision's slide is held to what it holds as a content slide is.
+    # A decision's slide is held to what it holds as a content slide is
+    # (its context is the script's, built by JARVIS; the reason the author's).
     long = deck_with_his_words()
-    long["decisions"][0]["context"] = "Where we eat on Friday matters to the whole team. " * 40
+    long["decisions"][0]["reason"] = "Where we eat on Friday matters to the whole team. " * 40
     deck_plan.decks = [long, deck_with_his_words()]
     doc = _passed(marked)
     assert pd.deck(doc) is None
     said = _said_on_the_deck(json.loads((Path(doc["folder"]) / pd.REVIEW).read_text()))
     assert said[0].startswith("The deck did not build.")
     assert "The decision where-to-eat (slide where) is over what its slide holds" in said[0]
-    assert "the context (`context`)" in said[0] and "%) over" in said[0]
+    assert "the recommendation and its reason (`reason`)" in said[0] and "%) over" in said[0]
     assert pj.get(doc["id"])["deck"]["result"] == "passed"
 
 
@@ -359,7 +398,7 @@ def test_a_deck_still_over_capacity_is_the_run_s_error_never_the_sender_s(marked
     # The author never makes it fit: a layout failure is the program's,
     # never findings for the sender (Tim 2026-11-22).
     long = deck_with_his_words()
-    long["decisions"][0]["context"] = "Where we eat on Friday matters to the whole team. " * 40
+    long["decisions"][0]["reason"] = "Where we eat on Friday matters to the whole team. " * 40
     deck_plan.decks = [long]
     doc = _passed(marked)
     with pytest.raises(pj.Blocked) as stopped:

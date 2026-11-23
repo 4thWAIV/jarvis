@@ -239,3 +239,31 @@ def test_a_decision_s_own_picture_beside_pictured_options_yields_to_them():
                                            "grid-template-columns")[0], True)
     assert deck.lines(long.context, side) * deck.body_line > deck.height
     assert deck_capacity.decision_problems(long, 0, [long], "ask") == []
+
+
+def test_a_decision_s_objects_are_held_with_its_slide_in_the_band_above_its_options(tmp_path):
+    # What a decision slide shows beside its words is drawn on it, in its
+    # context area: each object in its column of the band above the options,
+    # sized with the slide; a diagram or chart laid out in what the rest
+    # leaves.
+    def steps(n):
+        return {"id": "where-steps", "type": "steps", "slot": "shown",
+                "source": {"reference": "lunch-plan"},
+                "items": [{"id": f"step-{k}", "title": f"Step {k}", "says": SENTENCE}
+                          for k in range(1, n + 1)]}
+    source = read_source(_write(tmp_path / "a", _with_decisions([_decision(objects=[steps(2)])])))
+    decision = source.document.decisions[0]
+    box = deck_capacity.shown_box(decision, 0, source.document.decisions)
+    assert box[2] > 800 and deck_capacity.holds(box)[1] >= \
+        deck_capacity.BAND_MIN_LINES * deck_capacity.line_px("body") - 0.5
+    with pytest.raises(DeckCompileError) as refused:
+        read_source(_write(tmp_path / "b", _with_decisions([_decision(objects=[steps(8)])])))
+    assert "the steps where-steps (`objects[0]`)" in str(refused.value)
+    # A decision that shows objects has no picture of its own beside them.
+    with pytest.raises(DeckCompileError, match="has no picture of its own"):
+        read_source(_write(tmp_path / "c", _with_decisions([_decision(
+            objects=[steps(1)], picture="nope")])))
+    # A slot other than its context area is refused.
+    with pytest.raises(DeckCompileError, match="each one's slot is 'shown'"):
+        read_source(_write(tmp_path / "d", _with_decisions([_decision(
+            objects=[{**steps(1), "slot": "body"}])])))

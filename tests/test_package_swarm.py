@@ -140,7 +140,7 @@ class Plan:
                     "signoff": [{"concern": c, "state": state,
                                  "reason": f"{name}: {c} is fine" if state == "resolved"
                                  else "", "left": left} for c in concerns]}
-        assert set(props) == {"message"}
+        assert set(props) <= {"message", "slides", "forms"}
         if "Write your research in" in text:
             assert name == "author"
             (self.folder / ps.RESEARCH_MD).write_text("Finding: (files/situation.md)")

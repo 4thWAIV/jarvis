@@ -11,7 +11,7 @@ import yaml
 from pydantic import ValidationError
 
 from jarvis import deck_capacity, diagram_layout, layout_spec, picture_proof, presentation_data
-from jarvis.presentation_schema import (BarObject, ChartObject, ContentSlide, DiagramObject, Ellipse,
+from jarvis.presentation_schema import (SHOWN_SLOT, BarObject, ChartObject, ContentSlide, DiagramObject, Ellipse,
                                        FiguresObject, ImageObject, Presentation, Rectangle,
                                        ShapePath, StepsObject, TableObject, TextObject,
                                        VectorObject)
@@ -201,6 +201,10 @@ def _no_authored_layout(source: Source, data) -> None:
                             ("slides", n, "objects", m, "region"))
             if isinstance(obj, dict) and obj.get("type") == "diagram":
                 _no_drawn_diagram(source, obj, ("slides", n, "objects", m))
+    for n, decision in enumerate(data.get("decisions") or []):
+        for m, obj in enumerate((decision or {}).get("objects") or [] if isinstance(decision, dict) else []):
+            if isinstance(obj, dict) and obj.get("type") == "diagram":
+                _no_drawn_diagram(source, obj, ("decisions", n, "objects", m))
 
 
 # What JARVIS works out for a diagram and an author never gives
@@ -270,6 +274,67 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
         provenance(asset.source, asset.id)
         pictures[asset.id] = _asset(source, asset)
     source.pictures = pictures
+    def object_semantics(obj, box, visible: set) -> None:
+        """An object's own checks, laid out in `box`: a content slide's
+        slot, or a decision's place in its band (deck_capacity.shown_box)."""
+        if isinstance(obj, TextObject):
+            for paragraph in obj.paragraphs:
+                visible.add(paragraph.id)
+                visible.update(run.id for run in paragraph.runs)
+        elif isinstance(obj, ImageObject):
+            if obj.asset not in assets:
+                source.fail("reference", "Unknown image asset.", member=obj.id)
+            _drawn(source, pictures[obj.asset], layout_spec.slot_px(box), obj.id)
+        elif isinstance(obj, TableObject):
+            _data(source, presentation_data.expand_table, obj, datasets, source.language)
+            width = len(obj.head) if obj.head else len(obj.rows[0].cells)
+            for row in obj.rows:
+                if obj.data:
+                    _drawn_id(source, row.id, obj.id, visible)
+                visible.add(row.id)
+                if len(row.cells) != width:
+                    source.fail("schema", f"Every row of the table has {width} cells.", member=row.id)
+            for row in presentation_data.cell_ids(obj):
+                for cell in row:
+                    _drawn_id(source, cell, obj.id, visible)
+        elif isinstance(obj, ChartObject):
+            drawn = _data(source, presentation_data.resolve_chart, obj, datasets, source.language)
+            for series in drawn["series"]:
+                for point in series["points"]:
+                    _drawn_id(source, point["id"], obj.id, visible)
+        elif isinstance(obj, (FiguresObject, StepsObject)):
+            visible.update(item.id for item in obj.items)
+        elif isinstance(obj, DiagramObject):
+            for member, message in diagram_layout.structure(obj):
+                source.fail("diagram", message, member=member if member in source.nodes else obj.id)
+            visible.update(item.id for item in (*obj.nodes, *obj.links, *obj.groups))
+            obj._drawn = diagram_layout.layout(obj, box)
+        elif isinstance(obj, BarObject):
+            if obj.domain[0] != 0 or obj.domain[1] <= 0:
+                source.fail("schema", "The bar domain starts at zero and ends above zero.", member=obj.id)
+            for bar in obj.bars:
+                visible.add(bar.id)
+                provenance(bar.source, bar.id)
+                if bar.value > obj.domain[1]:
+                    source.fail("schema", "Bar value is outside its declared domain.", member=bar.id)
+        elif isinstance(obj, VectorObject):
+            for shape in obj.members:
+                visible.add(shape.id)
+                if isinstance(shape, ShapePath):
+                    _path(source, shape.d, shape.id)
+                else:
+                    if isinstance(shape, Rectangle):
+                        r = shape.rect
+                        if shape.radius > min(r.width, r.height) / 2:
+                            source.fail("schema", "Rectangle radius exceeds half its shortest side.", member=shape.id)
+                        bounds = (r.x, r.y, r.x + r.width, r.y + r.height)
+                    else:
+                        bounds = (shape.cx - shape.rx, shape.cy - shape.ry, shape.cx + shape.rx, shape.cy + shape.ry)
+                    pad = shape.strokePx / 2 if shape.stroke != "none" else 0
+                    v = obj.viewBox
+                    if bounds[0] - pad < v.x or bounds[1] - pad < v.y or bounds[2] + pad > v.x + v.width or bounds[3] + pad > v.y + v.height:
+                        source.fail("layout", "Stroked shape lies outside its viewBox.", member=shape.id)
+
     placed = []
     for slide in doc.slides:
         if not isinstance(slide, ContentSlide):
@@ -306,63 +371,7 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
                         + ".", member=slide.id)
         boxes = layout_spec.boxes(slide.layout, set(filled))
         for obj in slide.objects:
-            if isinstance(obj, TextObject):
-                for paragraph in obj.paragraphs:
-                    visible.add(paragraph.id)
-                    visible.update(run.id for run in paragraph.runs)
-            elif isinstance(obj, ImageObject):
-                if obj.asset not in assets:
-                    source.fail("reference", "Unknown image asset.", member=obj.id)
-                _drawn(source, pictures[obj.asset], layout_spec.slot_px(boxes[obj.slot]), obj.id)
-            elif isinstance(obj, TableObject):
-                _data(source, presentation_data.expand_table, obj, datasets, source.language)
-                width = len(obj.head) if obj.head else len(obj.rows[0].cells)
-                for row in obj.rows:
-                    if obj.data:
-                        _drawn_id(source, row.id, obj.id, visible)
-                    visible.add(row.id)
-                    if len(row.cells) != width:
-                        source.fail("schema", f"Every row of the table has {width} cells.", member=row.id)
-                for row in presentation_data.cell_ids(obj):
-                    for cell in row:
-                        _drawn_id(source, cell, obj.id, visible)
-            elif isinstance(obj, ChartObject):
-                drawn = _data(source, presentation_data.resolve_chart, obj, datasets, source.language)
-                for series in drawn["series"]:
-                    for point in series["points"]:
-                        _drawn_id(source, point["id"], obj.id, visible)
-            elif isinstance(obj, (FiguresObject, StepsObject)):
-                visible.update(item.id for item in obj.items)
-            elif isinstance(obj, DiagramObject):
-                for member, message in diagram_layout.structure(obj):
-                    source.fail("diagram", message, member=member if member in source.nodes else obj.id)
-                visible.update(item.id for item in (*obj.nodes, *obj.links, *obj.groups))
-                obj._drawn = diagram_layout.layout(obj, boxes[obj.slot])
-            elif isinstance(obj, BarObject):
-                if obj.domain[0] != 0 or obj.domain[1] <= 0:
-                    source.fail("schema", "The bar domain starts at zero and ends above zero.", member=obj.id)
-                for bar in obj.bars:
-                    visible.add(bar.id)
-                    provenance(bar.source, bar.id)
-                    if bar.value > obj.domain[1]:
-                        source.fail("schema", "Bar value is outside its declared domain.", member=bar.id)
-            elif isinstance(obj, VectorObject):
-                for shape in obj.members:
-                    visible.add(shape.id)
-                    if isinstance(shape, ShapePath):
-                        _path(source, shape.d, shape.id)
-                    else:
-                        if isinstance(shape, Rectangle):
-                            r = shape.rect
-                            if shape.radius > min(r.width, r.height) / 2:
-                                source.fail("schema", "Rectangle radius exceeds half its shortest side.", member=shape.id)
-                            bounds = (r.x, r.y, r.x + r.width, r.y + r.height)
-                        else:
-                            bounds = (shape.cx - shape.rx, shape.cy - shape.ry, shape.cx + shape.rx, shape.cy + shape.ry)
-                        pad = shape.strokePx / 2 if shape.stroke != "none" else 0
-                        v = obj.viewBox
-                        if bounds[0] - pad < v.x or bounds[1] - pad < v.y or bounds[2] + pad > v.x + v.width or bounds[3] + pad > v.y + v.height:
-                            source.fail("layout", "Stroked shape lies outside its viewBox.", member=shape.id)
+            object_semantics(obj, boxes[obj.slot], visible)
         for cue in slide.narration:
             if len(set(cue.focus)) != len(cue.focus):
                 source.fail("reference", "Cue focus contains duplicate targets.", member=cue.id)
@@ -381,6 +390,23 @@ def _semantics(source: Source, data: dict, built: bool = False) -> None:
                 source.fail("reference", "Decision picture names an unknown asset.", member=option.id)
             _drawn(source, pictures[option.picture],
                    layout_spec.picture_box("option", len(decision.options)), option.id)
+        if decision.objects:
+            # What the slide shows beside its words: drawn in its context
+            # area, the band above its options (deck.css .shown), each laid
+            # out in its place there; never beside a picture of its own.
+            if decision.picture is not None:
+                source.fail("layout", "A decision that shows objects draws them in its context area "
+                            "and has no picture of its own: put the picture among its objects.",
+                            member=decision.id)
+            box = deck_capacity.shown_box(decision, doc.decisions.index(decision), doc.decisions)
+            visible = set()
+            for obj in decision.objects:
+                provenance(obj.source, obj.id)
+                if obj.slot != SHOWN_SLOT:
+                    source.fail("layout", f"A decision's objects are drawn in its context area: each "
+                                f"one's slot is {SHOWN_SLOT!r}.", member=obj.id)
+                visible.add(obj.id)
+                object_semantics(obj, box, visible)
         for field, role in (("picture", "context"), ("compare", "compare")):
             asset = getattr(decision, field)
             if asset is None:

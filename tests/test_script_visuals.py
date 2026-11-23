@@ -292,12 +292,26 @@ def a_decision_slide(*pieces) -> dict:
                                      {"id": "bistro", "name": "Bistro", "says": "Nicest."}]}}
 
 
-def test_a_decision_slide_s_visual_is_built_before_it_and_checked(tmp_path):
+def _with_decision(built: dict) -> dict:
+    """A deck of the built content slides with the decision slide the author
+    writes: its recommendation and reason, and JARVIS's words left to it."""
+    deck = _deck_with(built)
+    deck["slides"].append({"id": "choose", "type": "decision", "decision": "where"})
+    deck["decisions"] = [{"id": "where", "question": "?", "recommended": "office",
+                          "reason": "It costs least.", "text_only": "Two rooms everyone knows.",
+                          "picture": "an-asset",
+                          "options": [{"id": "office", "name": "-", "says": "-"},
+                                      {"id": "bistro", "name": "-", "says": "-"}]}]
+    return deck
+
+
+def test_a_decision_slide_s_visual_is_drawn_on_the_decision_slide(tmp_path):
     from jarvis import package_deck
     script = a_script()
-    script["slides"].append(a_decision_slide(chart_piece()))
+    script["slides"].append(a_decision_slide(
+        {"kind": "text", "text": "Three places were asked.\n- Office\n- Bistro",
+         "source": "", "position": "", "path": "", "rows": []}, chart_piece()))
     held = sources(tmp_path)
-    assert sv.deck_ids(script) == ["costs", "how", "choose-shown", "choose"]
     # The outline's visual for it is checked like a content slide's.
     assert any(p.startswith("slide choose: the outline shows its point as line_chart")
                for p in script_.problems(script, ["lunch"], held,
@@ -306,54 +320,105 @@ def test_a_decision_slide_s_visual_is_built_before_it_and_checked(tmp_path):
                             {"slides": [{"id": "choose", "visual": "bar_chart"}]}) == []
     # Its numbers are found at their sources like a content slide's.
     wrong = copy.deepcopy(script)
-    wrong["slides"][2]["on_screen"][0]["rows"][1]["values"][1]["value"] = "15"
-    assert any("slide 3 (choose) on_screen[0].rows[1].values[1] ('15')" in p
+    wrong["slides"][2]["on_screen"][1]["rows"][1]["values"][1]["value"] = "15"
+    assert any("slide 3 (choose) on_screen[1].rows[1].values[1] ('15')" in p
                for p in script_.problems(wrong, ["lunch"], held))
-    # Too much for one slide is refused as the script is written.
+    # Too much for its decision slide is refused as the script is written.
     crowded = copy.deepcopy(script)
     crowded["slides"][2]["on_screen"].append(
         {"kind": "text", "text": "Each repair is checked on the live system first. " * 40,
          "source": "", "position": "", "path": "", "rows": []})
-    assert any("(what it shows before its decision) does not fit a slide" in p
+    assert any("(its decision slide) does not fit" in p
                for p in script_.problems(crowded, ["lunch"]))
-    # JARVIS builds it and puts it in before the decision slide.
+    # One script slide is one deck slide: JARVIS builds the decision's words
+    # and its visual from the script, for the decision slide itself.
     built = sv.built_slides(script)
-    assert [s["id"] for s in built["slides"]] == ["costs", "how", "choose-shown"]
-    deck = _deck_with({"slides": built["slides"][:2], "datasets": built["datasets"][:1],
-                       "assets": []})
-    deck["slides"].append({"id": "choose", "type": "decision", "decision": "where"})
-    assert any("the script's are ['costs', 'how', 'choose-shown', 'choose']" in p
-               for p in package_deck.script_problems(script, deck))
+    assert [s["id"] for s in built["slides"]] == ["costs", "how"]
+    part = built["decisions"][0]
+    assert part["slide"] == "choose" and part["question"] == "Where should Friday's lunch be?"
+    assert part["context"] == "Three places were asked.\n- Office\n- Bistro"
+    assert part["say"] == "The office is cheapest; choose."
+    assert [(o["type"], o["slot"]) for o in part["objects"]] == [("chart", "shown")]
+    assert [o["name"] for o in part["options"]] == ["Office", "Bistro"]
+    deck = _with_decision(built)
+    found = package_deck.script_problems(script, deck)
+    assert any("Decision slide choose's question is not the script's" in p for p in found)
     applied = sv.apply(deck, script)
-    assert [s["id"] for s in applied["slides"]] == ["costs", "how", "choose-shown", "choose"]
-    shown = applied["slides"][2]
-    assert [o["type"] for o in shown["objects"]] == ["chart"]
-    assert shown["narration"][0]["say"] == "The office is cheapest; choose."
+    assert [s["id"] for s in applied["slides"]] == ["costs", "how", "choose"]
+    decision = applied["decisions"][0]
+    assert decision["recommended"] == "office" and decision["reason"] == "It costs least."
+    assert decision["text_only"] == "Two rooms everyone knows." and "picture" not in decision
+    assert decision["objects"][0]["data"] == {"dataset": "choose-d1"}
+    assert {d["id"] for d in applied["datasets"]} == {"costs-d1", "choose-d1"}
     assert package_deck.script_problems(script, applied) == []
-    # A decision slide of plain words is the decision slide alone.
+    # An extra slide is not the script's: one script slide, one deck slide.
+    extra = copy.deepcopy(applied)
+    extra["slides"].insert(2, {**copy.deepcopy(applied["slides"][1]), "id": "choose-shown"})
+    assert any("the script's are ['costs', 'how', 'choose']" in p
+               for p in package_deck.script_problems(script, extra))
+    # It is a deck JARVIS reads: the decision's chart laid out in its band.
+    folder = tmp_path / "deck"
+    folder.mkdir()
+    script_.write(tmp_path / "script.yaml", script)
+    (folder / "presentation.yaml").write_text(yaml.safe_dump(json.loads(json.dumps(applied)),
+                                                             sort_keys=False, allow_unicode=True),
+                                              encoding="utf-8")
+    source = read_source(folder / "presentation.yaml")
+    assert source.document.decisions[0].objects[0]._drawn["series"]
+    # A decision slide of plain words is its context alone.
     plain = a_script()
     plain["slides"].append(a_decision_slide({"kind": "text", "text": "The office is cheapest.",
                                              "source": "", "path": "", "position": "",
                                              "rows": []}))
-    assert sv.deck_ids(plain)[-1] == "choose" and "choose-shown" not in sv.deck_ids(plain)
+    assert "objects" not in sv.built_slides(plain)["decisions"][0]
     assert script_.problems(plain, ["lunch"], held,
                             {"slides": [{"id": "choose", "visual": "text"}]}) == []
 
 
-def test_tim_s_words_on_a_decision_slide_are_drawn_on_the_slide_before_it():
+def test_tim_s_words_on_a_decision_slide_are_drawn_on_it():
     from jarvis import package_deck
     script = a_script()
     script["slides"].append(a_decision_slide(
         {"kind": "his_words", "text": "Keep lunch cheap.", "source": "files/survey.md",
          "position": "line 1", "path": "", "rows": []}))
     script["slides"][2]["narration"] = "You said: keep lunch cheap."
-    built = sv.built_slides(script)
-    deck = _deck_with({"slides": built["slides"], "datasets": built["datasets"], "assets": []})
-    deck["slides"].append({"id": "choose", "type": "decision", "decision": "where"})
+    deck = sv.apply(_with_decision(sv.built_slides(script)), script)
+    shown = deck["decisions"][0]["objects"][0]
+    assert shown["paragraphs"][0]["runs"][0]["emphasis"] == "his-words"
     assert package_deck.script_problems(script, deck) == []
-    deck["slides"][2]["narration"][0]["say"] = "Choose."
+    deck["decisions"][0]["say"] = "Choose."
     assert any("Slide choose's narration does not say Tim's words" in p
                for p in package_deck.script_problems(script, deck))
+
+
+def test_an_edit_of_a_decision_s_words_is_an_edit_of_its_script_slide():
+    script = a_script()
+    script["slides"].append(a_decision_slide(
+        {"kind": "text", "text": "Three places were asked.", "source": "", "position": "",
+         "path": "", "rows": []},
+        {"kind": "text", "text": "The office won.", "source": "", "position": "", "path": "",
+         "rows": []}))
+    deck = sv.apply(_with_decision(sv.built_slides(script)), script)
+    assert sv.script_edits(script, deck) == ([], [])
+    asked = copy.deepcopy(deck)
+    asked["decisions"][0]["question"] = "Where is Friday's lunch?"
+    assert sv.script_edits(script, asked)[0][0]["field"] == "decision.question"
+    said = copy.deepcopy(deck)
+    said["decisions"][0]["context"] = "Three places were asked.\nThe office clearly won."
+    assert sv.script_edits(script, said) == ([{
+        "slide": "choose", "field": "on_screen[1].text", "start": 11, "end": 11,
+        "old": "", "new": "clearly "}], [])
+    named = copy.deepcopy(deck)
+    named["decisions"][0]["options"][1]["says"] = "The nicest room."
+    assert sv.script_edits(script, named)[0][0]["field"] == "decision.options[1].says"
+    # The arrangement stays the deck's: its recommendation and reason.
+    reasoned = copy.deepcopy(deck)
+    reasoned["decisions"][0]["reason"] = "Nine euros a person."
+    assert sv.script_edits(script, reasoned) == ([], [])
+    # Another option is a change of the script slide itself: never a dead end.
+    more = copy.deepcopy(deck)
+    more["decisions"][0]["options"].append({"id": "cafe", "name": "Cafe", "says": "Near."})
+    assert sv.SCRIPT_ITEM in sv.script_edits(script, more)[1][0]
 
 
 # ── a deck owner's edit of a built word is an edit of the script ─────────
@@ -385,7 +450,7 @@ def test_an_edit_of_a_built_word_is_the_same_edit_of_the_script():
     # A part added or removed, or what JARVIS sets, is not an edit of it.
     fewer = copy.deepcopy(deck)
     fewer["slides"][1]["objects"][0]["items"].pop()
-    assert "add or remove it there" in sv.script_edits(script, fewer)[1][0]
+    assert sv.SCRIPT_ITEM in sv.script_edits(script, fewer)[1][0]
     retyped = copy.deepcopy(deck)
     retyped["slides"][1]["objects"][1]["label"] = "Bottom line, again"
     retyped["slides"][1]["objects"][0]["items"][0]["id"] = "how-v1-first"
@@ -418,6 +483,13 @@ def test_the_deck_source_makes_a_built_word_s_edit_in_the_script(tmp_path):
     assert refused == [] and applied[0]["in"] == "script.yaml"
     assert script_.read(run.script)["slides"][1]["on_screen"][1]["says"] == \
         "Nobody pays at the till."
+    # The deck step works from the script as it stands: its plan re-read,
+    # only the slide whose script changed is written again.
+    plan = package_deck.Plan(run, a_script())
+    plan.parts = {"costs": {"slide": {}}, "how": {"slide": {}}}
+    was = {sid: u.key for sid, u in plan.source_units.items()}
+    assert plan.refresh() == ["how"] and list(plan.parts) == ["costs"]
+    assert plan.source_units["costs"].key == was["costs"] != plan.source_units["how"].key
     assert "Nobody pays at the till." in after and old not in after
     # A number its source does not hold is not put in the script, so it is
     # not applied.

@@ -6,31 +6,40 @@ presentation pipeline, and compared slide by slide with the script.
 Run after the swarm passes, in JARVIS's own process (package_jobs.PRODUCERS),
 in the run's folder. A round:
 
-  from_script      JARVIS builds every content slide from the script's
-                   visuals by program (script_visuals: each script piece to
-                   its presentation/1 object, laid out in the first of its
-                   layouts in which every object fits its slot), and before
-                   each decision slide whose script slide shows more than
-                   words the content slide showing it (`-shown`), and gives
-                   them to the author (`built_tag`, `BUILT_NOTE`); before
-                   each build it puts the script's objects back on each
-                   content slide, the author's layout and slots kept
-                   (`from_script`): the author arranges, the script says
-                   what is shown (construction-drafts.md "The script
-                   describes each slide's visual", Tim 2026-11-22).
+  from_script      JARVIS builds every slide from the script by program
+                   (script_visuals): each content slide's visuals, each
+                   script piece to its presentation/1 object, laid out in
+                   the first of its layouts in which every object fits its
+                   slot; and each decision slide's words, its question and
+                   options the script's decision's, its context the slide's
+                   text pieces, its say the slide's narration and what else
+                   it shows (a visual, a picture, a table, Tim's words) its
+                   objects, drawn in the decision's context area; and gives
+                   them to the author (`built_tag`, `BUILT_NOTE`). Before
+                   each build it puts them back on each slide, the author's
+                   layout and slots kept (`from_script`): the author
+                   arranges, the script says what is shown (construction-
+                   drafts.md "The script describes each slide's visual",
+                   Tim 2026-11-22).
   write_deck       the author, in the same swarm, writes
                    `deck/presentation.yaml` (presentation/1) from the passed
                    script (script.yaml) alone, choosing JARVIS's named
                    layouts: one script slide to one deck slide, in order,
                    with the same id (a script slide that asks a decision the
                    deck's decision slide asking it, presentation/1's one
-                   slide for a decision); where the script gives Tim's own words
+                   slide for a decision, its visuals on it); where the script gives Tim's own words
                    (a his_words piece), they are runs in the `his-words`
                    style (presentation_schema.HIS_WORDS), drawn highlighted
                    in a very bright, vibrant way, and narrated. The
                    program's words to it (`write_note`) carry the script,
                    the format, word for word from docs/making-a-package.md,
-                   and a complete example.
+                   and a complete example. What only a change of a script
+                   slide gives (another step, a node, a piece, a different
+                   visual form) the author gives in the same turn: that
+                   slide of the script, whole, in `slides` (its form in
+                   `forms` with why); JARVIS checks the script with it,
+                   changes the outline's form, and builds that slide again
+                   (`script_change`; never a refusal nobody can act on).
   build_and_prove  the program fills each picture's size and hash
                    (make_package.fill_assets), compiles and proves it
                    (make_package.make_presentation: every slot's content
@@ -47,8 +56,8 @@ in the run's folder. A round:
                    drawn on its slide in the his-words style and said in its
                    narration (his_words_check: the program's check, no
                    vote), and every object the script's visuals make
-                   shown on its slide as the script gives it
-                   (script_visuals.unmatched). What does not build or check
+                   shown on its slide as the script gives it, and each
+                   decision's words (script_visuals.unmatched). What does not build or check
                    is said into the conversation as JARVIS's own turn, to
                    the author.
   deck_review      the program posts, as its own turn in the same
@@ -248,17 +257,22 @@ SHOW_NOTE = (
 # first-round wording, role-prompts.md "Author: the deck from the script's
 # visuals"); SHOW_NOTE stays beside it as a backstop.
 BUILT_NOTE = (
-    "JARVIS has built every content slide from the script's visuals, below: each object with "
-    "its content (words, steps, key figures, a callout, a table, a bar, line or scatter "
+    "JARVIS has built every slide from the script, below: each content slide's objects with "
+    "their content (words, steps, key figures, a callout, a table, a bar, line or scatter "
     "chart, a flow, cycle, hierarchy or timeline diagram, a picture), the datasets its charts "
     "draw and the pictures it shows, laid out in the first of JARVIS's layouts in which every "
-    "object fits its slot. Before each decision slide whose script slide shows more than "
-    "words, JARVIS has built the content slide that shows it, its id the decision slide's "
-    "with -shown, carrying that script slide's narration. Use them as given. You arrange: you "
-    "may choose another layout and another slot for each object, and split the narration into "
-    "cues that light each object; JARVIS puts the script's content back on every object by "
-    "its id, so a word changed in an object is not kept: the script says what is shown. Write "
-    "the deck's header and its decision slides yourself.")
+    "object fits its slot; and each decision slide's decision: its question and options, its "
+    "context (the slide's words), its say (what JARVIS says over it) and what else it shows as "
+    "objects, which JARVIS draws in the decision's context area above its options. Use them as "
+    "given. You arrange: you may choose another layout and another slot for each object, and "
+    "split the narration into cues that light each object; JARVIS puts the script's content "
+    "back on every slide by its id, so a word changed in what it built is not kept: the script "
+    "says what is shown. On each decision you write its recommendation and its reason, its "
+    "short name, the answers that need his words, and each option's picture (or why the "
+    "options cannot be pictured, text_only). Write the deck's header yourself. Where a slide "
+    "needs a change of the script itself (another step, a node, a piece, a different visual "
+    "form), give that slide of the script, whole, in `slides`, and a changed visual form in "
+    "`forms` with why: JARVIS checks it, puts it in the script and builds the slide again.")
 
 
 def built_tag(run: ps.Run) -> str:
@@ -293,10 +307,9 @@ def write_note(run: ps.Run) -> str:
         f"slide of the script is one slide of the deck, in the same order and with the same "
         f"id: its words on the slide, what JARVIS says over it as its narration. A script slide "
         f"that asks a decision is the deck's decision slide (type decision, the same id), "
-        f"asking that decision with the options you wrote: its words in the decision's context "
-        f"and what JARVIS says over it in the decision's say; where JARVIS builds the slide "
-        f"shown before it ({script_visuals.SHOWN}), that slide carries the narration, and the "
-        f"decision's say is only what JARVIS says as it asks.",
+        f"asking that decision: JARVIS builds its question, options, words (its context), say "
+        f"and what else it shows from the script, below, and you give its recommendation and "
+        f"reason.",
         f"Where the script gives Tim's own words (a his_words piece), show them on that slide as "
         f"runs with emphasis {HIS_WORDS}, which JARVIS draws highlighted in a very bright, "
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
@@ -314,8 +327,11 @@ def write_note(run: ps.Run) -> str:
 
 
 def revise_note(run: ps.Run) -> str:
-    return (f"Revise the deck in {source_of(run)}, or answer each point raised. Say what you "
-            f"changed and why.")
+    return (f"Revise the deck in {source_of(run)}, or answer each point raised. Where a point "
+            f"needs a slide of the script changed (another step, a node, a piece, a different "
+            f"visual form), give that slide, whole, in `slides` (a changed form in `forms` with "
+            f"why): JARVIS checks it, puts it in the script and builds that slide again. Say "
+            f"what you changed and why.")
 
 
 def revise_deck_note(run: ps.Run, slides: list[str], kept: list[str]) -> str:
@@ -398,21 +414,19 @@ def script_problems(script: dict, deck: dict) -> list[str]:
     (workflow.yaml deck): one script slide to one deck slide, in order, by
     id (write_deck); and each piece of Tim's own words drawn on its slide in
     the his-words style and said in its narration (his_words_check), its
-    words as they are, in order; and every object the script's visuals
-    make shown on its slide as the script gives it (script_visuals.
-    unmatched: the deck only arranges). A script slide that asks a decision
-    and shows more than words has JARVIS's slide showing it just before its
-    decision slide (script_visuals.deck_ids), where its words of Tim are
-    drawn and said."""
+    words as they are, in order (on a decision slide, among its objects and
+    in its say); and everything the script's slides make shown on their deck
+    slides as the script gives it (script_visuals.unmatched: the deck only
+    arranges)."""
     out = []
-    want = script_visuals.deck_ids(script)
+    want = [s.get("id") for s in script.get("slides") or [] if isinstance(s, dict)]
     have = [s.get("id") for s in deck.get("slides") or [] if isinstance(s, dict)]
     if want != have:
         out.append(f"The deck's slides are {have}; the script's are {want}. Write one deck "
                    f"slide for each script slide, in the same order, with the same id; a "
-                   f"script slide that asks a decision is the deck's decision slide (JARVIS "
-                   f"builds the slide shown before it, {script_visuals.SHOWN}).")
+                   f"script slide that asks a decision is the deck's decision slide.")
     slides = {s.get("id"): s for s in deck.get("slides") or [] if isinstance(s, dict)}
+    decisions = {d.get("id"): d for d in deck.get("decisions") or [] if isinstance(d, dict)}
     for wanted in script.get("slides") or []:
         slide = slides.get(wanted["id"])
         if slide is None:
@@ -421,18 +435,22 @@ def script_problems(script: dict, deck: dict) -> list[str]:
         if asked and (slide.get("type") != "decision" or slide.get("decision") != asked):
             out.append(f"Script slide {wanted['id']} asks the decision {asked}: its deck slide "
                        f"is a decision slide (type decision, id {wanted['id']}) asking "
-                       f"{asked}, its words in the decision's context and what JARVIS says "
-                       f"over it in the decision's say.")
+                       f"{asked}, with its recommendation and reason; JARVIS puts its "
+                       f"question, options, words, say and what it shows on it.")
         elif not asked and slide.get("type") != "content":
             out.append(f"Script slide {wanted['id']} asks no decision: its deck slide is a "
                        f"content slide.")
-    drawn_on = {s["id"]: script_visuals.drawn_on(s) for s in script.get("slides") or []}
     for quote in package_script.his_words(script):
-        slide = slides.get(drawn_on.get(quote["slide"], quote["slide"])) or {}
-        drawn = " ".join(run.get("text", "") for obj in slide.get("objects") or []
+        slide = slides.get(quote["slide"]) or {}
+        decision = decisions.get(slide.get("decision")) if slide.get("type") == "decision" \
+            else None
+        objects = (decision or {}).get("objects") if decision is not None \
+            else slide.get("objects")
+        drawn = " ".join(run.get("text", "") for obj in objects or []
                          for para in obj.get("paragraphs") or []
                          for run in para.get("runs") or [] if run.get("emphasis") == HIS_WORDS)
-        said = " ".join(c.get("say", "") for c in slide.get("narration") or [])
+        said = (decision or {}).get("say") or "" if decision is not None else \
+            " ".join(c.get("say", "") for c in slide.get("narration") or [])
         words = _words(quote["text"])
         if not _within(words, _words(drawn)):
             out.append(f"Slide {quote['slide']} does not draw Tim's words {quote['text']!r} in "
@@ -655,11 +673,8 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
     layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     slides = "\n".join(sessions._tag("slide", "\n".join([
         sessions._tag("script", package_script.dump(s), file=ps.SCRIPT),
-        *(sessions._tag("layout", json.dumps(layout.get(sid), indent=1, ensure_ascii=False),
-                        file=presentation_proof.PROOF_FILE,
-                        slide=None if sid == s["id"] else sid)
-          for sid in [s["id"]] + ([script_visuals.shown_id(s["id"])]
-                                  if script_visuals.shows_more(s) else []))]), id=s["id"])
+        sessions._tag("layout", json.dumps(layout.get(s["id"]), indent=1, ensure_ascii=False),
+                      file=presentation_proof.PROOF_FILE)]), id=s["id"])
         for s in script.get("slides") or [])
     return "\n\n".join([
         "The deck written from the passed script is built and proven, and every quote of Tim's "
@@ -674,7 +689,10 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
         "the sender, and whether every word is readable at its size is answered by the build. "
         "No screenshots. Compare each slide with the script, and see that what can be shown "
         "is shown (steps, a chart or key figures, a comparison or a table, a callout), not a "
-        "long paragraph.",
+        "long paragraph. A decision slide shows its objects in its context area, above its "
+        "options. Where a slide needs more than its words changed (another step, a node, a "
+        "piece, a different visual form), say it as an item: the author changes that slide of "
+        "the script and JARVIS builds it again; only that slide is written and reviewed again.",
         *([f"Only the slides this revision changed are below ({', '.join(only)}); every "
            f"other slide of the deck is as the run before made it and was reviewed then."]
           if only else []),
@@ -792,6 +810,126 @@ class DeckSource:
         return self.text(), applied, refused
 
 
+# ── a change of the script at the deck ────────────────────────────────────
+# What only a change of a script slide gives (another step, a node, a piece,
+# a different visual form) is never a dead end at the deck: the author
+# gives that slide of the script, whole, in the same turn it writes the
+# deck (`slides`, a changed form in `forms` with why); JARVIS checks the
+# script with it (package_script.ScriptFile: the slide's visuals, values,
+# fit and the outline's form, which it changes) and builds the slide again.
+# Only that slide's script, deck source and review are made again (the
+# step cache: `deck-script` keeps the slide as changed, keyed by the slide
+# the swarm passed, so a later run with the same inputs takes it back).
+SCRIPT_CHANGE = "deck-script"
+SLIDES_WORDS = ("Each slide of the script that needs more than its words changed (another "
+                "step, a node, a piece, a different visual form), as it should be, whole, in "
+                "script/1, with its own id; empty when none does. JARVIS checks the script with "
+                "it, puts it in the script and builds that slide again.")
+
+
+def author_form(run: ps.Run) -> dict:
+    """The author's turn at the deck: what it says, each script slide it
+    changes (`slides`) and each visual form it changes (`forms`)."""
+    slide = package_script.schema(ps.question_ids(run.doc))["properties"]["slides"]["items"]
+    return sessions._object({**ps.TALK["properties"],
+                             "slides": {"type": "array", "items": slide,
+                                        "description": SLIDES_WORDS},
+                             "forms": package_script.FORMS})
+
+
+def script_change(run: ps.Run, answer) -> tuple[list[str], list[dict], list[str]]:
+    """The script slides the author gave at the deck put in the script,
+    checked whole with the outline's forms changed as it says (package_
+    script.ScriptFile.take, which writes nothing that does not check): (the
+    slides that changed, the form changes made, what did not check)."""
+    given = [x for x in (answer.get("slides") if isinstance(answer, dict) else None) or []
+             if isinstance(x, dict)]
+    forms = [c for c in (answer.get("forms") if isinstance(answer, dict) else None) or []
+             if isinstance(c, dict)]
+    if not given and not forms:
+        return [], [], []
+    now = package_script.read(run.script) or {}
+    ids = package_script.slide_ids(now)
+    unknown = [str(x.get("id")) for x in given if x.get("id") not in ids]
+    if unknown:
+        return [], [], [f"slides: the script has no slide {i!r}; give a slide of the script by "
+                         f"its own id, whole, as it should be." for i in unknown]
+    by_id = {x["id"]: x for x in given}
+    work = run.script_file()
+    problems = work.take({"script": {
+        **now, "slides": [by_id.get(x.get("id"), x) for x in now.get("slides") or []]},
+        "forms": forms})
+    if problems:
+        return [], [], problems
+    return package_script.changed_slides(now, work.read()), list(work.form_changes), []
+
+
+def script_change_unit(run: ps.Run, sid: str, passed: dict,
+                       kept: Optional[dict] = None) -> step_cache.Unit:
+    """A script slide as the deck step changed it: keyed by the slide as the
+    swarm passed it and everything the deck is written and reviewed with
+    and asked (the tools, the findings answered, the revisions)."""
+    return step_cache.Unit(SCRIPT_CHANGE, sid, {
+        "script": step_cache.digest(passed), "write": writing_tool(run.doc, kept),
+        "review": review_tool(run.doc, kept),
+        "findings": [ps.findings_for(run.doc, WRITE_LABEL), ps.findings_for(run.doc, REVIEW_LABEL)],
+        "revisions": [[r.get("by") or "", r.get("words") or ""] for r in ps.revisions_of(run.doc)]})
+
+
+def restore_script_changes(run: ps.Run, passed: dict, kept: dict) -> list[str]:
+    """Each script slide an earlier run's deck step changed, kept under its
+    unit, put back in the script (and its outline slide in the outline),
+    when the script still checks with them; the slides put back."""
+    now = package_script.read(run.script) or {}
+    outline = package_script.read(run.outline) or {}
+    slides = {x.get("id"): x for x in now.get("slides") or [] if isinstance(x, dict)}
+    lines = {x.get("id"): x for x in outline.get("slides") or [] if isinstance(x, dict)}
+    back = []
+    for slide in passed.get("slides") or []:
+        if not isinstance(slide, dict) or slide.get("id") not in slides:
+            continue
+        entry = step_cache.reuse(script_change_unit(run, slide["id"], slide, kept), run.doc)
+        value = entry.value if entry is not None and isinstance(entry.value, dict) else {}
+        if isinstance(value.get("slide"), dict):
+            slides[slide["id"]] = value["slide"]
+            if isinstance(value.get("outline"), dict) and slide["id"] in lines:
+                lines[slide["id"]] = value["outline"]
+            back.append(slide["id"])
+    if not back:
+        return []
+    doc = {**now, "slides": [slides[x.get("id")] for x in now.get("slides") or []]}
+    new_outline = {**outline, "slides": [lines.get(x.get("id"), x)
+                                         for x in outline.get("slides") or []]}
+    work = run.script_file()
+    if outline and new_outline != outline:
+        before = run.outline.read_text(encoding="utf-8")
+        package_script.write(run.outline, new_outline)
+        if work._check(doc):
+            pe.write_file(run.outline, before.encode("utf-8"))
+            return []
+    elif work._check(doc):
+        return []
+    package_script.write(run.script, doc)
+    return back
+
+
+def keep_script_changes(run: ps.Run, passed: dict, kept: dict, began: float) -> list[str]:
+    """Each script slide the deck step changed this run, kept under its unit
+    (with its outline slide); the slides kept."""
+    now = {x.get("id"): x for x in (package_script.read(run.script) or {}).get("slides") or []
+           if isinstance(x, dict)}
+    lines = {x.get("id"): x for x in (package_script.read(run.outline) or {}).get("slides")
+             or [] if isinstance(x, dict)}
+    out = []
+    for slide in passed.get("slides") or []:
+        if isinstance(slide, dict) and now.get(slide.get("id")) not in (None, slide):
+            step_cache.computed(script_change_unit(run, slide["id"], slide, kept), run.doc,
+                                began, value={"slide": now[slide["id"]],
+                                              "outline": lines.get(slide["id"])})
+            out.append(slide["id"])
+    return out
+
+
 def _write_review(run: ps.Run, result: dict) -> None:
     pe.write_file(run.folder / REVIEW, json.dumps(result, indent=2, ensure_ascii=False)
                   .encode("utf-8"))
@@ -815,23 +953,57 @@ class Plan:
 
     def __init__(self, run: ps.Run, script: dict, kept: Optional[dict] = None):
         self.run = run
+        self.kept = kept
+        self.header: Optional[dict] = None
+        self.parts: dict[str, dict] = {}
+        # The keys whose kept output was rejected (it no longer builds):
+        # what the author writes in their place replaces them.
+        self.rejected: set[str] = set()
+        self._units(script)
+
+    def _units(self, script: dict) -> None:
         self.slides = [s for s in script.get("slides") or [] if isinstance(s, dict)]
         self.ids = [s.get("id") for s in self.slides]
-        tool = writing_tool(run.doc, kept)
+        tool = writing_tool(self.run.doc, self.kept)
         # The sender's answers to a deck that never built: the writing's
         # inputs, said to the author before it writes.
-        self.findings = ps.findings_for(run.doc, WRITE_LABEL)
+        self.findings = ps.findings_for(self.run.doc, WRITE_LABEL)
         self.header_unit = step_cache.Unit(HEADER, "", {
             "slides": self.ids, "opening": step_cache.digest(self.slides[:1]), "tool": tool,
             "findings": self.findings})
         self.source_units = {s.get("id"): step_cache.Unit(SLIDE_SOURCE, s.get("id"), {
             "script": step_cache.digest(s), "tool": tool, "findings": self.findings})
             for s in self.slides}
-        self.header: Optional[dict] = None
-        self.parts: dict[str, dict] = {}
-        # The keys whose kept output was rejected (it no longer builds):
-        # what the author writes in their place replaces them.
-        self.rejected: set[str] = set()
+
+    def refresh(self) -> list[str]:
+        """The units as the script stands now (re-read after every edit
+        written into it, a deck owner's or the author's slides): a slide
+        whose script slide changed has its source written again, the rest
+        as they are; the slides that changed."""
+        before = {sid: u.key for sid, u in self.source_units.items()}
+        header = self.header_unit.key
+        self._units(package_script.read(self.run.script) or {})
+        changed = [sid for sid, u in self.source_units.items() if before.get(sid) != u.key]
+        for sid in list(self.parts):
+            if sid in changed or sid not in self.source_units:
+                self.parts.pop(sid)
+        if self.header_unit.key != header:
+            self.header = None
+        return changed
+
+    def keep_all(self, began: float) -> None:
+        """The source as it passed, every slide and the header kept under
+        its key as the script stands now (a slide whose script changed
+        during the step, the author's or an owner's edit, under its new
+        key), so a later run reuses them."""
+        self.refresh()
+        header, parts = parts_of(_read_source(self.run))
+        if step_cache.lookup(self.header_unit, self.run.doc) is None:
+            step_cache.computed(self.header_unit, self.run.doc, began, value=header,
+                                files_from=_part_entry(self.run, header)["files_from"])
+        for sid, unit in self.source_units.items():
+            if sid in parts and step_cache.lookup(unit, self.run.doc) is None:
+                step_cache.computed(unit, self.run.doc, began, **_part_entry(self.run, parts[sid]))
 
     def reuse(self) -> None:
         entry = step_cache.reuse(self.header_unit, self.run.doc)
@@ -946,7 +1118,15 @@ def deck(doc: dict) -> Optional[str]:
                                          f"in this install ({DOC}).",
                                    "JARVIS reached the deck step.",
                                    "Install JARVIS with its docs folder, then a new run.")
-    script = package_script.read(run.script) or {}
+    # The script as the swarm passed it, kept for the run: the slides the
+    # deck step changes are keyed by it (`deck-script`), and an earlier
+    # run's changes of it are taken back once, as the step begins.
+    if "deck_script_base" not in kept:
+        kept["deck_script_base"] = package_script.read(run.script) or {}
+        restored = restore_script_changes(run, kept["deck_script_base"], kept)
+        if restored:
+            _log(f"deck: script slides {', '.join(restored)} as an earlier run's deck changed "
+                 f"them")
     state = kept.setdefault(DECK, {"builds": 0})
     units = kept.setdefault("deck_units", {})
     flow = kept.setdefault("deck_flow", {"stage": "deck-pass", "pass": 1})
@@ -965,18 +1145,20 @@ def deck(doc: dict) -> Optional[str]:
 
     def begin_review(built: Built) -> list[str]:
         """Each slide's review reused when kept; the slides left to review."""
-        reviews = review_units(run, built, script, kept)
+        plan.refresh()
+        reviews = review_units(run, built, package_script.read(run.script) or {}, kept)
         reviewed: dict[str, dict] = {}
         only = [sid for sid in plan.ids if sid in reviews
                 and not _reuse_review(run, reviews[sid], reviewed)]
         units.update(phase="review", only=only, said=False, reviewed=reviewed,
-                     inputs={sid: u.inputs for sid, u in reviews.items()})
+                     inputs={sid: u.inputs for sid, u in reviews.items()},
+                     script_at_review=package_script.read(run.script) or {})
         flow.clear()
         flow.update({"stage": "deck-pass", "pass": 1,
                      "slides": only if len(only) < len(plan.ids) else None})
         return only
 
-    plan = Plan(run, script, kept)
+    plan = Plan(run, package_script.read(run.script) or {}, kept)
     if units.get("phase") != "review":
         plan.reuse()
         if plan.complete:
@@ -991,14 +1173,31 @@ def deck(doc: dict) -> Optional[str]:
         swarm_ = ps.build(run, kept, DECK_CONCERNS)
         source = DeckSource(run, build_now)
 
-        async def written(note: str) -> bool:
+        async def written(note: str, close: bool = False) -> bool:
             """The author writes the slides not kept (every slide when none
             is), the kept ones put back, until the deck builds and proves,
-            at most ROUNDS_MAX more times."""
+            at most ROUNDS_MAX more times. In a close of the review
+            (`close`), what the author revised stands: nothing is put
+            back."""
             for attempt in range(ROUNDS_MAX + 1):
-                await swarm_.answer(ps.AUTHOR, ps.TIMEOUT, note if attempt == 0 else
-                                    revise_note(run), ps.TALK)
-                back = plan.put_back()
+                answer = await swarm_.answer(ps.AUTHOR, ps.TIMEOUT, note if attempt == 0 else
+                                             revise_note(run), author_form(run))
+                changed, forms, problems = script_change(run, answer)
+                if problems:
+                    swarm_.say(PROGRAM, "The script slides in your answer do not check; the "
+                                        "script stays as it was. Give them again, whole:\n"
+                               + "\n".join(f"- {p}" for p in problems))
+                    continue
+                if changed or forms:
+                    ps.forms_changed(swarm_, forms, "deck")
+                    rewrite = plan.refresh()
+                    swarm_.say(PROGRAM, f"JARVIS put script slide(s) {', '.join(changed)} in the "
+                                        f"script as you gave them and builds them again; only "
+                                        f"their deck slides ({', '.join(rewrite) or 'none'}) are "
+                                        f"written and reviewed again.")
+                else:
+                    plan.refresh()
+                back = [] if close else plan.put_back()
                 if back:
                     swarm_.say(PROGRAM, f"JARVIS put back slides {', '.join(back)} as they "
                                         f"were: their script slides did not change.")
@@ -1069,7 +1268,8 @@ def deck(doc: dict) -> Optional[str]:
                 ps._keep(run, swarm_, kept)
             end = await ps.fix_passes(
                 run, swarm_, kept, flow, DECK_IDS, source, mark=nothing,
-                revise=lambda items: written(revise_note(run)), given=given, clock=clock,
+                revise=lambda items: written(revise_note(run), close=True), given=given,
+                clock=clock,
                 prefix="deck-")
             if end == "waiting":
                 outcome["waiting"] = True
@@ -1104,11 +1304,11 @@ def _finish(run: ps.Run, kept: dict, plan: "Plan", outcome: dict, last: dict, st
     is kept) and the outcome on the job; else what is left to the sender."""
     doc = run.doc
     units = kept.get("deck_units") or {}
-    reviews = {sid: step_cache.Unit(SLIDE_REVIEW, sid, inputs)
-               for sid, inputs in (units.get("inputs") or {}).items()}
+    reviews: dict[str, step_cache.Unit] = {}
     built = last.get("built") or (build_now() if passed else None)
     if passed and built is not None:
-        built = _final(run, plan, reviews, units.get("reviewed") or {}, build_now) or built
+        final, reviews = _final(run, plan, kept, built, build_now)
+        built = final or built
     if built is None and state.get("unfit"):
         return _not_fit(run, kept, state)
     passed = passed and built is not None
@@ -1160,21 +1360,37 @@ def _reuse_review(run: ps.Run, unit: step_cache.Unit, reviewed: dict) -> bool:
     return True
 
 
-def _final(run: ps.Run, plan: Plan, reviews: dict[str, step_cache.Unit], reviewed: dict,
-           build_now: Callable[[], Optional[Built]]) -> Optional[Built]:
-    """The review passed: each slide reviewed now kept under its review key
-    with its source as reviewed; the final source is each reused slide's
-    reviewed part and the rest as they stand, built (reused when built
-    before). The final build."""
+def _final(run: ps.Run, plan: Plan, kept: dict, built: Built,
+           build_now: Callable[[], Optional[Built]]
+           ) -> tuple[Optional[Built], dict[str, step_cache.Unit]]:
+    """The review passed: the final source is each slide whose review was
+    reused as it was reviewed (unless its script slide changed since the
+    review began) and the rest as they stand, built again when it changed;
+    then, with the script as it stands now (re-read: an owner's edit or the
+    author's slides may have changed it), each slide's review kept under its
+    key with its source as reviewed, every slide's source and the header
+    kept (Plan.keep_all) and each script slide the step changed kept
+    (`keep_script_changes`). (The final build when built again, the review
+    units.)"""
     began = time.time()
+    units = kept.get("deck_units") or {}
+    reviewed = dict(units.get("reviewed") or {})
+    script = package_script.read(run.script) or {}
+    for sid in package_script.changed_slides(units.get("script_at_review") or script, script):
+        reviewed.pop(sid, None)
+    plan.refresh()
     header, parts = parts_of(_read_source(run))
-    for sid, unit in reviews.items():
-        if sid not in reviewed and sid in parts:
-            step_cache.computed(unit, run.doc, began, **_part_entry(run, parts[sid]))
     final = assemble(header, [reviewed.get(sid) or parts[sid] for sid in plan.ids
                               if sid in parts or sid in reviewed])
+    rebuilt = None
     if final != _read_source(run):
         _write_source(run, final)
-        return build_now()
-    return None
-
+        rebuilt = build_now()
+    reviews = review_units(run, rebuilt or built, script, kept)
+    _, parts = parts_of(_read_source(run))
+    for sid, unit in reviews.items():
+        if sid in parts and step_cache.lookup(unit, run.doc) is None:
+            step_cache.computed(unit, run.doc, began, **_part_entry(run, parts[sid]))
+    plan.keep_all(began)
+    keep_script_changes(run, kept.get("deck_script_base") or {}, kept, began)
+    return rebuilt, reviews

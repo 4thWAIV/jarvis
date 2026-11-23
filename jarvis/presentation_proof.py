@@ -74,6 +74,23 @@ def ordered_objects(slide: ContentSlide):
     return (objects[ident] for ident in slide.readingOrder)
 
 
+def placed_objects(source):
+    """Every object the deck draws with the box it is laid out in: each
+    content slide's in its slot, and each decision's in its place in the
+    band above its options (deck_capacity.shown_box)."""
+    for slide in source.document.slides:
+        if isinstance(slide, ContentSlide):
+            boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
+            for obj in slide.objects:
+                yield obj, boxes[obj.slot]
+    decisions = source.document.decisions
+    for n, decision in enumerate(decisions):
+        if decision.objects:
+            box = deck_capacity.shown_box(decision, n, decisions)
+            for obj in decision.objects:
+                yield obj, box
+
+
 def sizes() -> dict[str, tuple[float, float]]:
     """The two sizes a deck is drawn at, at the ends of the frame range."""
     frame = layout_spec.spec()["frame"]
@@ -99,23 +116,20 @@ def prove_text() -> list[Failure]:
 
 
 def prove_pictures(source, pictures: dict[str, picture_proof.Picture]) -> list[Failure]:
-    """Every picture of every content slide, drawn in its slot at every
-    frame; one failure a picture is enough to act on."""
+    """Every picture a slide or a decision shows, drawn in its place at
+    every frame; one failure a picture is enough to act on."""
     failures: list[Failure] = []
+    placed = [(obj, box) for obj, box in placed_objects(source) if isinstance(obj, ImageObject)]
     seen: set[str] = set()
-    for slide in source.document.slides:
-        if not isinstance(slide, ContentSlide):
-            continue
-        boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
-        for frame in layout_spec.frames():
-            for obj in slide.objects:
-                if not isinstance(obj, ImageObject) or obj.id in seen:
-                    continue
-                problem = picture_proof.drawn_problem(pictures[obj.asset],
-                                                      layout_spec.frame_box(boxes[obj.slot], frame))
-                if problem:
-                    seen.add(obj.id)
-                    failures.append(Failure(obj.id, frame, f"Picture {obj.id}: {problem}."))
+    for frame in layout_spec.frames():
+        for obj, box in placed:
+            if obj.id in seen:
+                continue
+            problem = picture_proof.drawn_problem(pictures[obj.asset],
+                                                  layout_spec.frame_box(box, frame))
+            if problem:
+                seen.add(obj.id)
+                failures.append(Failure(obj.id, frame, f"Picture {obj.id}: {problem}."))
     return failures
 
 
@@ -124,22 +138,18 @@ def prove_diagrams(source) -> list[Failure]:
     (diagram_layout, read with the source) placed them; one failure a
     diagram is enough to act on."""
     failures: list[Failure] = []
-    for slide in source.document.slides:
-        if not isinstance(slide, ContentSlide):
+    for obj, box in placed_objects(source):
+        if not isinstance(obj, DiagramObject):
             continue
-        boxes = layout_spec.boxes(slide.layout, {obj.slot for obj in slide.objects})
-        for obj in slide.objects:
-            if not isinstance(obj, DiagramObject):
-                continue
-            drawn = deck_capacity.drawn_diagram(obj, boxes[obj.slot])
-            if drawn["problems"]:
-                failures.append(Failure(obj.id, None, f"Diagram {obj.id}: {drawn['problems'][0]}."))
-                continue
-            for frame in layout_spec.frames():
-                problems = diagram_layout.frame_problems(drawn, boxes[obj.slot], frame)
-                if problems:
-                    failures.append(Failure(obj.id, frame, f"Diagram {obj.id}: {problems[0]}."))
-                    break
+        drawn = deck_capacity.drawn_diagram(obj, box)
+        if drawn["problems"]:
+            failures.append(Failure(obj.id, None, f"Diagram {obj.id}: {drawn['problems'][0]}."))
+            continue
+        for frame in layout_spec.frames():
+            problems = diagram_layout.frame_problems(drawn, box, frame)
+            if problems:
+                failures.append(Failure(obj.id, frame, f"Diagram {obj.id}: {problems[0]}."))
+                break
     return failures
 
 
@@ -351,6 +361,11 @@ def layout_data(source, story: dict | None = None) -> list[dict]:
                         "options": [{"id": o.id, "name": o.name, "says": o.says,
                                      "picture": o.picture} for o in d.options],
                         "recommended": d.recommended, "reason": d.reason, "say": d.say,
+                        # What it shows beside its words, each object in
+                        # its place in the band above the options.
+                        "objects": [_object_layout(obj, deck_capacity.shown_box(
+                            d, source.document.decisions.index(d), source.document.decisions),
+                            source.pictures) for obj in d.objects],
                         "text_px_range": {k: deck_words_px(rule)
                                     for k, rule in DECISION_WORDS.items()},
                         "narration": _story_of(story, d.id)})

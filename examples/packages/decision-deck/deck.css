@@ -142,7 +142,15 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .decide.with-context { display: grid; grid-template-columns: calc(290 * var(--u) * var(--fit, 1)) 1fr; gap: calc(16 * var(--u)); align-items: start; }
 .context { display: flex; flex-direction: column; gap: calc(8 * var(--u)); }
 .context .picture img { max-height: calc(220 * var(--u)); }
-.why { color: var(--muted); margin: 0; }
+.why { color: var(--muted); margin: 0; white-space: pre-line; }
+/* What the slide shows beside its words (presentation/1 objects built from
+   its script slide: steps, figures, a callout, a comparison, a table, a
+   chart, a diagram, a picture, Tim's own words): a band above the options,
+   the objects side by side in equal columns, drawn by presentation.js in
+   JARVIS's own parts (renderShown) and given the height the rest of the
+   slide leaves (jarvis/deck_capacity.py shown_box holds the slide to it). */
+.shown { display: flex; gap: calc(12 * var(--u)); align-items: stretch; }
+.slide.decision.fill .shown { flex: 1 1 0; min-height: min-content; }
 .options { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: calc(12 * var(--u)); }
 .option {
   position: relative;

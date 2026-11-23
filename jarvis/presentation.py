@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import (decision_package as dp, diagram_layout, package_story, package_understanding,
+from jarvis import (decision_package as dp, deck_capacity, diagram_layout, package_story, package_understanding,
                     presentation_data, presentation_proof)
 from jarvis.presentation_schema import (COMPONENTS, BarObject, ChartObject, ContentSlide,
                                         DiagramObject, FiguresObject, ImageObject, SourceRef,
@@ -46,50 +46,61 @@ def _targets(source: Source) -> list[dict]:
             add(decision.id, "decision", decision.question, authored, "d-" + decision.id)
             for option in decision.options:
                 add(option.id, "option", option.name, authored, "opt-" + decision.id + "-" + option.id)
+            # What it shows beside its words, in its context area: every
+            # object and its parts a target narration can light.
+            for obj in decision.objects:
+                _object_targets(obj, add)
             continue
         add(slide.id, "slide", slide.title, authored, "presentation-slide-" + slide.id)
         add(slide.id + "-title", "title", slide.title, authored)
         for obj in _ordered_objects(slide):
-            if isinstance(obj, TextObject):
-                add(obj.id,"text"," ".join(run.text for p in obj.paragraphs for run in p.runs),obj.source)
-                for paragraph in obj.paragraphs:
-                    add(paragraph.id,"paragraph","".join(r.text for r in paragraph.runs),obj.source)
-                    for run in paragraph.runs:
-                        add(run.id,"run",run.text,obj.source)
-            elif isinstance(obj, COMPONENTS):
-                add(obj.id,obj.type," ".join(words(obj)),obj.source)
-                if isinstance(obj, (FiguresObject, StepsObject)):
-                    kind = "figure" if isinstance(obj, FiguresObject) else "step"
-                    for item, said in zip(obj.items, words(obj)):
-                        add(item.id,kind,said,obj.source)
-            else:
-                add(obj.id,obj.type,obj.alt,obj.source)
-                if isinstance(obj, VectorObject):
-                    for shape in obj.members:
-                        add(shape.id,shape.type,shape.alt,obj.source)
-                elif isinstance(obj, BarObject):
-                    for bar in obj.bars:
-                        add(bar.id,"bar",f"{bar.label}: {bar.value:g} {obj.units}",bar.source)
-                elif isinstance(obj, TableObject):
-                    for row in obj.rows:
-                        add(row.id,"row"," | ".join(row.cells),obj.source)
-                    for row, ids in zip(obj.rows, presentation_data.cell_ids(obj)):
-                        for n, cell in enumerate(ids):
-                            head = f"{obj.head[n]}: " if obj.head else ""
-                            add(cell,"cell",head + row.cells[n],obj.source)
-                elif isinstance(obj, DiagramObject):
-                    # Every group, node and connector a target narration can light.
-                    for group in obj.groups:
-                        add(group.id,"group",group.label,obj.source)
-                    for node in obj.nodes:
-                        add(node.id,"node",node_words(node),obj.source)
-                    for link in obj.links:
-                        add(link.id,"connector",link_words(obj,link),obj.source)
-                elif isinstance(obj, ChartObject):
-                    for series in obj._drawn["series"]:
-                        for point in series["points"]:
-                            add(point["id"],"point",f"{series['label']}, {point['name']}",obj.source)
+            _object_targets(obj, add)
     return entries
+
+
+def _object_targets(obj, add) -> None:
+    """An object's targets, and its parts' (paragraphs and runs, items,
+    shapes, bars, rows and cells, a diagram's groups, nodes and connectors,
+    a chart's points)."""
+    if isinstance(obj, TextObject):
+        add(obj.id,"text"," ".join(run.text for p in obj.paragraphs for run in p.runs),obj.source)
+        for paragraph in obj.paragraphs:
+            add(paragraph.id,"paragraph","".join(r.text for r in paragraph.runs),obj.source)
+            for run in paragraph.runs:
+                add(run.id,"run",run.text,obj.source)
+    elif isinstance(obj, COMPONENTS):
+        add(obj.id,obj.type," ".join(words(obj)),obj.source)
+        if isinstance(obj, (FiguresObject, StepsObject)):
+            kind = "figure" if isinstance(obj, FiguresObject) else "step"
+            for item, said in zip(obj.items, words(obj)):
+                add(item.id,kind,said,obj.source)
+    else:
+        add(obj.id,obj.type,obj.alt,obj.source)
+        if isinstance(obj, VectorObject):
+            for shape in obj.members:
+                add(shape.id,shape.type,shape.alt,obj.source)
+        elif isinstance(obj, BarObject):
+            for bar in obj.bars:
+                add(bar.id,"bar",f"{bar.label}: {bar.value:g} {obj.units}",bar.source)
+        elif isinstance(obj, TableObject):
+            for row in obj.rows:
+                add(row.id,"row"," | ".join(row.cells),obj.source)
+            for row, ids in zip(obj.rows, presentation_data.cell_ids(obj)):
+                for n, cell in enumerate(ids):
+                    head = f"{obj.head[n]}: " if obj.head else ""
+                    add(cell,"cell",head + row.cells[n],obj.source)
+        elif isinstance(obj, DiagramObject):
+            # Every group, node and connector a target narration can light.
+            for group in obj.groups:
+                add(group.id,"group",group.label,obj.source)
+            for node in obj.nodes:
+                add(node.id,"node",node_words(node),obj.source)
+            for link in obj.links:
+                add(link.id,"connector",link_words(obj,link),obj.source)
+        elif isinstance(obj, ChartObject):
+            for series in obj._drawn["series"]:
+                for point in series["points"]:
+                    add(point["id"],"point",f"{series['label']}, {point['name']}",obj.source)
 
 
 def _deck(source: Source, targets: list[dict]) -> dict:
@@ -192,11 +203,16 @@ def compile_deck(source: Path, output: Path) -> CompiledDeck:
                     snapshot.parent.mkdir(exist_ok=True)
                     snapshot.write_bytes(evidence)
                     frozen[reference.id] = {"path": relative, "sha256": hashlib.sha256(evidence).hexdigest()}
-            charts={obj.id:obj._drawn for slide in parsed.document.slides for obj in getattr(slide,"objects",[])
-                    if isinstance(obj,ChartObject)}
-            diagrams={obj.id:obj._drawn for slide in parsed.document.slides for obj in getattr(slide,"objects",[])
-                      if isinstance(obj,DiagramObject)}
-            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"diagrams":diagrams,"diagram_arrow":diagram_layout.spec()["arrow"],"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
+            # Every object a slide or a decision shows (a decision's in its
+            # context area, presentation.js renderShown).
+            objects=[obj for holder in (*parsed.document.slides,*parsed.document.decisions)
+                     for obj in getattr(holder,"objects",[])]
+            charts={obj.id:obj._drawn for obj in objects if isinstance(obj,ChartObject)}
+            diagrams={obj.id:obj._drawn for obj in objects if isinstance(obj,DiagramObject)}
+            decisions=parsed.document.decisions
+            shown={k:v for n,decision in enumerate(decisions)
+                   for k,v in deck_capacity.shown_heights(decision,n,decisions).items()}
+            model={"frozen_references":frozen,"document":parsed.document.model_dump(exclude_none=True),"charts":charts,"diagrams":diagrams,"shown":shown,"diagram_arrow":diagram_layout.spec()["arrow"],"source_sha256":parsed.digest,"targets":targets,"story":builder.story(deck)}
             (folder/"presentation-data.js").write_text("window.PRESENTATION = "+json.dumps(model,ensure_ascii=False)+";\n",encoding="utf-8")
             (folder/"source.yaml").write_bytes(parsed.raw)
             (folder/"target-index.json").write_text(json.dumps(targets,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

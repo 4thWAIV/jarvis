@@ -258,3 +258,46 @@ def test_a_part_spilling_out_of_its_box_does_not_fit(tmp_path, beyond_capacity):
     [slide] = fit["slides"]
     assert not slide["fits"] and slide["cut"][0]["fit"] == "cut"
     assert any(p["how"] == deck_fit.SPILLS for c in slide["cut"] for p in c["parts"])
+
+
+# ── what a decision slide shows beside its words, on the slide itself ─────
+
+def _steps(says: str, k: int = 3) -> dict:
+    return {"id": "where-steps", "type": "steps", "slot": "shown",
+            "source": {"reference": "lunch-plan"},
+            "items": [{"id": f"where-step-{j}", "title": f"Step {j}", "says": says}
+                      for j in range(1, k + 1)]}
+
+
+def _flow(label: str) -> dict:
+    return {"id": "where-flow", "type": "diagram", "slot": "shown", "kind": "flow",
+            "source": {"reference": "lunch-plan"}, "alt": "How the lunch is ordered.",
+            "nodes": [{"id": f"where-node-{j}", "label": f"{label} {j}"} for j in (1, 2, 3)],
+            "links": [{"id": "where-link-1", "from": "where-node-1", "to": "where-node-2"},
+                      {"id": "where-link-2", "from": "where-node-2", "to": "where-node-3"}]}
+
+
+SHOWN = {
+    "steps": lambda n: [_steps(_words(n))],
+    "a flow beside steps": lambda n: [_flow("Order"), _steps(_words(n), 2)],
+    "a callout and key figures": lambda n: [
+        {"id": "where-callout", "type": "callout", "slot": "shown",
+         "source": {"reference": "lunch-plan"}, "label": "Bottom line", "says": _words(n)},
+        {"id": "where-figures", "type": "figures", "slot": "shown",
+         "source": {"reference": "lunch-plan"},
+         "items": [{"id": "where-figure-1", "value": "9 €", "label": "a person, office"},
+                   {"id": "where-figure-2", "value": "22 €", "label": "a person, bistro"}]}],
+}
+
+
+@pytest.mark.parametrize("shape", sorted(SHOWN))
+def test_a_decision_s_objects_the_capacity_takes_are_drawn_whole_on_its_slide(tmp_path, shape):
+    """A decision slide's visuals (its objects) are drawn on the decision
+    slide itself, in the band above its options: at the largest the
+    capacity takes they are drawn whole at every frame, every part within
+    its box, the options and the vote row in sight."""
+    deck, n = _edge(tmp_path / "try", lambda n: _with([_ask(
+        context=_words(10), options=_options(2, _words(8)), objects=SHOWN[shape](n))]))
+    folder = _built(tmp_path / "built", deck)
+    fit = deck_fit.measure(folder, only=["ask-where-to-eat", "answers"])
+    assert fit["fits"], f"{shape} at {n}: " + "\n".join(deck_fit.problems(fit))

@@ -26,7 +26,10 @@ paragraph (`capacity.prose_paragraph_lines` lines of its widest text
 slot), each said so the author can split it or show it as a visual.
 `decision_problems` and `answers_problems` hold a decision's slide and the
 answers slide, the shared deck's own, to what they hold the same way,
-worked out from its layout in deck.css (below). The
+worked out from its layout in deck.css (below); a decision's objects (what
+its slide shows beside its words) in the band above its options, each in
+its column, laid out in the height the rest of the slide leaves
+(`shown_box`). The
 deck.js text fit (each slide's words grown to fill it, never under the
 floor) stays as rendering: within capacity, it always finds a size.
 """
@@ -429,6 +432,12 @@ class _Deck:
     def lines(self, text: str, width: float) -> int:
         return lines_of(" ".join(text.split()), width, self.px)
 
+    def lines_kept(self, text: str, width: float) -> int:
+        """Lines of words drawn with their line breaks kept (deck.css .why,
+        white-space: pre-line): each line wrapped on its own."""
+        return sum(lines_of(" ".join(line.split()), width, self.px)
+                   for line in str(text).splitlines() if line.strip()) or 1
+
     def button_w(self, label: str) -> float:
         return len(label) * self.char + 2 * self.button_pad + 2
 
@@ -485,16 +494,19 @@ class Part:
     chars: int
 
 
-def _decision_parts(deck: _Deck, decision, index: int, decisions, parents) -> tuple[float, list[Part]]:
+def _decision_parts(deck: _Deck, decision, index: int, decisions, parents,
+                    problems: list[str] | None = None) -> tuple[float, list[Part]]:
     """The height of a decision's slide (deck.js decisionSlide in deck.css's
-    layout) and the parts its words take."""
+    layout) and the parts its words and its objects take; what in its
+    objects does not fit their places is added to `problems`."""
     d, u = decision, deck.u
+    problems = problems if problems is not None else []
     by_id = {x.id: x for x in decisions}
     parts: list[Part] = []
     total = len(decisions)
 
-    def part(field, said, text, width, line):
-        n = deck.lines(text, width) if text else 0
+    def part(field, said, text, width, line, kept=False):
+        n = ((deck.lines_kept if kept else deck.lines)(text, width)) if text else 0
         parts.append(Part(field, said, n, n * line, width, len(text or "")))
         return n * line
 
@@ -509,7 +521,8 @@ def _decision_parts(deck: _Deck, decision, index: int, decisions, parents) -> tu
     heights.append(part("reason", "the recommendation and its reason", recommends, deck.width,
                         deck.body_line))
     if d.context and not d.picture:
-        heights.append(part("context", "the context", d.context, deck.width, deck.body_line))
+        heights.append(part("context", "the context", d.context, deck.width, deck.body_line,
+                            kept=True))
     # The options, a grid of cards (deck.js picks the columns).
     n = len(d.options)
     pictured = any(o.picture for o in d.options)
@@ -554,6 +567,15 @@ def _decision_parts(deck: _Deck, decision, index: int, decisions, parents) -> tu
 
     if not d.picture:
         body = options_in(deck.width, part)
+        if d.objects:
+            # What the slide shows (its objects) in the band above the
+            # options (deck.css .shown): each object in its column, the band
+            # as tall as the tallest, laid out where it holds least
+            # (`shown_box`); the band's own problems said with the slide's.
+            band, band_parts, band_problems = _band(deck, d, index, decisions, parents)
+            parts.extend(band_parts)
+            problems.extend(band_problems)
+            body += band + decide_gap
     else:
         # A decision's own picture yields to the options (deck.js arrange):
         # beside them, in a column with its words, the options in what that
@@ -616,14 +638,89 @@ def _decision_parts(deck: _Deck, decision, index: int, decisions, parents) -> tu
     return sum(heights) + deck.gap * (len(heights) - 1), parts
 
 
+# The least height of the band a decision's objects are drawn in, in lines
+# of body text at the floor: what a picture, a chart or a diagram is laid
+# out in when the rest of the slide leaves less (and the slide is then over).
+BAND_MIN_LINES = 5
+# What grows to fill the band: laid out in its whole height.
+_FILLS = (ChartObject, DiagramObject)
+
+
+def canvas_box(width_px: float, height_px: float) -> tuple[float, float, float, float]:
+    """The box on the 880 x 640 canvas whose inner size at the smallest frame
+    (layout_spec.frame_box) is `width_px` x `height_px`."""
+    w, h = frame()
+    rule = layout_spec.spec()["unit"]
+    pad = 2 * layout_spec.spec()["slot_padding"] * _u()
+    return (0.0, 0.0, (width_px + pad) * rule["width"] / w, (height_px + pad) * rule["height"] / h)
+
+
+def shown_box(decision, index: int, decisions) -> tuple[float, float, float, float]:
+    """The box each of a decision's objects is laid out in (deck.css .shown,
+    the band above its options, its objects side by side in equal columns):
+    its column's width and the height the rest of the slide leaves at the
+    smallest frame with every word at its floor, at least BAND_MIN_LINES
+    lines; as a canvas box (`canvas_box`)."""
+    deck = _Deck()
+    bare = decision.model_copy(update={"objects": []})
+    rest, _ = _decision_parts(deck, bare, index, decisions, _parents(decisions))
+    decide_gap = css_units(".slide.decision.fill .decide", "gap")[0] * deck.u
+    left = deck.height - rest - decide_gap
+    k = max(1, len(decision.objects))
+    gap = css_units(".shown", "gap")[0] * deck.u
+    width = (deck.width - (k - 1) * gap) / k
+    return canvas_box(width, max(left, BAND_MIN_LINES * line_px("body")))
+
+
+def shown_heights(decision, index: int, decisions) -> dict[str, float]:
+    """The least height, in deck units, the shared deck keeps for each of a
+    decision's objects that fills its place (a chart, a diagram, a picture):
+    the band's height it was laid out in (presentation.js sets it as the
+    object's min-height, so it is drawn at least as the program laid it out)."""
+    if not decision.objects:
+        return {}
+    box = shown_box(decision, index, decisions)
+    _, h = holds(box)
+    pad = 2 * layout_spec.spec()["slot_padding"] * _u()
+    units = (h + pad) / _u()
+    from jarvis.presentation_schema import ImageObject, VectorObject
+    return {o.id: round(units, 3) for o in decision.objects
+            if isinstance(o, (*_FILLS, ImageObject, VectorObject))}
+
+
+def _band(deck: _Deck, d, index: int, decisions, parents) -> tuple[float, list[Part], list[str]]:
+    """The band of a decision's objects: its height (the tallest object in
+    its column; what fills its place, as tall as the band it is laid out
+    in), each object's part and what in an object does not fit its place."""
+    from jarvis.presentation_schema import ImageObject, VectorObject
+    box = shown_box(d, index, decisions)
+    width, held = holds(box)
+    parts, problems, tallest = [], [], 0.0
+    for i, obj in enumerate(d.objects):
+        need = needs(obj, box)
+        px = held if isinstance(obj, (*_FILLS, ImageObject, VectorObject)) else 0.0
+        if need is not None:
+            px = max(px, need.px)
+            problems += [f"The {obj.type} {obj.id} on decision {d.id}'s slide does not fit its "
+                         f"place: {p}." for p in need.problems]
+        said = " ".join(words(obj)) if not isinstance(obj, (ImageObject, VectorObject)) else ""
+        parts.append(Part(f"objects[{i}]", f"the {obj.type} {obj.id}",
+                          math.ceil(as_lines(px)), px, width, len(said)))
+        tallest = max(tallest, px)
+    return tallest, parts, problems
+
+
 def decision_problems(decision, index: int, decisions, slide_id: str) -> list[tuple[str, str]]:
     """What does not fit on a decision's slide, each (member, words for the
     author): the slide over what it holds at the smallest frame, naming its
     longest fields, the lines each takes and how much less would fit."""
     deck = _Deck()
-    needed, parts = _decision_parts(deck, decision, index, decisions, _parents(decisions))
+    found: list[str] = []
+    needed, parts = _decision_parts(deck, decision, index, decisions, _parents(decisions),
+                                    found)
+    out = [(decision.id, problem) for problem in found]
     if needed <= deck.height + 0.5:
-        return []
+        return out
     over_px = needed - deck.height
     longest = sorted((p for p in parts if p.lines), key=lambda p: -p.px)
     named = "; ".join(f"{p.said} (`{p.field}`) {p.lines} line{'s' if p.lines != 1 else ''}"
@@ -632,7 +729,7 @@ def decision_problems(decision, index: int, decisions, slide_id: str) -> list[tu
     per = max(1, int(top.width // deck.char))
     less = min(top.chars, math.ceil(over_px / deck.body_line) * per)
     where = "662 x 489, every word at its floor"
-    return [(decision.id, f"The decision {decision.id} (slide {slide_id}) is over what its slide "
+    return out + [(decision.id, f"The decision {decision.id} (slide {slide_id}) is over what its slide "
                           f"holds at {where}: it needs {_over(needed, deck.height)}. Its "
                           f"longest parts: {named}. Say less in {top.said} (`{top.field}`, about "
                           f"{less} characters less), give fewer options, or put the background "

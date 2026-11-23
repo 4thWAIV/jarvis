@@ -347,6 +347,15 @@ class Option(Model):
     opens: list[Id] = []          # follow-up decisions this answer opens
 
 
+# The one slot of a decision's own objects: its context area, a band above
+# its options (deck.css .shown), where the shared deck draws what its
+# script slide shows beside the words (script_visuals: steps, figures, a
+# callout, a comparison, a table, a chart, a diagram, a picture, Tim's own
+# words), each object a target narration can light.
+SHOWN_SLOT = "shown"
+SHOWN_MAX = 4
+
+
 class Decision(Model):
     id: Id
     question: Text
@@ -360,6 +369,9 @@ class Decision(Model):
     say: Text | None = None           # what JARVIS says for it in place of the recommendation
     text_only: Text | None = None     # why its options cannot be pictured
     needs_words: list[Id] = []        # answers that need his words
+    # What the slide shows beside its words, drawn in its context area (slot
+    # SHOWN_SLOT), in reading order; sized by deck_capacity with the slide.
+    objects: Annotated[list[VisibleObject], Field(max_length=SHOWN_MAX)] = []
 
 
 class Presentation(Model):

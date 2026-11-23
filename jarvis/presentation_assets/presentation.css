@@ -156,6 +156,10 @@ html { --series-1:var(--accent); --series-2:#f97316; --series-3:#22c55e; --serie
 .presentation-diagram[data-kind="timeline"] .presentation-diagram-group { border:none; border-radius:999px; background:color-mix(in srgb, var(--accent) 28%, var(--surface)); }
 .presentation-diagram[data-kind="timeline"] .presentation-diagram-group-label { color:var(--text); justify-content:center; text-align:center; }
 .presentation-diagram-marker { border-radius:50%; background:var(--accent); border:2px solid var(--surface); transform:translate(-50%, -50%); }
+/* A decision's own objects (deck.css .shown): each in its column of the
+   band, in flow, as tall as the band. */
+.shown > .presentation-slot { position:relative; flex:1 1 0; min-width:0; }
+.presentation-linear .shown { flex-direction:column; }
 .presentation-slot [data-member]:focus { outline:3px solid var(--accent); outline-offset:3px; }
 .presentation-inspector { position:fixed; inset:1em; z-index:100; background:var(--surface); border:1px solid var(--edge); padding:1em; overflow:auto; }
 .presentation-inspector[hidden] { display:none; }

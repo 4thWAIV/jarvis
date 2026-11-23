@@ -1676,7 +1676,10 @@ out, sizes, builds and proves a deck, `PIPELINE_CODE`, the shared
 deck's files and the presentation assets, and the build language,
 `make_package.built_language`), `deck-review` (one a slide: its part, its
 layout data, script slide,
-`review_tool` and the findings answered on it), `deck` (the slides'
+`review_tool` and the findings answered on it), `deck-script` (one a
+script slide the deck step changed, the slide as changed and its outline
+slide, keyed by the slide the swarm passed, the writing and review tools,
+the findings and the revisions, `package_deck.script_change_unit`), `deck` (the slides'
 review keys, the source and the build's key, since the review's record
 carries the build's verdict) and `deliver` (the deck, the briefing, the
 message, who asked, the fingerprint of JARVIS's signing key,
@@ -2116,9 +2119,10 @@ swarm's `Run.sources`; every picture piece a file `Sources` reads and a
 picture JARVIS draws, `picture_problems` over `picture_proof.prove`; every
 content slide laid out in the first of
 JARVIS's layouts in which each object fits its slot by deck_capacity,
-`fit_problems`, and a slide asking a decision that shows more than words
-laid out the same way, as the content slide shown before its decision
-slide; each slide showing the visual its outline slide names, a decision
+`fit_problems`, and a slide asking a decision held to what its decision
+slide holds, its question, options, words and objects with the shortest
+recommendation, `decision_fits` over `deck_capacity.decision_problems`;
+each slide showing the visual its outline slide names, a decision
 slide's too (its decision's words counting as text), `plan_problems`), so
 a script that cannot be drawn is refused before the deck. A slide's form
 may change after the outline is signed off: a script turn of the author's
@@ -2170,25 +2174,29 @@ processes.
 The deck step (`package_deck.deck`, `PRODUCERS["deck"]`; design:
 workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
 `DECK_CONCERNS`, each of `DECK_QUESTIONS` for each owner and the editor). The
-program builds every content slide from the script's visuals
-(`script_visuals.built_slides`: each piece its presentation/1 object, a
-chart its dataset, laid out in the first layout that fits), and before
-each decision slide whose script slide shows more than words (a visual, a
-picture, a table, his words) the content slide showing it, id `<id>-shown`
-(`script_visuals.companions`, `deck_ids`, `drawn_on`: the deck's slide
-ids and where his words are drawn and said; put in by `apply` when the
-author did not write it, carrying that slide's narration), given to the
-author with `BUILT_NOTE`, and before every build puts the script's
-objects back on each content slide (`package_deck.from_script`,
-`script_visuals.apply`: the author's layout and slots kept where it gave
-every object one, matched by id else by type in order; its narration cues
-kept, lighting only what the slide shows); `script_problems` says any
-object that is not the script's (`script_visuals.unmatched`), and
+program builds every slide from the script (`script_visuals.built_slides`):
+each content slide's visuals (each piece its presentation/1 object, a chart
+its dataset, laid out in the first layout that fits), and each decision
+slide's decision (`Built.decision_part`: its question and options the
+script's decision's, its context the slide's text pieces, its `say` the
+slide's narration, and what else it shows, a visual, a picture, a table, his
+words, its `objects`, presentation_schema `Decision.objects`, slot `shown`,
+drawn by the shared deck on the decision slide itself in its context area,
+the band above its options: deck.js `renderShown` through presentation.js,
+deck.css `.shown`, sized with the slide by `deck_capacity.decision_problems`
+in `shown_box`, laid out, proved and each a target narration lights); given
+to the author with `BUILT_NOTE`, and before every build put back on each
+slide (`package_deck.from_script`, `script_visuals.apply`: on a content
+slide the author's layout and slots kept where it gave every object one,
+matched by id else by type in order, its narration cues kept, lighting only
+what the slide shows; on a decision its recommendation, reason, short name,
+`needs_words` and options' pictures kept, its own `picture` dropped,
+`merged_decision`); `script_problems` says anything that is not the
+script's (`script_visuals.unmatched`, a decision's words too), and
 `SHOW_NOTE` stays as a backstop. A round: the author writes `deck/presentation.yaml`
 (presentation/1) from the passed script alone, one script slide to one
 deck slide, in order and with the same id (a script slide that asks a
-decision is the deck's decision slide asking it, its words the decision's
-context and what JARVIS says over it its `say`), in JARVIS's named layouts,
+decision is the deck's decision slide asking it, its visuals on it), in JARVIS's named layouts,
 told so by the program (`write_note`, carrying the script,
 docs/making-a-package.md's "A deck" section word for word,
 `make_package.EXAMPLE` and `make_package.VISUALS_EXAMPLE`, and
@@ -2235,10 +2243,25 @@ slide's title, is made in script.yaml by each built word's origin in it,
 `script_visuals.script_edits` over `Built.origins`, through
 `package_script.ScriptFile.edit`, and applied only once it is in the
 script, the slide then built from it again; an edit of the arrangement
-stays the deck's, and one that is neither is refused with `why`)
+stays the deck's, and one that needs a change of the script slide itself,
+a part added or removed, is said with `script_visuals.SCRIPT_ITEM`: an
+item, never a dead end)
 and sign off each of its other questions (`DECK_CONCERNS`); what is left is merged
 into one list, the author revises the deck, and each owner re-checks its
-own items; never the author on its own deck. Passed
+own items; never the author on its own deck. Every author turn at the deck
+(`author_form`) may give script slides, whole, in `slides` and changed
+visual forms in `forms`: what only a change of a script slide gives
+(another step, a node, a piece, a different form) goes back to the script
+for that slide only (`script_change`: put in script.yaml and checked whole
+through `ScriptFile.take`, the outline's form changed, said into the
+conversation); the step re-reads script.yaml after every edit written into
+it (`Plan.refresh`: only a slide whose script changed is written again;
+`review_units` and `_final`'s keys from the script as it stands), and
+keeps each script slide it changed under `deck-script`, keyed by the slide
+the swarm passed (`script_change_unit`, `keep_script_changes`), which a
+later run takes back before it plans (`restore_script_changes`), so only
+that slide's script, deck source and review are made again. In a close
+what the author revised stands (nothing put back). Passed
 (the job's `deck`: the zip, the built folder, `deck-review.json`), or after
 two fix passes, or a deck the author could not make build,
 its findings go to the sender as a failed swarm's do; but a deck still
@@ -4207,18 +4230,20 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   unit's key, its kept output and timing, reuse, replacing a rejected
   output, pruning, and the run's timing.json units (see "Package requests")
 - `deck_capacity.py` — How much each layout slot holds at 662 x 489 with
-  every word at its floor, for every object type, and what a deck over it
-  is refused for (see "Work packages"); `presentation_data.py` — datasets,
+  every word at its floor, for every object type, a decision's slide with
+  its objects in the band above its options (`shown_box`) and the answers
+  slide, and what a deck over it is refused for (see "Work packages"); `presentation_data.py` — datasets,
   their views, and tables and charts drawn from them; `diagram_layout.py` —
   a diagram's kind rules, its layout by program, what a slot holds of each
   kind and its words checked in place at a frame
 - `script_visuals.py` — The script's visuals: the outline's forms, the
   script's typed visual pieces, each number found at its source, every
   picture a file JARVIS draws, every slide laid out within its slots'
-  capacity as the script is written, the deck's content slides (and the
-  slide shown before a decision) built from the script by program, and a
-  deck owner's edit of a built word turned into the same edit of the
-  script (see "A package's evidence")
+  capacity as the script is written, the deck's content slides and each
+  decision slide's words and objects built from the script by program, and
+  a deck owner's edit of a built word turned into the same edit of the
+  script, what needs the script slide itself said as an item (see "A
+  package's evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

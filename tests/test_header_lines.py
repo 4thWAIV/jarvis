@@ -624,13 +624,24 @@ EXEMPT = {
         "names what does not check, each value quoted; said into the package swarm's own "
         "conversation as the program's turn to the author, never a brain header, never said. "
         "Driven by tests/test_script_visuals.py"),
-    "script_visuals.fit_problems": (
-        "it lays a script slide out by program and names what does not fit, with the slide's "
-        "id; said into the package swarm's own conversation as the program's turn to the "
-        "author, never a brain header, never said. Driven by tests/test_script_visuals.py"),
-    "script_visuals.drawn_on": (
-        "it returns the id of the deck slide a script slide's pieces are drawn on, for the "
-        "program's own check; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals.objects": (
+        "it compares a deck slide's or decision's objects with those built from the script and "
+        "names what is not the script's with the slide's id; the reasons are said into the "
+        "package swarm's own conversation as the program's turn, never a brain header, never "
+        "said. Driven by tests/test_script_visuals.py"),
+    "package_deck.script_change": (
+        "it puts the script slides the author gave at the deck into script.yaml, checked whole, "
+        "and names a slide id the script does not have, quoted; said into the package swarm's "
+        "own conversation as the program's turn to the author, never a brain header, never "
+        "said. Driven by tests/test_package_deck.py"),
+    "presentation._object_targets": (
+        "it lists a presentation/1 object's targets with their accessible names, the author's "
+        "words as data in target-index.json and the deck's model; it prints nothing to the "
+        "brain or the voice. Driven by tests/test_script_visuals.py"),
+    "presentation_source.object_semantics": (
+        "it checks a presentation/1 object (its pictures, tables, charts, diagrams, bars, "
+        "shapes) and names what does not check by its id in a compiler diagnostic said to the "
+        "deck's author; never a brain header, never said. Driven by tests/test_script_visuals.py"),
     "script_visuals.script_edits": (
         "it turns a deck owner's edit of a built word into the same edit of the script, and "
         "names what cannot be one with the slide's id; the reasons are said into the package "
