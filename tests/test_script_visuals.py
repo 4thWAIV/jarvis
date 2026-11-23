@@ -95,8 +95,7 @@ def test_each_script_slide_shows_the_visual_its_outline_slide_names(tmp_path):
     found = script_.problems(a_script(), ["lunch"], sources(tmp_path), outline)
     assert found == [
         "slide costs: the outline shows its point as line_chart; its on_screen has no "
-        "line_chart. Give it that visual with its content, or say in the conversation why "
-        "another carries the point."]
+        "line_chart. Give it that visual with its content, " + sv.FORM_CHANGE_WORDS]
     outline["slides"][0]["visual"] = "bar_chart"
     assert script_.problems(a_script(), ["lunch"], sources(tmp_path), outline) == []
 
@@ -280,3 +279,253 @@ def test_a_script_diagram_is_a_presentation_diagram_laid_out_by_program():
     broken["slides"][1]["on_screen"][0]["links"][0]["to"] = "nowhere"
     assert any("does not fit a slide" in p and "nowhere" in p
                for p in script_.problems(broken, ["lunch"]))
+
+
+# ── a decision slide's visuals are built and checked too ─────────────────
+
+def a_decision_slide(*pieces) -> dict:
+    return {"id": "choose", "title": "Where should Friday's lunch be?",
+            "on_screen": list(pieces), "narration": "The office is cheapest; choose.",
+            "facts": [], "answers": ["lunch"],
+            "decision": {"id": "where", "question": "Where should Friday's lunch be?",
+                         "options": [{"id": "office", "name": "Office", "says": "Cheapest."},
+                                     {"id": "bistro", "name": "Bistro", "says": "Nicest."}]}}
+
+
+def test_a_decision_slide_s_visual_is_built_before_it_and_checked(tmp_path):
+    from jarvis import package_deck
+    script = a_script()
+    script["slides"].append(a_decision_slide(chart_piece()))
+    held = sources(tmp_path)
+    assert sv.deck_ids(script) == ["costs", "how", "choose-shown", "choose"]
+    # The outline's visual for it is checked like a content slide's.
+    assert any(p.startswith("slide choose: the outline shows its point as line_chart")
+               for p in script_.problems(script, ["lunch"], held,
+                                         {"slides": [{"id": "choose", "visual": "line_chart"}]}))
+    assert script_.problems(script, ["lunch"], held,
+                            {"slides": [{"id": "choose", "visual": "bar_chart"}]}) == []
+    # Its numbers are found at their sources like a content slide's.
+    wrong = copy.deepcopy(script)
+    wrong["slides"][2]["on_screen"][0]["rows"][1]["values"][1]["value"] = "15"
+    assert any("slide 3 (choose) on_screen[0].rows[1].values[1] ('15')" in p
+               for p in script_.problems(wrong, ["lunch"], held))
+    # Too much for one slide is refused as the script is written.
+    crowded = copy.deepcopy(script)
+    crowded["slides"][2]["on_screen"].append(
+        {"kind": "text", "text": "Each repair is checked on the live system first. " * 40,
+         "source": "", "position": "", "path": "", "rows": []})
+    assert any("(what it shows before its decision) does not fit a slide" in p
+               for p in script_.problems(crowded, ["lunch"]))
+    # JARVIS builds it and puts it in before the decision slide.
+    built = sv.built_slides(script)
+    assert [s["id"] for s in built["slides"]] == ["costs", "how", "choose-shown"]
+    deck = _deck_with({"slides": built["slides"][:2], "datasets": built["datasets"][:1],
+                       "assets": []})
+    deck["slides"].append({"id": "choose", "type": "decision", "decision": "where"})
+    assert any("the script's are ['costs', 'how', 'choose-shown', 'choose']" in p
+               for p in package_deck.script_problems(script, deck))
+    applied = sv.apply(deck, script)
+    assert [s["id"] for s in applied["slides"]] == ["costs", "how", "choose-shown", "choose"]
+    shown = applied["slides"][2]
+    assert [o["type"] for o in shown["objects"]] == ["chart"]
+    assert shown["narration"][0]["say"] == "The office is cheapest; choose."
+    assert package_deck.script_problems(script, applied) == []
+    # A decision slide of plain words is the decision slide alone.
+    plain = a_script()
+    plain["slides"].append(a_decision_slide({"kind": "text", "text": "The office is cheapest.",
+                                             "source": "", "path": "", "position": "",
+                                             "rows": []}))
+    assert sv.deck_ids(plain)[-1] == "choose" and "choose-shown" not in sv.deck_ids(plain)
+    assert script_.problems(plain, ["lunch"], held,
+                            {"slides": [{"id": "choose", "visual": "text"}]}) == []
+
+
+def test_tim_s_words_on_a_decision_slide_are_drawn_on_the_slide_before_it():
+    from jarvis import package_deck
+    script = a_script()
+    script["slides"].append(a_decision_slide(
+        {"kind": "his_words", "text": "Keep lunch cheap.", "source": "files/survey.md",
+         "position": "line 1", "path": "", "rows": []}))
+    script["slides"][2]["narration"] = "You said: keep lunch cheap."
+    built = sv.built_slides(script)
+    deck = _deck_with({"slides": built["slides"], "datasets": built["datasets"], "assets": []})
+    deck["slides"].append({"id": "choose", "type": "decision", "decision": "where"})
+    assert package_deck.script_problems(script, deck) == []
+    deck["slides"][2]["narration"][0]["say"] = "Choose."
+    assert any("Slide choose's narration does not say Tim's words" in p
+               for p in package_deck.script_problems(script, deck))
+
+
+# ── a deck owner's edit of a built word is an edit of the script ─────────
+
+def test_an_edit_of_a_built_word_is_the_same_edit_of_the_script():
+    script = a_script()
+    deck = _deck_with(sv.built_slides(script))
+    assert sv.script_edits(script, deck) == ([], [])
+    said = copy.deepcopy(deck)
+    said["slides"][1]["objects"][1]["says"] = "Nobody pays at the till."
+    assert sv.script_edits(script, said) == ([{
+        "slide": "how", "field": "on_screen[1].says", "start": 0, "end": 25,
+        "old": "Nobody pays at the table.", "new": "Nobody pays at the till."}], [])
+    counted = copy.deepcopy(deck)
+    counted["datasets"][0]["rows"][1]["values"]["costs-d1-c2"] = 15.0
+    assert sv.script_edits(script, counted)[0] == [{
+        "slide": "costs", "field": "on_screen[1].rows[1].values[1].value", "start": 0,
+        "end": 2, "old": "14", "new": "15"}]
+    titled = copy.deepcopy(deck)
+    titled["slides"][0]["title"] = "Lunch at the office costs least"
+    assert sv.script_edits(script, titled)[0][0]["field"] == "title"
+    # The arrangement stays the deck's.
+    arranged = copy.deepcopy(deck)
+    arranged["slides"][1]["layout"] = "comparison"
+    for obj, slot in zip(arranged["slides"][1]["objects"], ("first", "second")):
+        obj["slot"] = slot
+    arranged["slides"][1]["narration"][0]["say"] = "Here is how it works."
+    assert sv.script_edits(script, arranged) == ([], [])
+    # A part added or removed, or what JARVIS sets, is not an edit of it.
+    fewer = copy.deepcopy(deck)
+    fewer["slides"][1]["objects"][0]["items"].pop()
+    assert "add or remove it there" in sv.script_edits(script, fewer)[1][0]
+    retyped = copy.deepcopy(deck)
+    retyped["slides"][1]["objects"][1]["label"] = "Bottom line, again"
+    retyped["slides"][1]["objects"][0]["items"][0]["id"] = "how-v1-first"
+    assert any("JARVIS sets it from the script" in w for w in sv.script_edits(script, retyped)[1])
+
+
+def test_the_deck_source_makes_a_built_word_s_edit_in_the_script(tmp_path):
+    from jarvis import package_deck
+    held = sources(tmp_path)
+    assert held
+    run = ps.Run(doc={"folder": str(tmp_path), "request": {"questions": [{"id": "lunch"}]}},
+                 place=pe.Place(None, "p1"), rows=[], marked={})
+    script_.write(run.script, a_script())
+    package_deck.source_of(run).parent.mkdir(parents=True)
+    package_deck._write_source(run, json.loads(json.dumps(_deck_with(
+        sv.built_slides(a_script())))))
+    builds = []
+
+    def build():
+        package_deck.from_script(run)
+        builds.append(1)
+        return object()
+    source = package_deck.DeckSource(run, build)
+    text = source.text()
+    old = "Nobody pays at the table."
+    at = text.index(old)
+    after, applied, refused = source.edit([{"start": at, "end": at + len(old), "old": old,
+                                            "new": "Nobody pays at the till.", "reason": "r",
+                                            "source": ""}])
+    assert refused == [] and applied[0]["in"] == "script.yaml"
+    assert script_.read(run.script)["slides"][1]["on_screen"][1]["says"] == \
+        "Nobody pays at the till."
+    assert "Nobody pays at the till." in after and old not in after
+    # A number its source does not hold is not put in the script, so it is
+    # not applied.
+    text = source.text()
+    at = text.index("14.0") if "14.0" in text else text.index(": 14")
+    old = text[at:at + 4]
+    _, applied, refused = source.edit([{"start": at, "end": at + 4, "old": old,
+                                        "new": old.replace("14", "15"), "reason": "r",
+                                        "source": ""}])
+    assert applied == [] and "not applied" in refused[0]["why"]
+    assert script_.read(run.script)["slides"][0]["on_screen"][1]["rows"][1]["values"][1][
+        "value"] == "14"
+    # An edit of the arrangement stays the deck's.
+    text = source.text()
+    old = "Order by Thursday noon; it arrives at twelve, paid for."
+    at = text.index(old)
+    after, applied, refused = source.edit([{"start": at, "end": at + len(old), "old": old,
+                                            "new": "Here is how it works.", "reason": "r",
+                                            "source": ""}])
+    assert refused == [] and "in" not in applied[0]
+    assert "Here is how it works." in after
+    assert script_.read(run.script)["slides"][1]["narration"] == old
+
+
+# ── a slide's visual form revised after the outline is signed off ────────
+
+def test_a_slide_s_form_can_change_after_the_outline_is_signed_off(tmp_path):
+    held = sources(tmp_path)
+    outline_path = tmp_path / script_.OUTLINE_FILE
+    outline = {"version": "outline/1", "slides": [
+        {"id": s, "title": "T", "point": "P", "answers": "lunch", "background": False,
+         "evidence": ["files/survey.md"], "visual": v, "why": "W"}
+        for s, v in (("costs", "line_chart"), ("how", "steps"))]}
+    script_.write(outline_path, outline)
+    work = script_.ScriptFile(tmp_path / script_.FILE, ["lunch"], held, outline_path)
+    assert "forms" in work.form
+    found = work.take({"script": a_script(), "forms": []})
+    assert found and sv.FORM_CHANGE_WORDS in found[0]
+    broken = a_script()
+    broken["slides"][1]["on_screen"] = []
+    assert work.take({"script": broken, "forms": [
+        {"slide": "costs", "visual": "bar_chart", "why": "Three costs side by side."}]})
+    assert script_.read(outline_path)["slides"][0]["visual"] == "line_chart"
+    assert work.take({"script": a_script(), "forms": [
+        {"slide": "costs", "visual": "bar_chart", "why": "Three costs side by side."}]}) == []
+    assert script_.read(outline_path)["slides"][0]["visual"] == "bar_chart"
+    assert work.form_changes == [{"slide": "costs", "was": "line_chart", "visual": "bar_chart",
+                                  "why": "Three costs side by side."}]
+
+    # The structure owner signs off the new form: its concern is open again.
+    from jarvis import sessions
+
+    class Swarm:
+        concerns = {c.id: c for c in ps.concerns()}
+        signoffs: list = []
+        said: list = []
+
+        def say(self, who, text):
+            self.said.append((who, text))
+    swarm = Swarm()
+    ps.forms_changed(swarm, work.form_changes, "close-1")
+    assert "line_chart is now bar_chart" in swarm.said[0][1]
+    assert swarm.signoffs[-1].concern == "shows_point"
+    assert swarm.signoffs[-1].state == sessions.NOT_YET
+    assert swarm.signoffs[-1].owner == ps.STRUCTURE
+    items = [{"id": 1, "what": "x", "raised_by": [ps.CONTEXT], "concerns": ["background"],
+              "fixes": [], "evidence_missing": []}]
+    ps.form_item(items, work.form_changes)
+    assert items[-1]["raised_by"] == [ps.STRUCTURE] and items[-1]["id"] == 2
+    assert "forms" in ps.close_note(ps.Run(doc={"folder": str(tmp_path)},
+                                           place=pe.Place(None, "p1"), rows=[], marked={}), [])
+
+
+# ── a picture is a file that is there; a chart's sourced words are found ─
+
+def _png() -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+    raw = b"".join(b"\x00" + b"\xff\x00\x00" * 4 for _ in range(4))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def test_a_picture_piece_is_a_file_jarvis_reads_and_draws(tmp_path):
+    held = sources(tmp_path)
+    script = a_script()
+    picture = {"kind": "picture", "text": "The office kitchen", "source": "", "position": "",
+               "path": "files/kitchen.png", "rows": []}
+    script["slides"][1]["on_screen"] = [script["slides"][1]["on_screen"][0], picture]
+    assert any("a picture ('files/kitchen.png'): there is no such file" in p
+               for p in script_.problems(script, ["lunch"], held))
+    (tmp_path / "files" / "kitchen.png").write_bytes(b"not a picture")
+    assert any("cannot be drawn: it is not a PNG" in p
+               for p in script_.problems(script, ["lunch"], held))
+    (tmp_path / "files" / "kitchen.png").write_bytes(_png())
+    assert script_.problems(script, ["lunch"], held) == []
+
+
+def test_a_chart_s_words_with_a_source_are_found_at_their_position(tmp_path):
+    held = sources(tmp_path)
+    script = a_script()
+    rows = script["slides"][0]["on_screen"][1]["rows"]
+    rows[0]["values"][0].update(source="files/survey.md", position="line 2")
+    assert script_.problems(script, ["lunch"], held) == []
+    rows[2]["values"][0].update(source="files/survey.md", position="line 2")
+    assert any("rows[2].values[0] ('Bistro'): the words are not in files/survey.md at line 2"
+               in p for p in script_.problems(script, ["lunch"], held))

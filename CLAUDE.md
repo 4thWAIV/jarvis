@@ -2108,14 +2108,26 @@ and how it will look, with the information to fill it, for the deck to
 build later (construction-drafts.md "The script describes each slide's
 visual", Tim 2026-11-22): `package_script.problems` checks each visual by
 program as it is written (`script_visuals`: each piece's content; every
-number a chart or key figure shows found in its source at its position,
+number a chart or key figure shows, and every chart word that names a
+source, found in its source at its position,
 `line N`, `lines N-M` or `characters A-B`, read by `Sources` from the
 evidence, the run folder and a Work item's or package's files, the
-swarm's `Run.sources`; every content slide laid out in the first of
+swarm's `Run.sources`; every picture piece a file `Sources` reads and a
+picture JARVIS draws, `picture_problems` over `picture_proof.prove`; every
+content slide laid out in the first of
 JARVIS's layouts in which each object fits its slot by deck_capacity,
-`fit_problems`; each slide showing the visual its outline slide names,
-`plan_problems`), so a script that cannot be drawn is refused before the
-deck. The structure and decision owner's third question, "Does each slide
+`fit_problems`, and a slide asking a decision that shows more than words
+laid out the same way, as the content slide shown before its decision
+slide; each slide showing the visual its outline slide names, a decision
+slide's too (its decision's words counting as text), `plan_problems`), so
+a script that cannot be drawn is refused before the deck. A slide's form
+may change after the outline is signed off: a script turn of the author's
+names it in `forms` with why (`package_script.ScriptFile`,
+`change_forms`), JARVIS changes the outline and checks the script against
+it, keeping the change only when the script checks, says it into the
+conversation and opens the structure owner's `shows_point` again until it
+signs off the new form (`package_swarm.forms_changed`, and in a close the
+owner's item on the recheck list, `form_item`). The structure and decision owner's third question, "Does each slide
 show its point?" (`shows_point`, in the outline and the fix passes), and
 every owner's and the author's first-round wording to plan and review
 visuals are owner-prompts.md's; the program's words at the fill are
@@ -2160,7 +2172,12 @@ workflow.yaml deck) goes on in the same swarm (`package_swarm.build` with
 `DECK_CONCERNS`, each of `DECK_QUESTIONS` for each owner and the editor). The
 program builds every content slide from the script's visuals
 (`script_visuals.built_slides`: each piece its presentation/1 object, a
-chart its dataset, laid out in the first layout that fits), given to the
+chart its dataset, laid out in the first layout that fits), and before
+each decision slide whose script slide shows more than words (a visual, a
+picture, a table, his words) the content slide showing it, id `<id>-shown`
+(`script_visuals.companions`, `deck_ids`, `drawn_on`: the deck's slide
+ids and where his words are drawn and said; put in by `apply` when the
+author did not write it, carrying that slide's narration), given to the
 author with `BUILT_NOTE`, and before every build puts the script's
 objects back on each content slide (`package_deck.from_script`,
 `script_visuals.apply`: the author's layout and slots kept where it gave
@@ -2212,7 +2229,13 @@ the same owners, the same way (`package_swarm.fix_passes` with the `deck-`
 stages): Tim's reader, the context owner, the structure and decision owner
 and the editor, in parallel, each edit the deck source (`DeckSource`: each
 edit by its offsets in presentation.yaml, applied only where its old text
-is exactly there and only while the deck still builds and proves with it)
+is exactly there and only while the deck still builds and proves with it;
+an edit of anything built from the script, an object's words or data or a
+slide's title, is made in script.yaml by each built word's origin in it,
+`script_visuals.script_edits` over `Built.origins`, through
+`package_script.ScriptFile.edit`, and applied only once it is in the
+script, the slide then built from it again; an edit of the arrangement
+stays the deck's, and one that is neither is refused with `why`)
 and sign off each of its other questions (`DECK_CONCERNS`); what is left is merged
 into one list, the author revises the deck, and each owner re-checks its
 own items; never the author on its own deck. Passed
@@ -4191,9 +4214,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   kind and its words checked in place at a frame
 - `script_visuals.py` — The script's visuals: the outline's forms, the
   script's typed visual pieces, each number found at its source, every
-  slide laid out within its slots' capacity as the script is written, and
-  the deck's content slides built from the script by program (see "A
-  package's evidence")
+  picture a file JARVIS draws, every slide laid out within its slots'
+  capacity as the script is written, the deck's content slides (and the
+  slide shown before a decision) built from the script by program, and a
+  deck owner's edit of a built word turned into the same edit of the
+  script (see "A package's evidence")
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one

@@ -222,9 +222,10 @@ def problems(script, question_ids: list[str], sources: Optional[visuals.Sources]
     """Everything in `script` that is not script/1 as `schema` gives it;
     empty when it checks. Its visuals are checked by program too: each
     piece's content, every content slide laid out within its slots'
-    capacity, every number found in its source at its position (when
-    `sources` reads them) and each slide showing the visual its outline
-    slide names (when `outline` is given)."""
+    capacity, every number (and every chart word naming a source) found in
+    its source at its position and every picture a file that is there and
+    drawn (when `sources` reads them), and each slide showing the visual
+    its outline slide names (when `outline` is given)."""
     out: list[str] = []
     _against(script, schema(question_ids), "the script", out)
     if out:
@@ -243,6 +244,7 @@ def problems(script, question_ids: list[str], sources: Optional[visuals.Sources]
     for n, slide in enumerate(script["slides"]):
         at = f"slide {n + 1} ({slide['id']})"
         out += visuals.value_problems(slide, at, sources)
+        out += visuals.picture_problems(slide, at, sources)
         out += visuals.fit_problems(slide, at)
     return out + visuals.plan_problems(script, outline)
 
@@ -285,6 +287,39 @@ def outline_schema(question_ids: list[str]) -> dict:
                     "slides": _array(slide, "The slides, in order.", least=1)},
                    "The outline: each slide's title, its one point, the question it "
                    "answers, its evidence and its visual.")
+
+
+# A slide's visual form changed after the outline was signed off: the author
+# names it with why in a script turn (`forms`), JARVIS changes the outline,
+# and the structure owner signs off the new form (package_swarm).
+FORMS = _array(_object({
+    "slide": _described(_WORDS, "The slide's id."),
+    "visual": {"type": "string", "enum": list(visuals.FORMS),
+               "description": "Its new visual form, one the deck can draw."},
+    "why": _described(_WORDS, "Why the new form carries its point better."),
+}), "A slide whose visual form you change from what the outline names, with why; empty "
+    "when you change none. JARVIS changes the outline and the structure owner signs off the "
+    "new form.")
+
+
+def change_forms(outline: dict, changes: list[dict]) -> tuple[dict, list[dict], list[str]]:
+    """The outline with each slide's visual and why changed as `changes`
+    says: (the outline, each change made with the form it was, why a change
+    cannot be made: no such slide, or the same form)."""
+    outline = copy.deepcopy(outline)
+    slides = {s.get("id"): s for s in outline.get("slides") or [] if isinstance(s, dict)}
+    made, refused = [], []
+    for change in changes:
+        slide = slides.get(change.get("slide"))
+        if slide is None:
+            refused.append(f"forms: the outline has no slide {change.get('slide')!r}.")
+            continue
+        if slide.get("visual") == change.get("visual"):
+            continue
+        made.append({"slide": change["slide"], "was": slide.get("visual"),
+                     "visual": change.get("visual"), "why": change.get("why")})
+        slide.update(visual=change.get("visual"), why=change.get("why"))
+    return outline, made, refused
 
 
 def outline_problems(outline, question_ids: list[str]) -> list[str]:
@@ -602,11 +637,43 @@ class StructuredFile:
 
 class ScriptFile(StructuredFile):
     """script.yaml, script/1: its visuals checked against their sources and
-    the outline's visual plan."""
+    the outline's visual plan. A script turn may change a slide's visual
+    form (`forms`, with why): JARVIS changes the outline first and checks
+    the script against it, and keeps the change only when the script
+    checks (`form_changes`, the changes the last answer made)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.outline is not None:
+            self.form = {**self.form, "forms": FORMS}
+        self.form_changes: list[dict] = []
 
     def _check(self, doc) -> list[str]:
         outline = read(self.outline) if self.outline else None
         return problems(doc, self.question_ids, self.sources, outline)
+
+    def take(self, answer: dict) -> list[str]:
+        self.form_changes = []
+        changes = [c for c in (answer.get("forms") if isinstance(answer, dict) else None) or []
+                   if isinstance(c, dict)]
+        if not changes or self.outline is None:
+            return super().take(answer)
+        before = self.outline.read_text(encoding="utf-8") if self.outline.is_file() else None
+        outline, made, refused = change_forms(read(self.outline) or {}, changes)
+        found = refused + outline_problems(outline, self.question_ids)
+        if found:
+            self.problems = found
+            return found
+        if made:
+            write(self.outline, outline)
+        found = super().take(answer)
+        if found and made and before is not None:
+            # The script did not check: the outline stays as it was.
+            from jarvis import package_evidence
+            package_evidence.write_file(self.outline, before.encode("utf-8"))
+        elif not found:
+            self.form_changes = made
+        return found
 
 
 class OutlineFile(StructuredFile):

@@ -9,7 +9,9 @@ in the run's folder. A round:
   from_script      JARVIS builds every content slide from the script's
                    visuals by program (script_visuals: each script piece to
                    its presentation/1 object, laid out in the first of its
-                   layouts in which every object fits its slot) and gives
+                   layouts in which every object fits its slot), and before
+                   each decision slide whose script slide shows more than
+                   words the content slide showing it (`-shown`), and gives
                    them to the author (`built_tag`, `BUILT_NOTE`); before
                    each build it puts the script's objects back on each
                    content slide, the author's layout and slots kept
@@ -61,7 +63,9 @@ in the run's folder. A round:
                    parallel, each edit the deck source (each edit by its
                    offsets in presentation.yaml, applied by the program only
                    where its old text is exactly there and only when the
-                   deck still builds and proves with it) and sign off each
+                   deck still builds and proves with it; an edit of anything
+                   built from the script is made in script.yaml, and the
+                   slide built from it again, DeckSource) and sign off each
                    of the deck's questions but deck-readable, the
                    program's (DECK_CONCERNS); what is left is
                    merged by meaning into one list, the author works it, and
@@ -244,13 +248,17 @@ SHOW_NOTE = (
 # first-round wording, role-prompts.md "Author: the deck from the script's
 # visuals"); SHOW_NOTE stays beside it as a backstop.
 BUILT_NOTE = (
-    "JARVIS has built every content slide from the script's visuals, below: each object with its "
-    "content, the datasets its charts draw and the pictures it shows, laid out in the first of "
-    "JARVIS's layouts in which every object fits its slot. Use them as given. You arrange: you "
+    "JARVIS has built every content slide from the script's visuals, below: each object with "
+    "its content (words, steps, key figures, a callout, a table, a bar, line or scatter "
+    "chart, a flow, cycle, hierarchy or timeline diagram, a picture), the datasets its charts "
+    "draw and the pictures it shows, laid out in the first of JARVIS's layouts in which every "
+    "object fits its slot. Before each decision slide whose script slide shows more than "
+    "words, JARVIS has built the content slide that shows it, its id the decision slide's "
+    "with -shown, carrying that script slide's narration. Use them as given. You arrange: you "
     "may choose another layout and another slot for each object, and split the narration into "
-    "cues that light each object; JARVIS puts the script's content back on every object by its "
-    "id, so a word changed in an object is not kept. Write the deck's header and its decision "
-    "slides yourself.")
+    "cues that light each object; JARVIS puts the script's content back on every object by "
+    "its id, so a word changed in an object is not kept: the script says what is shown. Write "
+    "the deck's header and its decision slides yourself.")
 
 
 def built_tag(run: ps.Run) -> str:
@@ -286,7 +294,9 @@ def write_note(run: ps.Run) -> str:
         f"id: its words on the slide, what JARVIS says over it as its narration. A script slide "
         f"that asks a decision is the deck's decision slide (type decision, the same id), "
         f"asking that decision with the options you wrote: its words in the decision's context "
-        f"and what JARVIS says over it in the decision's say.",
+        f"and what JARVIS says over it in the decision's say; where JARVIS builds the slide "
+        f"shown before it ({script_visuals.SHOWN}), that slide carries the narration, and the "
+        f"decision's say is only what JARVIS says as it asks.",
         f"Where the script gives Tim's own words (a his_words piece), show them on that slide as "
         f"runs with emphasis {HIS_WORDS}, which JARVIS draws highlighted in a very bright, "
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
@@ -390,14 +400,18 @@ def script_problems(script: dict, deck: dict) -> list[str]:
     the his-words style and said in its narration (his_words_check), its
     words as they are, in order; and every object the script's visuals
     make shown on its slide as the script gives it (script_visuals.
-    unmatched: the deck only arranges)."""
+    unmatched: the deck only arranges). A script slide that asks a decision
+    and shows more than words has JARVIS's slide showing it just before its
+    decision slide (script_visuals.deck_ids), where its words of Tim are
+    drawn and said."""
     out = []
-    want = [s["id"] for s in script.get("slides") or []]
+    want = script_visuals.deck_ids(script)
     have = [s.get("id") for s in deck.get("slides") or [] if isinstance(s, dict)]
     if want != have:
         out.append(f"The deck's slides are {have}; the script's are {want}. Write one deck "
                    f"slide for each script slide, in the same order, with the same id; a "
-                   f"script slide that asks a decision is the deck's decision slide.")
+                   f"script slide that asks a decision is the deck's decision slide (JARVIS "
+                   f"builds the slide shown before it, {script_visuals.SHOWN}).")
     slides = {s.get("id"): s for s in deck.get("slides") or [] if isinstance(s, dict)}
     for wanted in script.get("slides") or []:
         slide = slides.get(wanted["id"])
@@ -412,8 +426,9 @@ def script_problems(script: dict, deck: dict) -> list[str]:
         elif not asked and slide.get("type") != "content":
             out.append(f"Script slide {wanted['id']} asks no decision: its deck slide is a "
                        f"content slide.")
+    drawn_on = {s["id"]: script_visuals.drawn_on(s) for s in script.get("slides") or []}
     for quote in package_script.his_words(script):
-        slide = slides.get(quote["slide"]) or {}
+        slide = slides.get(drawn_on.get(quote["slide"], quote["slide"])) or {}
         drawn = " ".join(run.get("text", "") for obj in slide.get("objects") or []
                          for para in obj.get("paragraphs") or []
                          for run in para.get("runs") or [] if run.get("emphasis") == HIS_WORDS)
@@ -636,8 +651,11 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
     layout = {s.get("id"): s for s in built.proof.get("slides") or []}
     slides = "\n".join(sessions._tag("slide", "\n".join([
         sessions._tag("script", package_script.dump(s), file=ps.SCRIPT),
-        sessions._tag("layout", json.dumps(layout.get(s["id"]), indent=1, ensure_ascii=False),
-                      file=presentation_proof.PROOF_FILE)]), id=s["id"])
+        *(sessions._tag("layout", json.dumps(layout.get(sid), indent=1, ensure_ascii=False),
+                        file=presentation_proof.PROOF_FILE,
+                        slide=None if sid == s["id"] else sid)
+          for sid in [s["id"]] + ([script_visuals.shown_id(s["id"])]
+                                  if script_visuals.shows_more(s) else []))]), id=s["id"])
         for s in script.get("slides") or [])
     return "\n\n".join([
         "The deck written from the passed script is built and proven, and every quote of Tim's "
@@ -682,7 +700,17 @@ class DeckSource:
     """The author's deck source as the owners work on it (sessions.Script):
     each edit by its offsets in presentation.yaml, applied by the program
     only where its old text is exactly there (sessions.apply_edits); edits
-    with which the deck no longer builds and proves are not applied."""
+    with which the deck no longer builds and proves are not applied.
+
+    The script is the one source of what a slide shows: an edit of anything
+    JARVIS builds from it (an object's words or data, a slide's title) is
+    made in the script (script_visuals.script_edits: each built word's
+    origin in script.yaml, applied as the swarm's owners' edits are,
+    package_script.ScriptFile, so the script still checks) and the slide is
+    built from it again; it is applied only once it is in the script. An
+    edit of the arrangement (a layout, a slot, the narration's cues, the
+    header, a decision) stays an edit of the deck. One that can be neither
+    is refused with why (`why`)."""
 
     key = "deck"
     version = "presentation/1"
@@ -698,17 +726,66 @@ class DeckSource:
     def text(self) -> str:
         return ps._read(self.path)
 
+    def _sorted(self, before: str, edits: list[dict]
+                ) -> tuple[list[dict], list[tuple[dict, list[dict]]], list[dict]]:
+        """Each edit as an edit of the deck (it changes only the
+        arrangement), an edit of the script (with its edits there), or
+        refused (old text not there, or not one the script can take)."""
+        script = package_script.read(self.run.script) or {}
+        deck, scripted, refused = [], [], []
+        for edit in edits:
+            alone, done, _ = sessions.apply_edits(before, [edit])
+            if not done:
+                refused.append(edit)
+                continue
+            try:
+                edited = yaml.safe_load(alone)
+            except yaml.YAMLError as error:
+                refused.append({**edit, "why": f"the deck source would not read: {error}"})
+                continue
+            if not isinstance(edited, dict):
+                refused.append({**edit, "why": "the deck source would not read."})
+                continue
+            moved, why = script_visuals.script_edits(script, edited)
+            if why:
+                refused.append({**edit, "why": " ".join(why)})
+            elif moved:
+                scripted.append((edit, [{**m, "reason": edit.get("reason", ""),
+                                         "source": edit.get("source", "")} for m in moved]))
+            else:
+                deck.append(edit)
+        return deck, scripted, refused
+
     def edit(self, edits: list[dict]) -> tuple[str, list[dict], list[dict]]:
         before = self.text()
-        after, applied, refused = sessions.apply_edits(before, edits)
+        script_file = self.run.script_file()
+        script_before = script_file.text()
+        deck, scripted, refused = self._sorted(before, edits)
+        applied: list[dict] = []
+        for edit, moved in scripted:
+            held = script_file.text()
+            _, done, not_done = script_file.edit(moved)
+            if done and not not_done:
+                applied.append({**edit, "in": ps.SCRIPT})
+                continue
+            if done:
+                pe.write_file(script_file.path, held.encode("utf-8"))
+            refused.append({**edit, "why": "its change of the script was not applied (old text "
+                                           "not exactly there, or the script would not check)."})
+        after, done, not_done = sessions.apply_edits(before, deck)
+        applied += done
+        refused += not_done
         if not applied:
             return before, [], refused
-        pe.write_file(self.path, after.encode("utf-8"))
+        if after != before:
+            pe.write_file(self.path, after.encode("utf-8"))
         if self._build() is None:
             pe.write_file(self.path, before.encode("utf-8"))
+            if script_file.text() != script_before:
+                pe.write_file(script_file.path, script_before.encode("utf-8"))
             self._build()
             return before, [], refused + applied
-        return after, applied, refused
+        return self.text(), applied, refused
 
 
 def _write_review(run: ps.Run, result: dict) -> None:

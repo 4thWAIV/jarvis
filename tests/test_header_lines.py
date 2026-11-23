@@ -623,6 +623,28 @@ EXEMPT = {
         "it names each deck object that is not the script's, said into the package swarm's own "
         "conversation as the program's turn to the author, never a brain header, never said. "
         "Driven by tests/test_script_visuals.py"),
+    "script_visuals.piece_problems": (
+        "it checks a script slide's typed visual (its counts, figures, a diagram's ids) and "
+        "names what does not check, each value quoted; said into the package swarm's own "
+        "conversation as the program's turn to the author, never a brain header, never said. "
+        "Driven by tests/test_script_visuals.py"),
+    "script_visuals.fit_problems": (
+        "it lays a script slide out by program and names what does not fit, with the slide's "
+        "id; said into the package swarm's own conversation as the program's turn to the "
+        "author, never a brain header, never said. Driven by tests/test_script_visuals.py"),
+    "script_visuals.drawn_on": (
+        "it returns the id of the deck slide a script slide's pieces are drawn on, for the "
+        "program's own check; it prints nothing. Driven by tests/test_script_visuals.py"),
+    "script_visuals.script_edits": (
+        "it turns a deck owner's edit of a built word into the same edit of the script, and "
+        "names what cannot be one with the slide's id; the reasons are said into the package "
+        "swarm's own conversation as the program's turn, never a brain header, never said. "
+        "Driven by tests/test_script_visuals.py"),
+    "package_script.change_forms": (
+        "it changes an outline slide's visual form as the author's script turn names it and "
+        "names a slide it cannot find, quoted; said into the package swarm's own conversation "
+        "as the program's turn to the author, never a brain header, never said. Driven by "
+        "tests/test_script_visuals.py"),
     "package_deliver.deliver": (
         "the deliver step: the only field it reads is the job's id, JARVIS's own, to keep where "
         "the signed package is and its message on the job record for its own sender; never a "

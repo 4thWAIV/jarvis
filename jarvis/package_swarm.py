@@ -1076,11 +1076,47 @@ async def author_writes(swarm: sessions.BrainSwarmSession, work, stage: str, add
         if not problems:
             if named is not None:
                 named.extend(str(i) for i in answer.get("changed") or [] if isinstance(i, str))
+            forms_changed(swarm, getattr(work, "form_changes", None) or [], stage)
             return True
         swarm.say(PROGRAM, f"The {work.key} in your answer does not check against "
                            f"{work.version}. Answer the whole {work.key} again, in its form:\n"
                   + "\n".join(f"- {p}" for p in problems))
     return False
+
+
+def forms_changed(swarm: sessions.BrainSwarmSession, changes: list[dict], stage: str) -> None:
+    """A slide's visual form changed after the outline was signed off (the
+    author's `forms`, package_script.ScriptFile): JARVIS has changed the
+    outline; said into the conversation, and the structure owner's "Does
+    each slide show its point?" is open again until it signs off the new
+    form."""
+    if not changes:
+        return
+    swarm.say(PROGRAM, "The author changed the visual form the outline names, and JARVIS "
+                       "changed the outline:\n"
+              + "\n".join(f"- slide {c['slide']}: {c['was']} is now {c['visual']}, because "
+                           f"{c['why']}" for c in changes)
+              + "\nThe structure and decision owner signs off shows_point on the new form.")
+    if "shows_point" in swarm.concerns:
+        swarm.signoffs.append(sessions.SignOff(
+            "shows_point", swarm.concerns["shows_point"].owner, sessions.NOT_YET,
+            "", [form_left(changes)], stage))
+
+
+def form_left(changes: list[dict]) -> dict:
+    """What is left once a form changed: its owner signs off the new form."""
+    return {"what": "Sign off shows_point on the new visual form of slide(s) "
+                    + ", ".join(f"{c['slide']} ({c['visual']}: {c['why']})" for c in changes),
+            "fix": "", "evidence_missing": ""}
+
+
+def form_item(items: list[dict], changes: list[dict]) -> None:
+    """The structure owner's item for a form changed in a close, added to
+    the list its recheck goes through."""
+    if changes:
+        items.append({"id": max([int(i.get("id") or 0) for i in items] or [0]) + 1,
+                      "what": form_left(changes)["what"], "raised_by": [STRUCTURE],
+                      "concerns": ["shows_point"], "fixes": [], "evidence_missing": []})
 
 
 # ── the program's words to each ───────────────────────────────────────────
@@ -1115,7 +1151,8 @@ def close_note(run: Run, items: list[dict]) -> str:
     """The author's words for the close: the list is in the conversation;
     where an item names missing evidence, the author researches it."""
     out = ["Work through the list above, item by item: change the script or say why not. "
-           "Give the whole script in your answer."]
+           "Give the whole script in your answer. Where a slide's visual form should change "
+           "from what the outline names, name it in `forms` with why."]
     if any(item["evidence_missing"] for item in items):
         out.append(f"Some items name evidence that is not in the material: research it with "
                    f"your tools, add what you find to {run.research}, each finding with its "
@@ -1445,8 +1482,11 @@ def swarm(doc: dict) -> Optional[str]:
                     + _work_text(name, run, script, marked, kept))
 
         async def revise(items: list[dict]) -> bool:
-            return await author_writes(swarm_, script, f"close-{flow['pass']}",
+            done = await author_writes(swarm_, script, f"close-{flow['pass']}",
                                        close_note(run, items))
+            if done:
+                form_item(items, script.form_changes)
+            return done
 
         def not_passed(work, label: str) -> str:
             outcome.update(result="not passed", findings=_unchecked(work, work.problems),

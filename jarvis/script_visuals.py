@@ -23,7 +23,22 @@ always had. This module is the one place those pieces are read by program:
   is written, so a script that cannot fit is refused before the deck);
 - `apply`: the deck step puts the script's objects on each deck slide, the
   author's layout and slots kept where they hold them (the author only
-  arranges), and `unmatched` says any deck object that is not the script's.
+  arranges), and `unmatched` says any deck object that is not the script's;
+- `script_edits`: a deck owner's edit of anything built from the script
+  turned into the same edit of the script, by each built word's origin in
+  it (`Built.origins`), so the script stays the one source of what a slide
+  shows and the slide is built from it again.
+
+A slide that asks a decision is the deck's decision slide, which shows the
+question and its options only (presentation/1): when its script slide shows
+anything beyond plain words (a visual, a picture, a table, Tim's words),
+JARVIS builds those as a content slide just before it (`shown_id`, the
+decision slide's id and "-shown", `companions`), checked and matched as
+every content slide is, and the outline's visual for it is checked the same
+way (`plan_problems`). A picture piece's file must be one the program reads
+and a picture JARVIS draws (`picture_problems`, picture_proof), and a
+chart's words with a source are found at their position as its numbers are
+(`value_problems`).
 
 A diagram's forms are presentation/1's diagram kinds (flow, cycle,
 hierarchy, timeline): the script gives its nodes, links and groups, and
@@ -37,7 +52,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from jarvis import deck_capacity, diagram_layout, layout_spec, presentation_data
+from jarvis import deck_capacity, diagram_layout, layout_spec, picture_proof, presentation_data
 from jarvis.presentation_schema import (DIAGRAM_KINDS, LINK_STYLES, NODE_SHAPES, TONES,
                                         ContentSlide, Dataset)
 
@@ -252,6 +267,12 @@ class Sources:
         self.mapped = tuple((str(p).rstrip("/") + "/", Path(f)) for p, f in mapped)
         self.folders = tuple(Path(f) for f in folders)
 
+    def file(self, path: str) -> Optional[Path]:
+        """The file a source path names, or None when it names none the
+        program reads."""
+        found = self._file(str(path or "").strip())
+        return None if found is None or ".." in found.parts else found
+
     def _file(self, path: str) -> Optional[Path]:
         for prefix, folder in self.mapped:
             if path.startswith(prefix):
@@ -265,8 +286,8 @@ class Sources:
         return None
 
     def text(self, path: str) -> Optional[str]:
-        found = self._file(str(path or "").strip())
-        if found is None or ".." in found.parts:
+        found = self.file(path)
+        if found is None:
             return None
         try:
             if not found.is_file() or found.stat().st_size > self.LIMIT:
@@ -356,25 +377,36 @@ def _chart_problems(piece: dict, at: str) -> list[str]:
 
 
 def sourced_values(slide: dict) -> list[tuple[str, dict]]:
-    """Every number a slide's visuals show with its source: (where, value)
-    with `value`, `source`, `position`."""
+    """Every value a slide's visuals show with its source: (where, value)
+    with `value`, `source`, `position`, and `words` True for a chart's text
+    value (found as words) rather than a number. Every number has its
+    source; a text value is here when it names one."""
     out = []
     for i, piece in enumerate(slide.get("on_screen") or []):
         if piece.get("kind") == FIGURES:
             out += [(f"on_screen[{i}].figures[{n}]", f) for n, f in enumerate(piece["figures"])]
         elif piece.get("kind") == CHART:
             kinds = {c["id"]: c["type"] for c in piece["columns"]}
-            out += [(f"on_screen[{i}].rows[{r}].values[{v}]", value)
-                    for r, row in enumerate(piece["rows"])
-                    for v, value in enumerate(row["values"])
-                    if kinds.get(value["column"]) == "number"]
+            for r, row in enumerate(piece["rows"]):
+                for v, value in enumerate(row["values"]):
+                    where = f"on_screen[{i}].rows[{r}].values[{v}]"
+                    if kinds.get(value["column"]) == "number":
+                        out.append((where, value))
+                    elif str(value.get("source") or "").strip():
+                        out.append((where, {**value, "words": True}))
     return out
 
 
+def _folded(text: str) -> str:
+    return " ".join(str(text).casefold().split())
+
+
 def value_problems(slide: dict, at: str, sources: Optional[Sources]) -> list[str]:
-    """Each number a chart or key figure shows, found by the program in its
-    source at its position, as the facts of the evidence are read: the
-    source read, the position one the program reads, and the number there."""
+    """Each number a chart or key figure shows, and each of a chart's words
+    that names its source, found by the program in its source at its
+    position, as the facts of the evidence are read: the source read, the
+    position one the program reads, and the number (or the words, case and
+    spacing aside) there."""
     if sources is None:
         return []
     out, read = [], {}
@@ -393,6 +425,10 @@ def value_problems(slide: dict, at: str, sources: Optional[Sources]) -> list[str
             out.append(f"{said}: its position {value['position']!r} is not one the program "
                        f"reads in {path}. {POSITION_WORDS}")
             continue
+        if value.get("words"):
+            if not _folded(value["value"]) or _folded(value["value"]) not in _folded(stretch):
+                out.append(f"{said}: the words are not in {path} at {value['position']}.")
+            continue
         wanted = number(value["value"])
         if wanted is None or not any(abs(n - wanted) <= 1e-9 * max(1, abs(wanted))
                                      for n in numbers_in(stretch)):
@@ -400,9 +436,45 @@ def value_problems(slide: dict, at: str, sources: Optional[Sources]) -> list[str
     return out
 
 
+def picture_problems(slide: dict, at: str, sources: Optional[Sources]) -> list[str]:
+    """Each picture piece's file: one the program reads (`Sources`) and a
+    picture JARVIS draws, walked whole (picture_proof.prove)."""
+    if sources is None:
+        return []
+    out = []
+    for i, piece in enumerate(slide.get("on_screen") or []):
+        if piece.get("kind") != PICTURE:
+            continue
+        path = str(piece.get("path") or "").strip()
+        said = f"{at} on_screen[{i}], a picture ({path!r})"
+        found = sources.file(path)
+        if found is None or not found.is_file():
+            out.append(f"{said}: there is no such file among the evidence and the run's "
+                       f"folder; give the path of a picture that is there.")
+            continue
+        try:
+            picture_proof.prove(found)
+        except picture_proof.PictureProblem as problem:
+            out.append(f"{said} cannot be drawn: {problem}.")
+        except OSError as error:
+            out.append(f"{said} cannot be read: {error}.")
+    return out
+
+
+# What a script slide's author is told when its visual is not the one its
+# outline slide names: give it, or change the outline's form (the form
+# revised after the outline was signed off, with why; the structure owner
+# signs off the new form).
+FORM_CHANGE_WORDS = ("or, if another form carries the point better, change the outline's "
+                     "visual for this slide in `forms` with why: JARVIS changes the outline "
+                     "and the structure owner signs off the new form.")
+
+
 def plan_problems(script: dict, outline: Optional[dict]) -> list[str]:
-    """Each content slide of the script shows the visual its outline slide
-    names (text: its words; a chart form: a chart of that kind)."""
+    """Each slide of the script shows the visual its outline slide names
+    (text: its words; a chart form: a chart of that kind; a diagram form: a
+    diagram of that kind). A slide that asks a decision is checked the same
+    way, its decision's own words counting as text."""
     if not outline:
         return []
     planned = {s.get("id"): s.get("visual") for s in outline.get("slides") or []
@@ -410,11 +482,12 @@ def plan_problems(script: dict, outline: Optional[dict]) -> list[str]:
     out = []
     for slide in script.get("slides") or []:
         form = planned.get(slide["id"])
-        if not form or slide.get("decision"):
+        if not form:
             continue
         pieces = slide.get("on_screen") or []
         kinds = {p.get("kind") for p in pieces}
-        shown = (bool(kinds & {TEXT, "his_words"}) if form == TEXT
+        shown = (bool(kinds & {TEXT, "his_words"}) or bool(slide.get("decision"))
+                 if form == TEXT
                  else any(p.get("kind") == CHART and p.get("chart") == CHARTS[form]
                           for p in pieces) if form in CHARTS
                  else any(p.get("kind") == DIAGRAM and p.get("diagram") == form
@@ -422,8 +495,8 @@ def plan_problems(script: dict, outline: Optional[dict]) -> list[str]:
                  else form in kinds)
         if not shown:
             out.append(f"slide {slide['id']}: the outline shows its point as {form}; its "
-                       f"on_screen has no {form}. Give it that visual with its content, or "
-                       f"say in the conversation why another carries the point.")
+                       f"on_screen has no {form}. Give it that visual with its content, "
+                       + FORM_CHANGE_WORDS)
     return out
 
 
@@ -436,60 +509,103 @@ def _ref(slide_id: str) -> dict:
     return {"reference": SCRIPT_REFERENCE, "member": slide_id}
 
 
-def _paragraphs(oid: str, pieces: list[dict]) -> list[dict]:
-    out = []
-    for piece in pieces:
-        if piece["kind"] == "his_words":
-            lines = [("paragraph", piece["text"], "his-words")]
+Origin = tuple  # (the script's field, the offset of the built words in it, or None: all of it)
+
+
+def _lines(text: str, field: str) -> list[tuple[str, str, tuple]]:
+    """A text piece's lines as paragraphs: (role, words, origin), each
+    line's words at their offset in the piece's text."""
+    out, at = [], 0
+    for line in str(text or "").splitlines(keepends=True):
+        lead = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        here = at + lead
+        at += len(line)
+        if not stripped:
+            continue
+        numbered = re.match(r"^\d+[.)]\s+", stripped)
+        if stripped[:2] in ("- ", "* ", "• "):
+            rest = stripped[2:]
+            words, role = rest.strip(), "bullet"
+            here += 2 + len(rest) - len(rest.lstrip())
+        elif numbered:
+            words, role = stripped[numbered.end():], "numbered"
+            here += numbered.end()
         else:
-            lines = []
-            for line in str(piece.get("text") or "").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                if line[:2] in ("- ", "* ", "• "):
-                    lines.append(("bullet", line[2:].strip(), "normal"))
-                elif re.match(r"^\d+[.)]\s", line):
-                    lines.append(("numbered", re.sub(r"^\d+[.)]\s+", "", line), "normal"))
-                else:
-                    lines.append(("paragraph", line, "normal"))
-        for role, words, emphasis in lines:
-            n = len(out) + 1
-            out.append({"id": f"{oid}-p{n}", "role": role,
-                        "runs": [{"id": f"{oid}-p{n}-r1", "text": words, "emphasis": emphasis}]})
+            words, role = stripped, "paragraph"
+        out.append((role, words, (field, here)))
     return out
 
 
-def _dataset(piece: dict, ident: str, sid: str) -> tuple[dict, dict[str, str]]:
+def _paragraphs(oid: str, pieces: list[tuple[str, dict]]
+                ) -> tuple[list[dict], dict[tuple, Origin]]:
+    """The words pieces (each with its field) as one text object's
+    paragraphs, and each run's origin in the script by its path in the
+    object."""
+    out, origins = [], {}
+    for field, piece in pieces:
+        if piece["kind"] == "his_words":
+            lines = [("paragraph", piece["text"], (field, 0), "his-words")]
+        else:
+            lines = [(role, words, origin, "normal")
+                     for role, words, origin in _lines(piece.get("text"), field)]
+        for role, words, origin, emphasis in lines:
+            n = len(out) + 1
+            origins[("paragraphs", n - 1, "runs", 0, "text")] = origin
+            out.append({"id": f"{oid}-p{n}", "role": role,
+                        "runs": [{"id": f"{oid}-p{n}-r1", "text": words, "emphasis": emphasis}]})
+    return out, origins
+
+
+def _dataset(piece: dict, ident: str, sid: str, at: str
+             ) -> tuple[dict, dict[str, str], dict[tuple, Origin]]:
     names = {c["id"]: f"{ident}-c{n}" for n, c in enumerate(piece["columns"], 1)}
     kinds = {c["id"]: c["type"] for c in piece["columns"]}
-    columns = []
-    for c in piece["columns"]:
+    columns, origins = [], {}
+    for k, c in enumerate(piece["columns"]):
         column = {"id": names[c["id"]], "label": c["label"], "type": c["type"]}
+        origins[("columns", k, "label")] = (f"{at}.columns[{k}].label", 0)
         if str(c.get("units") or "").strip():
             column["units"] = c["units"]
+            origins[("columns", k, "units")] = (f"{at}.columns[{k}].units", 0)
         columns.append(column)
     rows = []
     for n, row in enumerate(piece["rows"], 1):
         values = {}
-        for v in row["values"]:
-            raw = v["value"]
-            values[names[v["column"]]] = (number(raw) if kinds[v["column"]] == "number" else raw)
+        for v, value in enumerate(row["values"]):
+            raw, name = value["value"], names[value["column"]]
+            number_ = kinds[value["column"]] == "number"
+            values[name] = number(raw) if number_ else raw
+            origins[("rows", n - 1, "values", name)] = (
+                f"{at}.rows[{n - 1}].values[{v}].value", None if number_ else 0)
         rows.append({"id": f"{ident}-r{n}", "values": values})
-    return {"id": ident, "source": _ref(sid), "columns": columns, "rows": rows}, names
+    return ({"id": ident, "source": _ref(sid), "columns": columns, "rows": rows}, names,
+            origins)
+
+
+def _lead(text: str) -> int:
+    return len(text) - len(text.lstrip())
 
 
 class Built:
     """A script slide as presentation/1: its objects in reading order (no
-    slots), the datasets and assets they need, and its narration."""
+    slots), the datasets and assets they need, and its narration; and the
+    origin of each built word in the script (`origins`: by the object's or
+    dataset's id and the word's path in it, the script slide's field and
+    where in it), by which a deck owner's edit of a built word is the same
+    edit of the script (`script_edits`). `script_id` is the script slide it
+    is built from (a decision slide's for the content slide shown before
+    it)."""
 
-    def __init__(self, slide: dict):
+    def __init__(self, slide: dict, script_id: Optional[str] = None):
         self.slide = slide
         self.id = slide["id"]
+        self.script_id = script_id or self.id
         self.objects: list[dict] = []
         self.datasets: list[dict] = []
         self.assets: list[dict] = []
         self.columns = 0           # how many of the objects are a comparison's columns
+        self.origins: dict[tuple[str, tuple], Origin] = {("", ("title",)): ("title", 0)}
         self._build()
 
     def _add(self, obj: dict) -> dict:
@@ -497,69 +613,101 @@ class Built:
         self.objects.append(obj)
         return obj
 
+    def _from(self, holder: str, path: tuple, field: str, offset: Optional[int] = 0) -> None:
+        self.origins[(holder, path)] = (field, offset)
+
     def _build(self) -> None:
-        words: list[dict] = []
+        words: list[tuple[str, dict]] = []
 
         def flush():
             if words:
                 obj = self._add({"type": "text"})
-                obj["paragraphs"] = _paragraphs(obj["id"], words)
+                obj["paragraphs"], origins = _paragraphs(obj["id"], words)
                 if not obj["paragraphs"]:
                     self.objects.pop()
+                for path, origin in origins.items():
+                    self._from(obj["id"], path, *origin)
                 words.clear()
 
-        for piece in self.slide.get("on_screen") or []:
-            kind = piece.get("kind")
+        for i, piece in enumerate(self.slide.get("on_screen") or []):
+            kind, at = piece.get("kind"), f"on_screen[{i}]"
             if kind in (TEXT, "his_words"):
-                words.append(piece)
+                words.append((f"{at}.text", piece))
                 continue
             flush()
             if kind == PICTURE:
                 obj = self._add({"type": "image"})
                 asset = f"{obj['id']}-picture"
                 obj.update(asset=asset, alt=piece.get("text") or "A picture.", fit="contain")
+                if piece.get("text"):
+                    self._from(obj["id"], ("alt",), f"{at}.text")
                 self.assets.append({"id": asset, "path": Path(str(piece["path"])).name,
                                     "from": piece["path"], "source": _ref(self.id)})
             elif kind == TABLE:
-                rows = [r for r in piece.get("rows") or [] if r]
+                rows = [(r, row) for r, row in enumerate(piece.get("rows") or []) if row]
                 obj = self._add({"type": "table"})
                 if len(rows) > 1:
-                    obj["head"] = rows[0]
-                    rows = rows[1:]
-                obj["rows"] = [{"id": f"{obj['id']}-r{n}", "cells": r}
-                               for n, r in enumerate(rows, 1)]
-                obj["alt"] = " ".join(obj.get("head") or rows[0])
+                    (r0, head), rows = rows[0], rows[1:]
+                    obj["head"] = head
+                    for c in range(len(head)):
+                        self._from(obj["id"], ("head", c), f"{at}.rows[{r0}][{c}]")
+                obj["rows"] = [{"id": f"{obj['id']}-r{n}", "cells": row}
+                               for n, (_, row) in enumerate(rows, 1)]
+                for n, (r, row) in enumerate(rows):
+                    for c in range(len(row)):
+                        self._from(obj["id"], ("rows", n, "cells", c), f"{at}.rows[{r}][{c}]")
+                obj["alt"] = " ".join(obj.get("head") or rows[0][1])
             elif kind == STEPS:
                 obj = self._add({"type": "steps"})
                 obj["items"] = [{"id": f"{obj['id']}-s{n}", "title": s["title"],
                                  **({"says": s["says"]} if str(s.get("says") or "").strip()
                                     else {})}
                                 for n, s in enumerate(piece["steps"], 1)]
+                for n, item in enumerate(obj["items"]):
+                    for key in ("title", "says"):
+                        if key in item:
+                            self._from(obj["id"], ("items", n, key), f"{at}.steps[{n}].{key}")
             elif kind == FIGURES:
                 obj = self._add({"type": "figures"})
                 obj["items"] = [{"id": f"{obj['id']}-f{n}", "value": f["value"],
                                  "label": f["label"]}
                                 for n, f in enumerate(piece["figures"], 1)]
+                for n in range(len(obj["items"])):
+                    for key in ("value", "label"):
+                        self._from(obj["id"], ("items", n, key), f"{at}.figures[{n}].{key}")
             elif kind == CALLOUT:
                 obj = self._add({"type": "callout"})
                 if str(piece.get("label") or "").strip():
                     obj["label"] = piece["label"]
+                    self._from(obj["id"], ("label",), f"{at}.label")
                 obj["says"] = piece["says"]
+                self._from(obj["id"], ("says",), f"{at}.says")
             elif kind == COMPARISON:
-                for column in piece["columns"]:
+                for k, column in enumerate(piece["columns"]):
                     obj = self._add({"type": "text"})
-                    obj["paragraphs"] = _paragraphs(obj["id"], [{"kind": TEXT, "text": "\n".join(
-                        [column["title"], *(f"- {p}" for p in column["points"])])}])
+                    obj["paragraphs"], _ = _paragraphs(obj["id"], [("", {"kind": TEXT, "text": "\n".join(
+                        [column["title"], *(f"- {p}" for p in column["points"])])})])
                     obj["paragraphs"][0]["role"] = "heading"
                     self.columns += 1
+                    parts = [column["title"], *column["points"]]
+                    if len(obj["paragraphs"]) == len(parts):
+                        fields = [f"{at}.columns[{k}].title",
+                                  *(f"{at}.columns[{k}].points[{p}]"
+                                    for p in range(len(column["points"])))]
+                        for n, (field, part) in enumerate(zip(fields, parts)):
+                            self._from(obj["id"], ("paragraphs", n, "runs", 0, "text"), field,
+                                       _lead(part))
             elif kind == CHART:
                 obj = self._add({"type": "chart"})
-                dataset, names = _dataset(piece, f"{self.id}-d{len(self.datasets) + 1}",
-                                          self.id)
+                dataset, names, origins = _dataset(
+                    piece, f"{self.id}-d{len(self.datasets) + 1}", self.id, at)
                 self.datasets.append(dataset)
+                for path, origin in origins.items():
+                    self._from(dataset["id"], path, *origin)
                 obj.update(kind=piece["chart"], data={"dataset": dataset["id"]},
                            x=names[piece["x"]], y=[names[y] for y in piece["y"]],
                            alt=piece["text"])
+                self._from(obj["id"], ("alt",), f"{at}.text")
             elif kind == DIAGRAM:
                 obj = self._add({"type": "diagram"})
                 ids = {n["id"]: f"{obj['id']}-{n['id']}" for n in piece["nodes"]}
@@ -576,6 +724,16 @@ class Built:
                              "nodes": [ids.get(n, n) for n in g["nodes"]]}
                             for g in piece["groups"]],
                     alt=piece["text"])
+                self._from(obj["id"], ("alt",), f"{at}.text")
+                for n, node in enumerate(obj["nodes"]):
+                    for key in ("label", "when"):
+                        if key in node:
+                            self._from(obj["id"], ("nodes", n, key), f"{at}.nodes[{n}].{key}")
+                for n, link in enumerate(obj["links"]):
+                    if "label" in link:
+                        self._from(obj["id"], ("links", n, "label"), f"{at}.links[{n}].label")
+                for n in range(len(obj["groups"])):
+                    self._from(obj["id"], ("groups", n, "label"), f"{at}.groups[{n}].label")
         flush()
 
     @property
@@ -675,9 +833,16 @@ def arrange(built: Built) -> tuple[Optional[tuple[str, dict]], list[str]]:
 
 def fit_problems(slide: dict, at: str) -> list[str]:
     """A content slide of the script laid out by program (deck_capacity at
-    the smallest frame): refused when no layout holds it."""
+    the smallest frame): refused when no layout holds it. A slide that asks
+    a decision is laid out the same way when it shows more than words (the
+    content slide JARVIS builds before its decision slide)."""
     if slide.get("decision"):
-        return []
+        if not shows_more(slide):
+            return []
+        built = Built(_companion(slide), slide["id"])
+        _, problems = arrange(built)
+        return [f"{at} (what it shows before its decision) does not fit a slide: {p}"
+                for p in problems]
     built = Built(slide)
     if not built.objects:
         return [f"{at} shows nothing on screen: give it its visual."]
@@ -685,19 +850,71 @@ def fit_problems(slide: dict, at: str) -> list[str]:
     return [f"{at} does not fit a slide: {p}" for p in problems]
 
 
+# ── a decision slide's visuals ───────────────────────────────────────────
+
+SHOWN = "-shown"
+
+
+def shown_id(sid: str) -> str:
+    """The id of the content slide JARVIS builds before a decision slide."""
+    return f"{sid}{SHOWN}"
+
+
+def shows_more(slide: dict) -> bool:
+    """A slide that asks a decision and shows more than plain words: a
+    visual, a picture, a table or Tim's own words, which the decision slide
+    (its question and options) cannot hold."""
+    return bool(slide.get("decision")) and any(
+        p.get("kind") != TEXT for p in slide.get("on_screen") or [] if isinstance(p, dict))
+
+
+def _companion(slide: dict) -> dict:
+    return {**slide, "id": shown_id(slide["id"]), "decision": None}
+
+
+def companions(script: dict) -> list[tuple[str, dict]]:
+    """Every slide JARVIS builds from the script, in order: (the script
+    slide's id, the slide to build): each content slide, and before each
+    decision slide that shows more than words, the content slide showing
+    it."""
+    out = []
+    for s in script.get("slides") or []:
+        if not isinstance(s, dict):
+            continue
+        if not s.get("decision"):
+            out.append((s["id"], s))
+        elif shows_more(s):
+            out.append((s["id"], _companion(s)))
+    return out
+
+
+def deck_ids(script: dict) -> list[str]:
+    """The deck's slide ids, in order: one a script slide, with the content
+    slide shown before a decision slide that shows more than words."""
+    out = []
+    for s in script.get("slides") or []:
+        if isinstance(s, dict):
+            out += ([shown_id(s["id"])] if shows_more(s) else []) + [s["id"]]
+    return out
+
+
+def drawn_on(slide: dict) -> str:
+    """The deck slide a script slide's on-screen pieces are drawn on."""
+    return shown_id(slide["id"]) if shows_more(slide) else slide["id"]
+
+
 # ── the deck step ────────────────────────────────────────────────────────
 
-def _content_slides(script: dict) -> list[dict]:
-    return [s for s in script.get("slides") or [] if isinstance(s, dict)
-            and not s.get("decision")]
+def _built(script: dict) -> list[Built]:
+    return [Built(slide, sid) for sid, slide in companions(script)]
 
 
 def built_slides(script: dict) -> dict:
-    """Every content slide of the script built by program, laid out in the
-    first layout that fits: {"slides", "datasets", "assets"}."""
+    """Every slide JARVIS builds from the script (each content slide, and
+    the slide shown before a decision that shows more than words), laid
+    out in the first layout that fits: {"slides", "datasets", "assets"}."""
     out: dict = {"slides": [], "datasets": [], "assets": []}
-    for slide in _content_slides(script):
-        built = Built(slide)
+    for built in _built(script):
         if not built.objects:
             continue
         arranged, _ = arrange(built)
@@ -737,7 +954,8 @@ def _held(layout, slots: dict[str, Optional[str]]) -> bool:
 def apply(source: dict, script: dict, deck_folder: Optional[Path] = None,
           sources: Optional[Sources] = None, revision: str = "") -> dict:
     """The deck source with the script's objects on each of its content
-    slides, by program: the author's layout and each object's slot kept
+    slides (and the slide shown before a decision that shows more than
+    words, put in before it when missing), by program: the author's layout and each object's slot kept
     where the author gave every object one (its object of the same id, else
     of the same type in order; the build says what does not hold), else
     JARVIS's arrangement; the author's narration cues kept, each lighting
@@ -749,11 +967,17 @@ def apply(source: dict, script: dict, deck_folder: Optional[Path] = None,
     datasets = [d for d in source.get("datasets") or [] if isinstance(d, dict)]
     assets = [a for a in source.get("assets") or [] if isinstance(a, dict)]
     touched = False
-    for wanted in _content_slides(script):
-        slide = slides.get(wanted["id"])
+    for built in _built(script):
+        slide = slides.get(built.id)
+        if slide is None and built.id != built.script_id and built.script_id in slides:
+            # The slide shown before a decision is JARVIS's: put in before
+            # its decision slide when the author did not write it.
+            order = source.setdefault("slides", [])
+            slide = {"id": built.id, "type": "content"}
+            order.insert(order.index(slides[built.script_id]), slide)
+            slides[built.id] = slide
         if slide is None or slide.get("type") != "content":
             continue
-        built = Built(wanted)
         if not built.objects:
             continue
         layout = slide.get("layout")
@@ -861,20 +1085,142 @@ def unmatched(script: dict, source: dict) -> list[str]:
     slides = {s.get("id"): s for s in source.get("slides") or [] if isinstance(s, dict)}
     datasets = {d.get("id"): d for d in source.get("datasets") or [] if isinstance(d, dict)}
     out = []
-    for wanted in _content_slides(script):
-        slide = slides.get(wanted["id"])
+    for built in _built(script):
+        slide = slides.get(built.id)
         if slide is None or slide.get("type") != "content":
             continue
-        built = Built(wanted)
         have = {o.get("id"): o for o in slide.get("objects") or [] if isinstance(o, dict)}
         for obj in built.objects:
             if obj["id"] not in have or _content(have[obj["id"]]) != _content(obj):
-                out.append(f"Slide {wanted['id']}'s {obj['type']} {obj['id']} is not the "
+                out.append(f"Slide {built.id}'s {obj['type']} {obj['id']} is not the "
                            f"script's: JARVIS builds every visual from the script, and the "
                            f"deck only arranges its layout and slots.")
         for dataset in built.datasets:
             if datasets.get(dataset["id"]) != dataset:
                 out.append(f"The dataset {dataset['id']} is not the script's chart on slide "
-                           f"{wanted['id']}.")
+                           f"{built.id}.")
     return out
+
+
+# ── a deck owner's edit of what is built from the script ─────────────────
+
+def _leaves(value, path: tuple = ()) -> dict[tuple, object]:
+    """Every leaf of a value by its path: a dict's by key, a list's by
+    index."""
+    if isinstance(value, dict):
+        out: dict = {}
+        for k, v in value.items():
+            out.update(_leaves(v, path + (k,)))
+        return out
+    if isinstance(value, list):
+        out = {}
+        for n, v in enumerate(value):
+            out.update(_leaves(v, path + (n,)))
+        return out
+    return {path: value}
+
+
+def _written(value) -> str:
+    """A number as the script writes it (a dataset holds it as a number)."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _field_text(slide: dict, field: str) -> Optional[str]:
+    holder = slide
+    for step in re.findall(r"\.?([a-z_]+)|\[(\d+)\]", field):
+        key = step[0] or int(step[1])
+        try:
+            holder = holder[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return holder if isinstance(holder, str) else None
+
+
+# The deck parts JARVIS sets from the script beside the objects themselves.
+_SET_BY_JARVIS = ("type", "readingOrder", "notes")
+
+
+def script_edits(script: dict, edited: dict) -> tuple[list[dict], list[str]]:
+    """What an edit of the deck source changed in what JARVIS builds from
+    the script, as edits of the script: (each edit by its script slide and
+    field, its offsets within that field's words, its old and new text; why
+    a change cannot be one). Both empty: the edit changed only what the
+    deck arranges (a layout, a slot, the narration's cues, the header, a
+    decision). A change is compared with the deck as JARVIS builds it from
+    the script with the author's arrangement kept (`apply`), and each built
+    word changed is put back where it came from (`Built.origins`); a word
+    added, an object removed or anything else JARVIS sets is not an edit
+    of the script and is said so."""
+    rebuilt = apply(edited, script)
+    have = {s.get("id"): s for s in edited.get("slides") or [] if isinstance(s, dict)}
+    want = {s.get("id"): s for s in rebuilt.get("slides") or [] if isinstance(s, dict)}
+    have_data = {d.get("id"): d for d in edited.get("datasets") or [] if isinstance(d, dict)}
+    by_id = {s["id"]: s for s in script.get("slides") or [] if isinstance(s, dict)}
+    edits: list[dict] = []
+    why: list[str] = []
+
+    def change(built: Built, holder: str, path: tuple, old, new) -> None:
+        origin = built.origins.get((holder, path))
+        where = f"slide {built.id}, {holder or 'the slide'} {'.'.join(map(str, path))}"
+        if origin is None:
+            why.append(f"{where}: JARVIS sets it from the script, which says what is shown; "
+                       f"change what it is made from instead.")
+            return
+        field, offset = origin
+        text = _field_text(by_id.get(built.script_id) or {}, field)
+        if text is None:
+            why.append(f"{where}: its words are not in the script.")
+            return
+        if offset is None:
+            old_words, new_words, start = text, _written(new), 0
+        else:
+            old_words, new_words, start = str(old), _written(new), offset
+        edits.append({"slide": built.script_id, "field": field, "start": start,
+                      "end": start + len(old_words), "old": old_words, "new": new_words})
+
+    def compare(built: Built, holder: str, ours, theirs) -> None:
+        ours_, theirs_ = _leaves(ours), _leaves(theirs)
+        if set(ours_) != set(theirs_):
+            why.append(f"slide {built.id}, {holder}: a part added or removed; JARVIS builds "
+                       f"it from the script, so add or remove it there.")
+            return
+        for path, value in ours_.items():
+            if theirs_[path] != value:
+                change(built, holder, path, value, theirs_[path])
+
+    for built in _built(script):
+        theirs, ours = have.get(built.id), want.get(built.id)
+        if ours is None:
+            continue
+        if theirs is None:
+            why.append(f"slide {built.id}: JARVIS builds it from the script; it stays.")
+            continue
+        if theirs.get("title") != ours.get("title"):
+            if isinstance(theirs.get("title"), str):
+                change(built, "", ("title",), ours.get("title"), theirs["title"])
+            else:
+                why.append(f"slide {built.id}: its title is the script's.")
+        for key in _SET_BY_JARVIS:
+            if theirs.get(key) != ours.get(key):
+                why.append(f"slide {built.id}, {key}: JARVIS sets it from the script.")
+        their_objects = {o.get("id"): o for o in theirs.get("objects") or []
+                         if isinstance(o, dict)}
+        for obj in ours.get("objects") or []:
+            if obj["id"] not in their_objects:
+                why.append(f"slide {built.id}: {obj['id']} is built from the script; remove "
+                           f"what it shows there.")
+                continue
+            compare(built, obj["id"], _content(obj), _content(their_objects[obj["id"]]))
+        extra = [i for i in their_objects if i not in {o["id"] for o in ours.get("objects") or []}]
+        if extra:
+            why.append(f"slide {built.id}: {', '.join(map(str, extra))} is not the script's; "
+                       f"add what it shows to the script.")
+        for dataset in built.datasets:
+            if have_data.get(dataset["id"]) is None:
+                why.append(f"the dataset {dataset['id']} is built from the script; it stays.")
+            elif have_data[dataset["id"]] != dataset:
+                compare(built, dataset["id"], dataset, have_data[dataset["id"]])
+    return edits, why
 
