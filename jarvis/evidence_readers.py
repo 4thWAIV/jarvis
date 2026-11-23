@@ -364,7 +364,7 @@ def work_item_text(item_id: str) -> Optional[str]:
             f"Area: {item.area or 'none'}",
             f"Latest update: {item.latest_update}"]
     if item.review_note:
-        head.append(f"His note when he said it is not done yet: {item.review_note}")
+        head.append(f"The current user's note when they said it is not done yet: {item.review_note}")
     pieces = []
     for p in item.pieces:
         who = f"{p.who.kind}:{p.who.ref}" if p.who.ref else p.who.kind

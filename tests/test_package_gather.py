@@ -427,22 +427,20 @@ def test_tim_s_record_holds_his_answers_on_every_earlier_package_and_his_rejects
                   arrived_at=1.0, closed_at=2.0, closed_why=package_inbox.SIGNED_OFF)
     records.update(package_inbox.path_of(closed["id"]), lambda _d: closed)
 
-    class Answered:
-        id, question = "approve-package", "Approve this package?"
-        answer = {"answer": "reject", "note": "Say what it costs first."}
-
-        def answered_id(self):
-            return f"{self.answer['answer']} (his words: {self.answer['note']})"
+    answered = package_inbox.Question(
+        id="approve-package", question="Approve this package?", context="", options=[],
+        recommended="", reason="", applies=True,
+        answer={"answer": "reject", "note": "Say what it costs first."})
     monkeypatch.setattr(evidence_readers, "package_questions",
-                        lambda row: [Answered()] if row.id == closed["id"] else [])
+                        lambda row: [answered] if row.id == closed["id"] else [])
     doc = _job(tmp_path, work, [{"type": "content", "text": "Words."}])
     package_gather.gather(pj.get(doc["id"]))
     text = (pe.place_of(doc).folder / pe.TIM_RECORD).read_text(encoding="utf-8")
     assert "package pkg-0123456789ab (The earlier plan), closed (signed_off):" in text
-    assert "approve-package: Approve this package? His answer: reject (his words: Say what " \
+    assert "approve-package: Approve this package? Their answer: reject (their words: Say what " \
            "it costs first.)" in text
     assert f"{earlier['package']} run-1: Lead with the cost." in text
-    assert "### His acts on it" in text
+    assert "### Their acts on it" in text
 
 
 def test_tim_s_record_is_his_own_work_first_then_what_he_said_elsewhere(tmp_path, transcript,
@@ -485,7 +483,7 @@ def test_tim_s_record_is_his_own_work_first_then_what_he_said_elsewhere(tmp_path
     assert "weighted lower" in package_gather.ELSEWHERE_PART
     assert "Merge PR 171 only once the folders move is checked on the copy." in elsewhere
     assert "is noted, sir" not in text, "JARVIS's own turns are not his words"
-    assert f"Work item {other.id} (Merge policy), merge: Merge PR 171 now? His answer " \
+    assert f"Work item {other.id} (Merge policy), merge: Merge PR 171 now? Their answer " \
            f"(voice): Not before the copy is checked." in elsewhere
     assert f"Work item {work}" not in elsewhere, "his own Work item is Part 1's alone"
     assert "found for: Merge PR 171?" in elsewhere

@@ -43,14 +43,14 @@ LABELS: tuple[BriefingLabel, ...] = (
         'Work items or decisions, so it is amber."'),
     BriefingLabel(
         "settled-and-open",
-        "It says what he has already decided, and where. It then says what, if anything, is "
+        "It says what they have already decided, and where. It then says what, if anything, is "
         "new or still open, and how that came up.",
-        "keep; expand when the work follows earlier answers of his", KEEP, "Tim + practice",
-        'Stage check 1.0.3, which he approved: "You approved the contract at L2, as written '
+        "keep; expand when the work follows earlier answers of theirs", KEEP, "Tim + practice",
+        'Stage check 1.0.3, which they approved: "You approved the contract at L2, as written '
         '... None of this is being reopened." / "There is no decision left for you here".'),
     BriefingLabel(
         "background",
-        "Context he lacks and needs for this decision: what came before, what the parts are, "
+        "Context they lack and need for this decision: what came before, what the parts are, "
         "what happened and why.",
         "keep; expand when thin", KEEP, "Tim",
         'La Epicure: "La Epicure resells fresh produce in Mérida, Yucatán, and Patricia runs '
@@ -63,7 +63,7 @@ LABELS: tuple[BriefingLabel, ...] = (
         'tools touches products, clients, orders or payments."'),
     BriefingLabel(
         "thing-shown",
-        "The thing he is asked to approve or understand, shown and explained rather than only "
+        "The thing they are asked to approve or understand, shown and explained rather than only "
         "named. That thing may be a design, the contract text, a plan, or 'the 2' items being "
         "added.",
         "keep; expand when thin", KEEP, "Tim",
@@ -88,8 +88,8 @@ LABELS: tuple[BriefingLabel, ...] = (
         'file over 512 kilobytes."'),
     BriefingLabel(
         "stakes",
-        "Why this matters to him or his audience: what changes for him, the benefit, the risk, "
-        "and what makes it his call rather than a routine one. It must be concrete. A stock "
+        "Why this matters to them or their audience: what changes for them, the benefit, the risk, "
+        "and what makes it their call rather than a routine one. It must be concrete. A stock "
         "line such as 'changes to X are yours to decide' is `filler`.",
         "keep; expand when thin", KEEP, "Tim",
         'La Epicure: "The outcome Patricia needs is plain. Each client gets the right produce, '
@@ -108,7 +108,7 @@ LABELS: tuple[BriefingLabel, ...] = (
         'part is what any small business would need."'),
     BriefingLabel(
         "next-steps",
-        "What happens after his answer: the plan, the work in order, and follow-up briefs.",
+        "What happens after their answer: the plan, the work in order, and follow-up briefs.",
         "keep", KEEP, "Tim",
         'La Epicure: "The smallest complete path is five steps, and each gives Patricia '
         'something usable on its own. First, records and the catalog..."'),
@@ -156,28 +156,28 @@ LABELS: tuple[BriefingLabel, ...] = (
         '(open-additions-to-the-denice-loader): a lock file estimated at "a day of '
         'development".'),
     BriefingLabel(
-        "known-to-him", "Background he already holds or has moved past.",
+        "known-to-him", "Background they already hold or have moved past.",
         "remove", REMOVE, "Tim + practice",
         "(the-sales-agent-agreement): who signs it."),
     BriefingLabel(
-        "reasks-settled", "It asks him to decide again something he has already decided.",
+        "reasks-settled", "It asks them to decide again something they have already decided.",
         "remove; state the decision as `settled-and-open` instead", REMOVE, "Tim"),
     BriefingLabel(
         "off-ask",
-        "Material about something he did not ask for, often in place of what he did ask for.",
+        "Material about something they did not ask for, often in place of what they did ask for.",
         "remove", REMOVE, "Tim",
-        "(the-knowledge-engine-today): test-suite scores where he had asked for the status of "
+        "(the-knowledge-engine-today): test-suite scores where they had asked for the status of "
         "each engine."),
     BriefingLabel(
         "not-his-question",
-        "A question put to him that is obvious, routine or already answered by his rules.",
+        "A question put to them that is obvious, routine or already answered by their rules.",
         "remove; the agent decides and reports what it chose", REMOVE, "Tim"),
     BriefingLabel(
         "technical-detail",
         "Mechanics, the story of how the agent worked, or a lecture on a method, when none of "
         "it changes the decision.",
         "remove from the brief; move it to evidence", REMOVE, "Tim + practice",
-        "a lecture on TDD where he needed what broke."),
+        "a lecture on TDD where they needed what broke."),
     BriefingLabel(
         "disclaimer",
         "A hedge, disclaimer, statement of what something is not or what is absent, or an "

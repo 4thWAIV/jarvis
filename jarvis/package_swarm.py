@@ -351,8 +351,11 @@ def _labels(*kinds: str) -> str:
 
 def _sender_answers(doc: dict) -> str:
     said = ((doc.get("request") or {}).get("from_the_sender") or {}).get("answers") or {}
+    why_now = ("Why does the current user need this now? What happened, what happens if they "
+               "do nothing, and what changes for them with each answer.")
     return "\n".join(sessions._tag("answer", a.get("answer", ""), id=key,
-                                   question=a.get("question", "")) for key, a in said.items())
+                                   question=why_now if key == "why_now" else a.get("question", ""))
+                     for key, a in said.items())
 
 
 def _handoff_questions(doc: dict) -> str:
@@ -1211,7 +1214,7 @@ def close_note(run: Run, items: list[dict]) -> str:
 
 
 def _who(rev: dict) -> str:
-    return "the sender" if rev.get("by") == SENDER else "Tim"
+    return "the sender" if rev.get("by") == SENDER else "the current user"
 
 
 def revision_note(run: Run, rev: dict) -> str:
@@ -1655,7 +1658,7 @@ def swarm(doc: dict) -> Optional[str]:
                     f"This run revises the script: {_who(kept['revision'])} said what is "
                     f"wrong. Everything made so far is kept (the research, the prep, the "
                     f"outline and the script), and only what the words below change is made "
-                    f"again. {'The sender' if more['by'] == SENDER else 'Tim'} said:"))
+                    f"again. {'The sender' if more['by'] == SENDER else 'The user'} said:"))
                 swarm_.say(more["by"], words_said(more["words"], more["by"]))
             said = findings_said(findings_for(doc, label))
             if said:

@@ -1142,6 +1142,9 @@ async def test_owners_take_their_turns_together_each_sent_the_conversation_as_it
     # Each hears the other's message next time, never its own.
     assert swarm._new_for("tims_reader") == "structure_owner:\nstructure_owner speaks"
     assert swarm._new_for("structure_owner") == "tims_reader:\ntims_reader speaks"
+    swarm.say("tim", "Tim wrote the proposal.")
+    assert swarm.conversation[-1]["from"] == "tim"
+    assert swarm._new_for("structure_owner").endswith("The current user:\nTim wrote the proposal.")
 
 
 @pytest.mark.asyncio
@@ -1229,10 +1232,10 @@ def test_every_role_has_its_approved_prompt_and_every_placeholder_is_filled():
     assert first == "References: <reference id=\"r\">{x}</reference>"
     assert system.startswith("You work out what a free-text reference means.")
     owner = role_prompts.PROMPTS["structure_owner"].system
-    assert owner.startswith("You are one of a small team making a briefing for Tim") and \
+    assert owner.startswith("You are one of a small team making a briefing for the current user") and \
         ("Your questions: **Is the most relevant information first?** and **Is the decision "
          "properly prepared?**") in owner
-    assert role_prompts.PROMPTS["tims_reader"].material.startswith("What Tim knows:\n{knows}")
+    assert role_prompts.PROMPTS["tims_reader"].material.startswith("What the current user knows:\n{knows}")
 
 
 def test_the_owner_prompts_are_owner_prompts_md_word_for_word():

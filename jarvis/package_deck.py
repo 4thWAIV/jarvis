@@ -277,7 +277,7 @@ BUILT_NOTE = (
     "split the narration into cues that light each object; JARVIS puts the script's content "
     "back on every slide by its id, so a word changed in what it built is not kept: the script "
     "says what is shown, and a decision's short name is its script slide's title. On each "
-    "decision you write its recommendation and its reason, the answers that need his words, "
+    "decision you write its recommendation and its reason, the answers that need the current user's words, "
     "and each option's picture (or why the options cannot be pictured, text_only). Write the "
     "deck's header yourself. Where a slide needs a change of the script itself (another step, "
     "a node, a piece, a different visual form, fewer words), give that slide of the script, "
@@ -323,7 +323,7 @@ def write_note(run: ps.Run) -> str:
         f"asking that decision: JARVIS builds its question, options, words (its context), say "
         f"and what else it shows from the script, below, and you give its recommendation and "
         f"reason.",
-        f"Where the script gives Tim's own words (a his_words piece), show them on that slide as "
+        f"Where the script gives the current user's own words (a his_words piece), show them on that slide as "
         f"runs with emphasis {HIS_WORDS}, which JARVIS draws highlighted in a very bright, "
         f"vibrant way, and have JARVIS say them in its narration; never 'this is what you said' "
         f"with a block of text. JARVIS checks every one.",
@@ -484,10 +484,10 @@ def script_problems(script: dict, deck: dict) -> list[str]:
             " ".join(c.get("say", "") for c in slide.get("narration") or [])
         words = _words(quote["text"])
         if not _within(words, _words(drawn)):
-            out.append(f"Slide {quote['slide']} does not draw Tim's words {quote['text']!r} in "
+            out.append(f"Slide {quote['slide']} does not draw the current user's words {quote['text']!r} in "
                        f"the {HIS_WORDS} style.")
         if not _within(words, _words(said)):
-            out.append(f"Slide {quote['slide']}'s narration does not say Tim's words "
+            out.append(f"Slide {quote['slide']}'s narration does not say the current user's words "
                        f"{quote['text']!r}.")
     return out + script_visuals.unmatched(script, deck)
 
@@ -694,7 +694,7 @@ def build_and_prove(run: ps.Run, round_no: int) -> tuple[Optional[Built], list[s
     except (OSError, ValueError, StopIteration, dp.Refused) as e:
         return None, [f"The built deck could not be read back: {e}"]
     if manifest.get("vote") != package_inbox.VOTE_ID:
-        return None, ["The built deck does not carry Tim's vote, Approve and Reject at the "
+        return None, ["The built deck does not carry the current user's vote, Approve and Reject at the "
                       "check mark."]
     against = script_problems(package_script.read(run.script) or {},
                               yaml.safe_load(source.read_text(encoding="utf-8")) or {})
@@ -720,8 +720,8 @@ def review_turn(run: ps.Run, built: Built, only: Optional[list[str]] = None) -> 
                       file=presentation_proof.PROOF_FILE)]), id=s["id"])
         for s in script.get("slides") or [])
     return "\n\n".join([
-        "The deck written from the passed script is built and proven, and every quote of Tim's "
-        "own words is drawn in his style and narrated. Below, slide by slide, each slide of the "
+        "The deck written from the passed script is built and proven, and every quote of the current user's "
+        "own words is drawn in their style and narrated. Below, slide by slide, each slide of the "
         "passed script beside the layout data JARVIS computed for its deck slide as it compiled "
         "and proved it (its text and pictures with their positions and sizes at the smallest "
         "and the largest frame, in deck units on the 880 x 640 canvas and in pixels) and its "

@@ -210,14 +210,14 @@ class Question:
             return SPECIAL[option_id]
         return next((o["name"] for o in self.options if o["id"] == option_id), option_id)
 
-    def answered_id(self) -> str:
+    def answered_id(self, *, note_label: str = "his words") -> str:
         """His answer by its id (an option's, later or none), with his own
         words after it, and for his approval the revision it was given to
         and whether it is stale; "" while unanswered. Ids and hashes only:
         no word of the deck."""
         if not self.answer:
             return ""
-        return self.answer["answer"] + (f" (his words: {self.answer['note']})"
+        return self.answer["answer"] + (f" ({note_label}: {self.answer['note']})"
                                         if self.answer.get("note") else "") + self._given_to()
 
     def _given_to(self) -> str:

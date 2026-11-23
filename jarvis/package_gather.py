@@ -237,33 +237,33 @@ def tim_text(work_ids: list[str]) -> str:
         parts += [f"### Work item {work_id}: {item.title}", ""]
         said = [i for i in _all(lambda b: conversation_log.work_thread(work_id, b))
                 if not i.inbound]
-        parts += ["#### His messages", ""] + [f"- {i.id} ({i.at:.0f}): {i.text}" for i in said] \
+        parts += ["#### Their messages", ""] + [f"- {i.id} ({i.at:.0f}): {i.text}" for i in said] \
             + (["- none"] if not said else []) + [""]
         answered = [a for a in item.answered if a.where != work_store.WITHDRAWN
                     and a.where not in work_store.PACKAGE_CLOSED]
-        parts += ["#### His answers to its decisions", ""] + \
-            [f"- {a.key}: {a.question} His answer ({a.where}): {a.answer}" for a in answered] + \
+        parts += ["#### Their answers to its decisions", ""] + \
+            [f"- {a.key}: {a.question} Their answer ({a.where}): {a.answer}" for a in answered] + \
             (["- none"] if not answered else []) + [""]
         acts = work_store.events(work_id, kinds=set(work_store.HIS_KINDS)
                                  - {work_store.DECISION_MADE}, limit=10_000)
-        parts += ["#### His acts on it", ""] + \
+        parts += ["#### Their acts on it", ""] + \
             [f"- {e.seq} {e.kind} ({e.at:.0f}): {e.summary}"
              + (f" {json.dumps(e.detail, ensure_ascii=False)}" if e.detail else "")
              for e in acts] + (["- none"] if not acts else []) + [""]
         if item.review_note:
-            parts += ["#### His note when he said it is not done yet", "", item.review_note, ""]
-        parts += ["#### His answers on its earlier packages", ""]
+            parts += ["#### Their note when they said it is not done yet", "", item.review_note, ""]
+        parts += ["#### Their answers on its earlier packages", ""]
         packages = package_inbox.every_for_work(work_id)
         for row in packages:
             why = f" ({row.closed_why})" if row.closed_why else ""
             parts.append(f"- package {row.id} ({row.title}), {row.state}{why}:")
             answers = [q for q in evidence_readers.package_questions(row) if q.answer]
-            parts += [f"  - {q.id}: {q.question} His answer: {q.answered_id()}" for q in answers]
+            parts += [f"  - {q.id}: {q.question} Their answer: {q.answered_id(note_label='their words')}" for q in answers]
             if not answers:
                 parts.append("  - nothing answered")
         if not packages:
             parts.append("- none")
-        parts += ["", "#### His Reject of its package runs", ""]
+        parts += ["", "#### Their Reject of its package runs", ""]
         rejected = package_jobs.rejections_on_work(work_id)
         parts += [f"- {r['package']} {r['run']}: {r['words']}" for r in rejected] + \
             (["- none"] if not rejected else [])
@@ -279,7 +279,7 @@ def rejections_text(doc: dict) -> str:
     said = package_jobs.rejections_of_request(doc)
     if not said:
         return ""
-    return "\n".join(["### His Reject of this package's earlier runs, and of earlier packages "
+    return "\n".join(["### Their Reject of this package's earlier runs, and of earlier packages "
                       "asked with the same handoff", ""]
                      + [f"- {r['package']} {r['run']}: {r['words']}" for r in said] + [""])
 
@@ -289,9 +289,9 @@ def rejections_text(doc: dict) -> str:
 # said anywhere else that bears on the package's questions and evidence,
 # found in the engine by words and meaning. The two are kept apart, the
 # package's own first and weighted higher.
-OWN_PART = ("## Part 1: on this package's own Work item (weighted higher: his word on this "
+OWN_PART = ("## Part 1: on this package's own Work item (weighted higher: their word on this "
             "work itself)")
-ELSEWHERE_PART = ("## Part 2: what he said anywhere else that bears on this package's "
+ELSEWHERE_PART = ("## Part 2: what they said anywhere else that bears on this package's "
                   "questions and evidence (weighted lower than Part 1)")
 # The records that hold what he said: the conversation's turns, messages
 # (his to agents), Work items (his answers and decisions) and packages (his
@@ -346,14 +346,14 @@ def _his_words(path: str, own: set[str]) -> list[str]:
     if kind == "turn":
         if data.get("kind") not in HIS_TURNS or not data.get("text"):
             return []
-        return [f"- he {'said' if data['kind'] == 'heard' else 'typed'} "
+        return [f"- they {'said' if data['kind'] == 'heard' else 'typed'} "
                 f"(turn {data.get('id')}, {float(data.get('at') or 0):.0f}): {data['text']}"]
     if kind == "message":
         out = []
         for item in message_records.doc_items(rec):
             if item.get("kind") in HIS_MESSAGE_ITEMS and item.get("text") \
                     and item.get("about") not in own:
-                out.append(f"- his message {item.get('id')} to "
+                out.append(f"- their message {item.get('id')} to "
                            f"{item.get('agent_name') or 'an agent'} "
                            f"({float(item.get('at') or 0):.0f}): {item['text']}")
         return out
@@ -362,20 +362,20 @@ def _his_words(path: str, own: set[str]) -> list[str]:
         item = work_store.get(item_id) if item_id and item_id not in own else None
         if item is None:
             return []
-        out = [f"- his answer on Work item {item.id} ({item.title}), {a.key}: {a.question} "
-               f"His answer ({a.where}): {a.answer}"
+        out = [f"- their answer on Work item {item.id} ({item.title}), {a.key}: {a.question} "
+               f"Their answer ({a.where}): {a.answer}"
                for a in item.answered if a.where != work_store.WITHDRAWN
                and a.where not in work_store.PACKAGE_CLOSED and a.answer]
         if item.review_note:
-            out.append(f"- his note on Work item {item.id} ({item.title}) when he said it is "
+            out.append(f"- their note on Work item {item.id} ({item.title}) when they said it is "
                        f"not done yet: {item.review_note}")
         return out
     if kind == "package":
         row = package_inbox.get(str(data.get("id") or ""))
         if row is None or (row.work_id and row.work_id in own):
             return []
-        return [f"- his answer in package {row.id} ({row.title}), {q.id}: {q.question} "
-                f"His answer: {q.answered_id()}"
+        return [f"- their answer in package {row.id} ({row.title}), {q.id}: {q.question} "
+                f"Their answer: {q.answered_id(note_label='their words')}"
                 for q in evidence_readers.package_questions(row) if q.answer]
     return []
 
@@ -414,7 +414,7 @@ def said_elsewhere(doc: dict, own: list[str]) -> str:
         said = _his_words(path, mine)
         if said:
             lines += said + [f"  (found for: {'; '.join(why)})"]
-    parts += lines or ["- nothing of his found elsewhere"]
+    parts += lines or ["- nothing of theirs found elsewhere"]
     return "\n".join(parts + failed + [""])
 
 
@@ -431,12 +431,12 @@ def tim_record(doc: dict) -> tuple[str, str]:
         own = tim_text(ids)
         source = ", ".join(work_store.path_of(i) for i in ids)
     else:
-        own = rejections_text(doc) or "- no Work item, and nothing of his on " \
+        own = rejections_text(doc) or "- no Work item, and nothing of theirs on " \
             "this package yet\n"
         source = package_jobs.path_of(doc)
-    text = "\n".join(["# Tim's record on this work", "", OWN_PART, "", own,
+    text = "\n".join(["# The current user's record on this work", "", OWN_PART, "", own,
                       said_elsewhere(doc, ids)])
-    return text, source + ", the engine (his words elsewhere)"
+    return text, source + ", the engine (their words elsewhere)"
 
 
 def refresh_tim(doc: dict) -> Row:
@@ -451,7 +451,7 @@ def refresh_tim(doc: dict) -> Row:
     from jarvis import package_jobs
     g = Gathering(doc)
     said = package_jobs.rejections(doc["package"])
-    text = "\n".join(["# His Reject of this package's earlier runs", ""]
+    text = "\n".join(["# The current user's Reject of this package's earlier runs", ""]
                      + [f"- {r['run']}: {r['words']}" for r in said] + [""])
     rows = [r for r in pe.read_manifest(g.place) if r.stored != pe.TIM_REJECTED]
     sha, size = g.place.write(pe.TIM_REJECTED, text.encode("utf-8"))

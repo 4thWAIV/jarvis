@@ -91,18 +91,18 @@ def _described(base: dict, description: str) -> dict:
 
 PIECE = _object({
     "kind": {"type": "string", "enum": list(KINDS),
-             "description": "text: words on the slide; his_words: Tim's own words, quoted "
+             "description": "text: words on the slide; his_words: the current user's own words, quoted "
                             "exactly, with their source; picture: a picture by path; table: "
                             "words in rows and columns."},
     "text": _described(_TEXT, "The words (text, his_words), or what the picture shows "
                               "(picture). Empty for a table."),
-    "source": _described(_TEXT, "his_words: where he said it, its source path. Empty "
+    "source": _described(_TEXT, "his_words: where the current user said it, its source path. Empty "
                                 "otherwise."),
     "position": _described(_TEXT, "his_words: where in that source. Empty otherwise."),
     "path": _described(_TEXT, "picture: the picture's file path. Empty otherwise."),
     "rows": _array(_array(_TEXT), "table: its rows, each a list of cells, the first row its "
                                   "heading. Empty otherwise."),
-}, "One piece of what is on screen: words, Tim's words, a picture or a table.")
+}, "One piece of what is on screen: words, the current user's words, a picture or a table.")
 # Every piece on screen: the words, picture and table above, or one of the
 # typed visuals (script_visuals.PIECES), each with its content.
 ON_SCREEN = {"anyOf": [PIECE, *visuals.PIECES.values()]}

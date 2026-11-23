@@ -236,7 +236,7 @@ def test_the_deck_is_checked_against_the_script_by_program(marked, deck_plan):
     said = _said_on_the_deck(review)
     # His words are drawn in his style by program (the script's objects);
     # his words said in the narration is still checked.
-    assert "narration does not say Tim's words 'Keep it in the office.'" in said[0]
+    assert "narration does not say the current user's words 'Keep it in the office.'" in said[0]
     assert "the script's are ['opening', 'what-changed', 'where']" in said[1]
     assert json.loads((Path(doc["folder"]) / ps.STATE).read_text())["deck"]["builds"] == 3
     assert not [c for c in review["concerns"] if "his" in c["id"]]
@@ -254,7 +254,7 @@ def test_a_script_slide_that_asks_a_decision_is_the_deck_s_decision_slide():
     plain = copy.deepcopy(deck)
     plain["slides"][0]["objects"][0]["paragraphs"][-1]["runs"][0]["emphasis"] = "normal"
     assert pd.script_problems(script, plain) == [
-        "Slide opening does not draw Tim's words 'Keep it in the office.' in the his-words "
+        "Slide opening does not draw the current user's words 'Keep it in the office.' in the his-words "
         "style.",
         "Slide opening's text opening-v1 is not the script's: JARVIS builds every visual from "
         "the script, and the deck only arranges its layout and slots."]
@@ -597,8 +597,8 @@ def test_the_package_is_assembled_signed_and_sent_to_its_sender_to_check(marked,
     assert job["state"] == pj.WAITING and pj.kind_of(check) == pj.CHECK
     assert check["questions"] == [{"id": "check", "question": pj.SENDER_CHECK}]
     assert pj.SENDER_CHECK == (
-        "This is the package JARVIS made from your request, before Tim sees it. Open it and "
-        "judge broadly whether it does what you asked for and what Tim needs from it. Approve "
+        "This is the package JARVIS made from your request, before the current user sees it. Open it and "
+        "judge broadly whether it does what you asked for and what the user needs from it. Approve "
         "it, or say what is wrong, and a new run starts with your words.")
     # The message is the program's: the opening slide and the question the
     # request gave (never the deck author's wording of it).

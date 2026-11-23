@@ -790,8 +790,10 @@ class BrainSwarmSession:
         has answered (`_heard`)."""
         new = [m for m in self.conversation[self._seen[name]:] if m["from"] != name]
         lead = [] if name in self._introduced else [self._first(name) or ""]
-        return "\n\n".join([t for t in lead if t] +
-                            [f"{m['from']}:\n{m['text']}" for m in new])
+        for message in new:
+            speaker = "The current user" if message["from"] == "tim" else message["from"]
+            lead.append(f"{speaker}:\n{message['text']}")
+        return "\n\n".join(t for t in lead if t)
 
     def _heard(self, name: str, upto: Optional[int] = None) -> None:
         """A participant answered: everything said up to `upto` (all, by
@@ -1584,7 +1586,7 @@ class BrainMarkingSession:
         def values(parts: str, on_page: set[str]) -> dict:
             return {"{the parts, by id}": head + parts,
                     "{each label: name, what it means, an example}": label_block,
-                    "{Tim's material, each item with its knowledge state}": "\n".join(
+                    "{the user's material, each item with its knowledge state}": "\n".join(
                         _tag("material", "" if k.source and k.source in on_page else k.text,
                              state=k.state, source=k.source or None) for k in knowledge)}
         system, fixed = role_prompt("marking", values("", set()))

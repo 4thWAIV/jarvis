@@ -105,8 +105,8 @@ QUESTIONS, FINDINGS, CHECK = "questions", "findings", "check"
 # (approved by Tim 2026-11-20): `check` is APPROVE or CHANGE, and CHANGE
 # needs `what_is_wrong`, its words; no free text is parsed.
 CHECK_ID = "check"
-SENDER_CHECK = ("This is the package JARVIS made from your request, before Tim sees it. Open it "
-                "and judge broadly whether it does what you asked for and what Tim needs from "
+SENDER_CHECK = ("This is the package JARVIS made from your request, before the current user sees it. Open it "
+                "and judge broadly whether it does what you asked for and what the user needs from "
                 "it. Approve it, or say what is wrong, and a new run starts with your words.")
 APPROVE, CHANGE = "approve", "change"
 WHAT_IS_WRONG = "what_is_wrong"

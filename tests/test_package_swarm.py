@@ -415,7 +415,8 @@ def test_each_participant_is_given_exactly_its_share(marked, plan):
     secret = "FAILED tests/test_x.py::test_move"           # a CI log: he never saw it
     assert secret not in first["tims_reader"] and "probably_does_not_know" not in \
         first["tims_reader"]
-    assert "What Tim knows:" in first["tims_reader"]
+    assert "What the current user knows:" in first["tims_reader"]
+    assert "Why does the current user need this now?" in first["author"]
     for name in ("context_owner", "structure_owner"):
         assert secret in first[name] and "Does Tim care: yes." in first[name], "with the prep"
         assert "knowledge_search under that path" in first[name]
