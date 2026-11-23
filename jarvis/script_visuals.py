@@ -240,16 +240,16 @@ def numbers_in(text: str) -> list[float]:
     return out
 
 
-_LINES = re.compile(r"^\s*(?:lines?|l\.?)\s*(\d+)(?:\s*(?:-|–|to|through)\s*(\d+))?\s*$",
+_LINES = re.compile(r"[ \t]*(?:lines?|l\.?)[ \t]*(\d+)(?:[ \t]*(?:-|–|to|through)[ \t]*(\d+))?[ \t]*",
                     re.I)
-_CHARS = re.compile(r"^\s*(?:characters?|chars?|offsets?)\s*(\d+)\s*(?:-|–|to)\s*(\d+)\s*$",
+_CHARS = re.compile(r"[ \t]*(?:characters?|chars?|offsets?)[ \t]*(\d+)[ \t]*(?:-|–|to)[ \t]*(\d+)[ \t]*",
                     re.I)
 
 
 def span(text: str, position: str) -> Optional[str]:
     """The stretch of `text` a position names, or None when it names none
     the program can read, or one past the end."""
-    found = _LINES.match(position or "")
+    found = _LINES.fullmatch(position or "")
     if found:
         first = int(found.group(1))
         last = int(found.group(2) or first)
@@ -257,7 +257,7 @@ def span(text: str, position: str) -> Optional[str]:
         if first < 1 or last < first or last > len(lines):
             return None
         return "\n".join(lines[first - 1:last])
-    found = _CHARS.match(position or "")
+    found = _CHARS.fullmatch(position or "")
     if found:
         start, end = int(found.group(1)), int(found.group(2))
         return text[start:end] if 0 <= start < end <= len(text) else None

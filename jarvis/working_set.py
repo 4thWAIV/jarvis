@@ -48,7 +48,7 @@ SUMMARY_CHARS = 160
 # What the note saying what was left out may take.
 NOTE_TOKENS = 400
 
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+_HEADING = re.compile(r"[ \t]{0,3}#{1,6}[ \t]+(.*?\S)[ \t]*#*[ \t]*")
 _SENTENCE = re.compile(r"(.+?[.!?])(?:\s|$)", re.DOTALL)
 
 
@@ -67,11 +67,12 @@ def room(budget: pages.Budget) -> int:
 
 def summary_line(text: str) -> str:
     """A file's one line: its first heading, else its first sentence."""
-    heading = _HEADING.search(text or "")
+    lines = (text or "").splitlines()
+    heading = next((match for line in lines if (match := _HEADING.fullmatch(line))), None)
     if heading:
         line = heading.group(1)
     else:
-        lines = [l.strip() for l in (text or "").splitlines() if re.search(r"[^\W\d_]", l)]
+        lines = [l.strip() for l in lines if re.search(r"[^\W\d_]", l)]
         first = " ".join(lines[:3])
         found = _SENTENCE.match(first)
         line = found.group(1) if found else first

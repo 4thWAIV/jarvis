@@ -289,6 +289,8 @@ SAMPLES = {
     "_JOURNAL_NAME_RE": "2026-09-04-133912-123456-manual.md",
     "_TABLE_ROW": "|zeltar pro|99|",
     "_HEADING": "# Title",
+    "_LINES": "lines 1-2",
+    "_CHARS": "chars 0-4",
     "_TASK_HEADING": "## Task 1: wire the executor",
     "_CHECKBOX": "- [x] done",
     "_UUID": "01a0ca40-0ae3-7452-893a-87da26c01453",
