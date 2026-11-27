@@ -127,6 +127,15 @@ def _refused(problem: str, status: int = 409) -> JSONResponse:
     return JSONResponse({"error": problem}, status_code=status)
 
 
+def _vote_after(package_id: str) -> Optional[dict]:
+    """The package's vote and questions as the view's head shows them
+    (`package_inbox.page_vote`), or None when it cannot be read."""
+    try:
+        return package_inbox.page_vote(work_packages.find(package_id))
+    except work_packages.PackageError:
+        return None
+
+
 def mount(app: FastAPI, calls: Calls) -> None:
 
     async def receive(request: Request, project: str = "", session: str = "",
@@ -180,7 +189,11 @@ def mount(app: FastAPI, calls: Calls) -> None:
                                             package_inbox.ON_THE_PAGE)
         if entry is None:
             return _refused(problem)
-        return {"inbox": entry_json(entry), "said": problem}
+        # What the package asks in its head now, read for this one package
+        # (a follow-up may apply once its parent is answered): the page shows
+        # it at once and never describes every package to find it.
+        shown = await asyncio.to_thread(_vote_after, entry.package_id)
+        return {"inbox": entry_json(entry), "said": problem, "vote": shown}
 
     async def sign_off(package_id: str, body: dict = Body(default_factory=dict)):
         entry, said, left = await calls.sign_off(package_id, package_inbox.ON_THE_PAGE,

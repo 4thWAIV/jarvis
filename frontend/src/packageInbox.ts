@@ -24,7 +24,7 @@
 
 import { liveRead } from "./liveRead";
 import { type Said } from "./locale";
-import { packagesChanged, showOpenedPackage, type PackageInfo } from "./packages";
+import { packagesChanged, showOpenedPackage, type PackageInfo, type PageVote } from "./packages";
 import { workChanged } from "./work";
 
 export type InboxState = "arrived" | "opened" | "answering" | "answered" | "closed";
@@ -134,12 +134,20 @@ export async function openInbox(id: string): Promise<Said | null> {
 /** Record his answer to one of its decisions. The refusal's words, or null. */
 export async function answerInbox(id: string, decision: string, option: string,
                                   words = ""): Promise<string | null> {
+  return (await answerWithVote(id, decision, option, words)).problem;
+}
+
+/** The same, with what the package asks in its head now (its vote and
+ *  questions, read by the server for this one package), so the card shows
+ *  his answer at once. `vote` is null when the server gave none. */
+export async function answerWithVote(id: string, decision: string, option: string,
+                                     words = ""): Promise<{ problem: string | null; vote: PageVote | null }> {
   try {
-    await post(`${base(id)}/answer`, { decision, option, words });
+    const got = await post<{ vote?: PageVote | null }>(`${base(id)}/answer`, { decision, option, words });
     changed();
-    return null;
+    return { problem: null, vote: got.vote ?? null };
   } catch (e) {
-    return (e as Error).message;
+    return { problem: (e as Error).message, vote: null };
   }
 }
 

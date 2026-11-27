@@ -1,0 +1,29 @@
+{
+  "name": "proposed-cef-shutdown-fix-for-pages-that-660da16f",
+  "runs": "page",
+  "entry": "index.html",
+  "purpose": "Will you run the 20-second listening check now? You start handoff/macos-completion/validation/listening-check.sh by hand from the repository root. About 4 seconds in you should hear one short quiet tone (0.5 s, 660 Hz), then 2 seconds later the words 'listening check', under 3 seconds of sound in total from the Mac's default output. Afterwards say whether each was heard once, from which speaker, and anything doubled or missing.",
+  "returns": [
+    "results/**"
+  ],
+  "communication": {
+    "kind": "architecture",
+    "title": "Proposed CEF shutdown fix for pages that select an audio output device",
+    "readable": true,
+    "document_id": "document-2053ad5fc5674935b513802a660da16f",
+    "revision": "9248c6e9e8e5b6c8555b93f3608794efc35367cb579bf7ffa6d25faba865bf36",
+    "source_revision": "a31620b4a5885a5348b087b91bab7fb214f94346306dfc2ed99edf5b98a04f25",
+    "kit_digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c"
+  },
+  "brief": "UNDERSTANDING.md",
+  "understanding": {
+    "source.yaml": "UNDERSTANDING.md",
+    "check.json": "UNDERSTANDING.md",
+    "canonical.json": "UNDERSTANDING.md",
+    "index.html": "UNDERSTANDING.md",
+    "story.json": "UNDERSTANDING.md",
+    "authored-story.json": "UNDERSTANDING.md"
+  },
+  "story": "story.json",
+  "version": "1.0.0"
+}
