@@ -59,50 +59,72 @@ These are fresh captures of the actual React interface, rendered with fictional 
 
 Regenerate these captures with `.venv/bin/python scripts/capture_docs.py`.
 
-## Run the workspace
+## Install
 
-On Windows, run it from source with the [Windows README](docs/windows.md): background start, status, stop and logs, no `.env` editing.
+One command takes a fresh Mac or Windows 11 PC to a running JARVIS. It checks the tools JARVIS needs, lists what is missing and asks once before installing anything, sets the checkout up, runs JARVIS's own preflight and can start it. A second run changes nothing that is already right and says so.
 
-Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Choose Fish Audio or local Kokoro CPU speech in Settings → Voice. Fish needs its own key; local output needs an explicit model installation. See [local voice setup](docs/local-voice.md). Without working synthesis, replies remain visible as text.
+**macOS** (Terminal):
 
-From a clone of this repository:
+```bash
+curl -fsSL https://raw.githubusercontent.com/4thWAIV/jarvis/main/install.sh | bash
+```
+
+**Windows 11** (PowerShell):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/4thWAIV/jarvis/main/install.ps1)))"
+```
+
+Either one clones the repository first (`~/jarvis` on macOS, `%USERPROFILE%\jarvis` on Windows, never directly under `C:\`) and carries on from inside it. Flags go after the command: `bash -s -- --yes --start`, or `... (irm ...)) -Yes -Start`. From a checkout you already have:
+
+```bash
+./install.sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+| macOS | Windows | Does |
+|---|---|---|
+| `--check` | `-Check` | Only check and report; installs and changes nothing. Exits 1 if anything required is missing. |
+| `--yes` | `-Yes` | Answers yes to the one question, for unattended runs. |
+| `--no-models` | `-NoModels` | Skips the speech and embedding model downloads (about 55 MiB and 135 MB); Settings installs them later. |
+| `--start` | `-Start` | Starts JARVIS when done and opens Chrome (`--no-open` / `-NoOpen` skips Chrome). |
+| `--dir DIR` | `-Dir DIR` | Where to clone when run outside a checkout. |
+
+**What it installs** when missing or too old: on macOS the Xcode Command Line Tools (git; Apple's own installer window), Homebrew (only if something must go through it), Python 3.12, Node.js 22 with npm, Google Chrome, openssl and Claude Code 2.1.224 or newer; on Windows, through winget, Git for Windows (which brings openssl), Python 3.12, Node.js 22 LTS, Google Chrome and Claude Code (as `claude.exe`). Codex is optional and only reported. In the checkout it makes `.venv`, installs the Python and frontend dependencies, makes the development certificate, installs Playwright's Chromium and the two models, and installs the talk-to-jarvis skill; each step is skipped when already done. Every command's output is kept in `install.log` in the checkout. It never reads or writes a key, token or password and never creates a `.env`.
+
+**Exit codes:** 0 all good; 1 something required is missing or was declined; 2 an install step failed; 3 JARVIS did not start; 64 bad usage.
+
+**What only you can do**, listed at the end of the run:
+
+1. Sign in to Claude Code: run `claude`, then `/login` with your Claude subscription. JARVIS never uses an API key.
+2. Enter the Fish Audio key (from fish.audio) in Settings, Voice. It is never typed on a command line or kept in a file.
+3. On macOS, grant your terminal Accessibility: System Settings, Privacy & Security, Accessibility.
+4. Allow Chrome's microphone for `http://localhost:5173`. Permissions are per origin, port included.
+
+Start, check and stop afterwards with `.venv/bin/python -m jarvis.background start|status|stop|logs` (`.\.venv\Scripts\python.exe` on Windows; see the [Windows README](docs/windows.md)).
+
+### Manual setup
+
+Use macOS or Windows with Chrome; the microphone path is tested in Chrome. Python 3.11+ (3.12 recommended) and Node.js 22 are needed for development. Choose Fish Audio or local Kokoro CPU speech in Settings, Voice; see [local voice setup](docs/local-voice.md). Without working synthesis, replies remain visible as text. Every setting is chosen in Settings; nothing asks you to edit a `.env` file.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+npm --prefix frontend ci
+.venv/bin/python -m jarvis.background certs
 .venv/bin/python -m playwright install chromium
 .venv/bin/python scripts/setup_speech_input.py
 .venv/bin/python scripts/setup_embedding_model.py
-npm --prefix frontend install
-```
-
-Every setting is chosen in Settings; nothing asks you to edit a `.env` file. The first time the page loads without a voice, Settings opens on Voice for the Fish Audio key. Claude uses the Claude Code subscription login. The Codex brain uses its own application-managed Codex home; see the provider controls in Settings. Fish Audio is a separate service with its own usage charges.
-
-Generate the local certificates required by the Vite development proxy:
-
-```bash
-openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
-```
-
-Run these in separate terminals:
-
-```bash
-.venv/bin/python -m jarvis
-```
-
-```bash
-npm --prefix frontend run dev
-```
-
-Open **http://localhost:5173** in Chrome. Allow microphone access and click the page to enable audio. Microphone permissions are specific to the origin, including its port. The development proxy expects the backend at `https://localhost:8340`.
-
-To install the coordination instructions used by external Claude Code and Codex sessions:
-
-```bash
 .venv/bin/python -m jarvis.session_skill install
+.venv/bin/python -m jarvis.background start
 ```
 
-See the [setup guide](jarvis/skills/jarvis-setup/SKILL.md) for authentication, permissions and troubleshooting.
+`certs` makes the certificate the Vite development proxy needs (the same as `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`). `start` runs the backend and Vite in the background; to run them in the foreground, use `.venv/bin/python -m jarvis` and `npm --prefix frontend run dev` in two terminals. Open **http://localhost:5173** in Chrome and click the page to enable audio. The development proxy expects the backend at `https://localhost:8340`. On Windows, follow the [Windows README](docs/windows.md).
+
+The first time the page loads without a voice, Settings opens on Voice for the Fish Audio key. Claude uses the Claude Code subscription login; the Codex brain uses its own application-managed Codex home (see the provider controls in Settings). Fish Audio is a separate service with its own usage charges. See the [setup guide](jarvis/skills/jarvis-setup/SKILL.md) for authentication, permissions and troubleshooting.
 
 ## Implementation and data
 
