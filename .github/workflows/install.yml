@@ -1,0 +1,180 @@
+# The installers, on GitHub's hosted runners: install.sh on macOS and
+# install.ps1 (Windows PowerShell 5.1) on Windows, each run from a checkout
+# with --yes --no-models --start, then the backend and the page are asked,
+# the script is run a second time and must report everything already done,
+# and JARVIS is stopped. No credentials: a Claude Code that is installed but
+# not signed in is a step left for the person, never a failure.
+#
+# A workflow of its own beside ci.yml, which self-update reads: the Mac
+# suite's gate is unchanged. Triggers follow windows-startup.yml.
+
+name: install
+
+on:
+  pull_request:
+    paths-ignore: ["team_server/**", ".github/workflows/team-server*.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: bash 3.2 syntax
+        run: /bin/bash -n install.sh
+
+      - name: Check before installing (reports what is missing, changes nothing)
+        run: ./install.sh --check || test $? -eq 1
+
+      - name: Install and start
+        run: ./install.sh --yes --no-models --start --no-open
+
+      - name: Backend and page answer
+        run: |
+          for i in $(seq 1 60); do
+            curl -skf https://127.0.0.1:8340/api/health && break
+            sleep 2
+          done
+          curl -skf https://127.0.0.1:8340/api/health
+          echo
+          curl -sf http://localhost:5173/ | head -c 200
+          echo
+
+      - name: Second run finds everything already done
+        run: |
+          ./install.sh --yes --no-models | tee second-run.txt
+          if grep -E '^\[(DONE|INSTALLED|FAILED|MISSING)\]' second-run.txt; then
+            echo "the second run changed or lacked something"; exit 1
+          fi
+          grep -q 'already installed' second-run.txt
+
+      - name: Check passes
+        run: ./install.sh --check --no-models
+
+      - name: Logs
+        if: always()
+        run: |
+          .venv/bin/python -m jarvis.background status || true
+          tail -n 100 data/logs/backend.log data/logs/vite.log || true
+
+      - name: Stop
+        if: always()
+        run: .venv/bin/python -m jarvis.background stop || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: install-log-macos
+          path: |
+            install.log
+            data/logs/
+          retention-days: 14
+          if-no-files-found: warn
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: powershell   # Windows PowerShell 5.1, the one a fresh Windows has
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # JARVIS keeps its token in the checkout's data folder and refuses a
+      # folder others can change, so the checkout is cloned under the user
+      # profile as the Windows README does (see windows-startup.yml).
+      - name: Clone under the user profile
+        run: |
+          $Src = Join-Path $env:USERPROFILE "src\jarvis"
+          git clone --quiet "$env:GITHUB_WORKSPACE" $Src
+          "SRC=$Src" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Claude Code (installed, not signed in)
+        run: |
+          npm.cmd install -g @anthropic-ai/claude-code
+          Get-Command claude | Format-List Source
+
+      - name: Check before installing (reports what is missing, changes nothing)
+        working-directory: ${{ env.SRC }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check
+          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
+          exit 0
+
+      - name: Install and start
+        working-directory: ${{ env.SRC }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Yes -NoModels -Start -NoOpen
+
+      - name: Backend and page answer
+        working-directory: ${{ env.SRC }}
+        run: |
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+            curl.exe -skf https://127.0.0.1:8340/api/health | Out-Null
+            if ($LASTEXITCODE -eq 0) { $ok = $true } else { Start-Sleep -Seconds 2 }
+          }
+          curl.exe -skf https://127.0.0.1:8340/api/health
+          if ($LASTEXITCODE -ne 0) { throw "the backend did not answer" }
+          ""
+          curl.exe -sf http://localhost:5173/ | Select-Object -First 3
+          if ($LASTEXITCODE -ne 0) { throw "the page did not answer" }
+
+      - name: Second run finds everything already done
+        working-directory: ${{ env.SRC }}
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Yes -NoModels 2>&1 | ForEach-Object { "$_" }
+          $out
+          if ($LASTEXITCODE -ne 0) { throw "second run exited $LASTEXITCODE" }
+          if ($out | Select-String -Pattern '^\[(DONE|INSTALLED|FAILED|MISSING)\]') { throw "the second run changed or lacked something" }
+          if (-not ($out | Select-String -SimpleMatch 'already installed')) { throw "no 'already installed' line" }
+
+      - name: Check passes
+        working-directory: ${{ env.SRC }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check -NoModels
+          if ($LASTEXITCODE -ne 0) { throw "check exited $LASTEXITCODE" }
+
+      - name: Logs
+        if: always() && env.SRC != ''
+        working-directory: ${{ env.SRC }}
+        run: |
+          .\.venv\Scripts\python.exe -m jarvis.background status
+          "----- backend.log"; .\.venv\Scripts\python.exe -m jarvis.background logs backend -n 100
+          "----- vite.log"; .\.venv\Scripts\python.exe -m jarvis.background logs vite -n 60
+
+      - name: Stop
+        if: always() && env.SRC != ''
+        working-directory: ${{ env.SRC }}
+        run: .\.venv\Scripts\python.exe -m jarvis.background stop
+
+      - uses: actions/upload-artifact@v4
+        if: failure() && env.SRC != ''
+        with:
+          name: install-log-windows
+          path: |
+            ${{ env.SRC }}/install.log
+            ${{ env.SRC }}/data/logs/
+          retention-days: 14
+          if-no-files-found: warn
