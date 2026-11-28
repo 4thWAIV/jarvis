@@ -145,3 +145,15 @@ def test_preflight_runs_claude_providers_checks(monkeypatch):
     assert install_check.preflight_checks() == []
     assert preflight._check_claude_login in seen["provider"][0]
     assert preflight._check_anthropic_key_leftover_sync in seen["provider"][1]
+
+
+@pytest.mark.parametrize("script,preflight,skill", [
+    ("install.sh", "check_py preflight", "check_py done skill"),
+    ("install.ps1", '"preflight")', '"done", "skill")'),
+])
+def test_the_skill_step_follows_preflight(script, preflight, skill):
+    """A first `claude` run, which preflight's login check is, makes the
+    Claude home the skill is installed into; the skill step before it
+    would find no home on a first run and install on the second."""
+    text = (Path(__file__).resolve().parent.parent / script).read_text(encoding="utf-8")
+    assert 0 < text.index(preflight) < text.index(skill)

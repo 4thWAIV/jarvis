@@ -424,19 +424,20 @@ if ($ready) {
         elseif (Invoke-Logged "embedding model" $venvPy @("scripts\setup_embedding_model.py")) { Done "Embedding model installed" }
     }
 
-    # The talk-to-jarvis skill (needs a Claude Code or Codex home: a first `claude` run makes one)
-    $skill = Invoke-PyQuiet @("-m", "jarvis.install_check", "done", "skill")
-    if ($skill -eq 0) { Ok "talk-to-jarvis skill" }
-    elseif ($skill -eq 2) { Optional "talk-to-jarvis skill: no Claude Code or Codex home yet; run 'claude' once, then run this again" }
-    elseif ($Check) { Optional "talk-to-jarvis skill not installed (optional: $venvPy -m jarvis.session_skill install)" }
-    elseif (Invoke-Logged "session skill" $venvPy @("-m", "jarvis.session_skill", "install")) { Done "talk-to-jarvis skill installed" }
-
     # -- 4. preflight ----------------------------------------------------------------------
     Say ""
     Say "JARVIS preflight (warnings are things to do, not failures):"
     $pf = Get-Output $venvPy @("-m", "jarvis.install_check", "preflight")
     foreach ($line in ($pf -split "`n")) { if ($line.Trim()) { Say "  $line" } }
     Log "=== preflight"; Log $pf
+
+    # The talk-to-jarvis skill. It needs a Claude Code or Codex home, which a first `claude`
+    # run makes (preflight's login check is one), so it comes after preflight.
+    $skill = Invoke-PyQuiet @("-m", "jarvis.install_check", "done", "skill")
+    if ($skill -eq 0) { Ok "talk-to-jarvis skill" }
+    elseif ($skill -eq 2) { Optional "talk-to-jarvis skill: no Claude Code or Codex home yet; run 'claude' once, then run this again" }
+    elseif ($Check) { Optional "talk-to-jarvis skill not installed (optional: $venvPy -m jarvis.session_skill install)" }
+    elseif (Invoke-Logged "session skill" $venvPy @("-m", "jarvis.session_skill", "install")) { Done "talk-to-jarvis skill installed" }
 }
 
 # -- 5. what only the person can do ----------------------------------------------------------------

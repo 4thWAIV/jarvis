@@ -390,15 +390,6 @@ if [ "$READY" -eq 1 ]; then
     fi
   fi
 
-  # The talk-to-jarvis skill (needs a Claude Code or Codex home: a first `claude` run makes one)
-  check_py done skill >/dev/null 2>&1; skill=$?
-  if [ "$skill" -eq 0 ]; then ok "talk-to-jarvis skill"
-  elif [ "$skill" -eq 2 ]; then optional "talk-to-jarvis skill: no Claude Code or Codex home yet; run 'claude' once, then run this again"
-  elif [ "$CHECK" -eq 1 ]; then optional "talk-to-jarvis skill not installed (optional: $CHECKOUT_PY -m jarvis.session_skill install)"
-  else
-    if run_logged "session skill" "$CHECKOUT_PY" -m jarvis.session_skill install; then done_ "talk-to-jarvis skill installed"; fi
-  fi
-
   # -- 4. preflight -----------------------------------------------------------------
   say ""
   say "JARVIS preflight (warnings are things to do, not failures):"
@@ -409,6 +400,16 @@ if [ "$READY" -eq 1 ]; then
     printf '[FAILED] preflight\n%s\n' "$(printf '%s' "$out" | tail -n 15 | sed 's/^/    /')"
     log_line "=== preflight failed"; log_line "$out"
     FAILED_STEP=1
+  fi
+
+  # The talk-to-jarvis skill. It needs a Claude Code or Codex home, which a first `claude`
+  # run makes (preflight's login check is one), so it comes after preflight.
+  check_py done skill >/dev/null 2>&1; skill=$?
+  if [ "$skill" -eq 0 ]; then ok "talk-to-jarvis skill"
+  elif [ "$skill" -eq 2 ]; then optional "talk-to-jarvis skill: no Claude Code or Codex home yet; run 'claude' once, then run this again"
+  elif [ "$CHECK" -eq 1 ]; then optional "talk-to-jarvis skill not installed (optional: $CHECKOUT_PY -m jarvis.session_skill install)"
+  else
+    if run_logged "session skill" "$CHECKOUT_PY" -m jarvis.session_skill install; then done_ "talk-to-jarvis skill installed"; fi
   fi
 fi
 
