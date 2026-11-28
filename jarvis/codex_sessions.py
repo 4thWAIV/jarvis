@@ -294,8 +294,8 @@ def _codex_entries(offset: int, obj: dict, calls: Optional[dict] = None) -> list
     if said:
         role, text = said
         if role == "user":
-            return [TranscriptEntry(offset, at, "jarvis" if session_steer.STEER_SIGNATURE.strip()[:20]
-                                    in text else "you", _long(text))]
+            signed = any(signature[:20] in text for signature in session_steer.STEER_SIGNATURES)
+            return [TranscriptEntry(offset, at, "jarvis" if signed else "you", _long(text))]
         return [TranscriptEntry(offset, at, "agent", _long(text))]
     kind = p.get("type")
     if kind in ("function_call", "custom_tool_call"):
