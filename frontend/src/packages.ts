@@ -518,13 +518,6 @@ export function entryUrl(info: PackageInfo): string {
   return packageFileUrl(info, info.entry ?? "");
 }
 
-/** What a package asks in its head now, as the server reads it again after
- *  an answer (a follow-up may apply once its parent is answered). */
-export async function packageVote(id: string): Promise<PageVote | null> {
-  const list = (await answer<{ packages: PackageInfo[] }>(await fetch("/api/packages"))).packages;
-  return list.find((p) => p.id === id)?.vote ?? null;
-}
-
 /** A package's Markdown member, read through the same route as its frame's
  *  files: for an architecture package, through the canonical gate at its
  *  exact revision (language_projection.checked_member). The text, or an

@@ -1,0 +1,88 @@
+{
+  "title": "One cold sound through the audio interception proof",
+  "questions": [
+    {
+      "id": "explicit-device-prerequisite",
+      "question": "Allow one diagnostic multi-process run only to get a device ID for the explicit-device test?",
+      "options": [
+        {"id": "approve", "name": "Approve the ID run", "says": "One diagnostic multi-process session on a fixed test page gets the ID for the experiment."},
+        {"id": "skip", "name": "Skip explicit devices", "says": "The experiment runs without that case and reports it as untested."}
+      ],
+      "recommended": "approve",
+      "reason": "Without the ID, a stream sent to a chosen speaker or headset is never tested.",
+      "context": "Listing devices also lists cameras, and camera listing exits this single-process host, so no page can get an ID here."
+    }
+  ],
+  "slides": [
+    {
+      "title": "What you are approving",
+      "beats": [
+        {"say": "This is the architecture of one isolated macOS experiment. Nothing in it is built or run yet. It is a compile-selected diagnostic run from a separate bundle, and normal builds do not contain it."},
+        {"say": "Today a cold sound loses its first seventy-two milliseconds before CEF's audio callback starts, and a sound after three seconds of silence loses about eighty-seven. The experiment tests whether pulling Chromium's output directly gets every sample from the first one."}
+      ]
+    },
+    {
+      "title": "Before the browser starts",
+      "beats": [
+        {"say": "Before CEF starts, Install replaces the CEF image's AudioToolbox output calls, once, while no CEF audio unit exists.",
+         "targets": ["[data-declaration=\"AudioUnitRedirectionProof\"] [data-member=\"Install\"]"]},
+        {"say": "The speech replacement is installed in the same window.",
+         "targets": ["[data-declaration=\"SpeechRedirectionProof\"] [data-member=\"Install\"]"]},
+        {"say": "Then the mixer opens its own output through DENICE's own calls, and returns only after its first render callback.",
+         "targets": ["[data-declaration=\"ProofMixer\"] [data-member=\"Start\"]"]}
+      ]
+    },
+    {
+      "title": "The page plays a cold sound",
+      "beats": [
+        {"say": "The input is one cold test sound: 19200 samples at 48 kilohertz. Chromium creates a HAL output unit, and the replacement starts tracking it as a redirected stream in the Created state.",
+         "targets": ["[data-declaration=\"AudioUnitRedirectionProof\"] [data-member=\"ReplaceAudioComponentInstanceNew\"]"]},
+        {"say": "When Chromium sets its render callback and format, the proof keeps them instead of setting them on the real unit. Every other property, including the chosen device, goes to the original.",
+         "targets": ["[data-declaration=\"AudioUnitRedirectionProof\"] [data-member=\"ReplaceAudioUnitSetProperty\"]"]},
+        {"say": "If the format is anything other than 48 kilohertz float stereo, the proof run fails. The mixer does not resample.",
+         "targets": ["[data-declaration=\"RedirectedStream\"] [data-member=\"Format\"]"]},
+        {"say": "When Chromium starts the unit, the stream is registered with the mixer and the hardware unit is never started, so Chromium's own output never reaches a device.",
+         "targets": ["[data-declaration=\"AudioUnitRedirectionProof\"] [data-member=\"ReplaceAudioOutputUnitStart\"]"]}
+      ]
+    },
+    {
+      "title": "The mixer renders",
+      "beats": [
+        {"say": "On every cycle of its own clock, the mixer calls the stream's callback, adds queued speech, plays the sum and gives the same sum to the dump and the existing recorder.",
+         "targets": ["[data-declaration=\"ProofMixer\"] [data-member=\"Render\"]"]},
+        {"say": "The pass is ramp sample zero in the dump and all 19200 samples in order. Today the first sample that arrives is number 3460."}
+      ]
+    },
+    {
+      "title": "Stop, dispose and shutdown",
+      "beats": [
+        {"say": "When Chromium stops the unit, the stream leaves the mixer, and the stop returns only after no render cycle can still be inside its callback. Going past the wait limit fails the proof.",
+         "targets": ["[data-declaration=\"ProofMixer\"] [data-member=\"Unregister\"]"]},
+        {"say": "Dispose unregisters the same way, then disposes the never-started real unit.",
+         "targets": ["[data-declaration=\"AudioUnitRedirectionProof\"] [data-member=\"ReplaceAudioComponentInstanceDispose\"]"]},
+        {"say": "These are the states a stream passes through.",
+         "targets": ["[data-declaration=\"StreamState\"] [data-part=\"members\"]"]},
+        {"say": "The mixer stops only after CEF shutdown has returned with no stream left. The full shutdown order is in the evidence, not in the document, so the check does not cover it.",
+         "targets": ["[data-declaration=\"ProofMixer\"] [data-member=\"Stop\"]"]}
+      ]
+    },
+    {
+      "title": "Page speech",
+      "beats": [
+        {"say": "When a page reads text aloud, the replacement renders it into the mixer's speech queue instead of the speaker, and sends Chromium's start, word-range and finish events itself.",
+         "targets": ["[data-declaration=\"SpeechRedirectionProof\"] [data-member=\"SpeakUtterance\"]"]},
+        {"say": "Whether Chromium still behaves correctly with those events is not known until the run."}
+      ]
+    },
+    {
+      "title": "Explicit devices",
+      "waits": "explicit-device-prerequisite",
+      "beats": [
+        {"say": "A page that picks a particular speaker or headset reaches the same calls, and its device is recorded here.",
+         "targets": ["[data-declaration=\"RedirectedStream\"] [data-member=\"Device\"]"]},
+        {"say": "The problem is that this case cannot run yet. To pick a device, a page needs a device ID. Listing devices also lists cameras, and camera listing exits this single-process host. Without an ID, a stream sent to a chosen device is never tested, and if it bypasses the mixer nothing would show it."},
+        {"say": "Approve allows one diagnostic multi-process run on a fixed test page only to get that ID. It is not known from the evidence what bundle work a multi-process run needs on macOS. Skip runs the experiment without that case and reports it as untested. The recommendation is approve."}
+      ]
+    }
+  ]
+}

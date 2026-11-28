@@ -70,9 +70,9 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Fo
 import { CENTRE_SOCKET } from "./ConversationView";
 import { SaidText, useT, type Said } from "./locale";
 import { connectBridge, type Bridge, type FrameRect } from "./packageBridge";
-import { answerInbox, signOff, type Unanswered } from "./packageInbox";
+import { answerInbox, answerWithVote, signOff, type Unanswered } from "./packageInbox";
 import { markdown } from "./dashboard/markdown";
-import { askAbout, declarationsIn, entryUrl, navigation, packageFileUrl, packageVote, readPackageText, reportView,
+import { askAbout, declarationsIn, entryUrl, navigation, packageFileUrl, readPackageText, reportView,
          storyCue, storyRunning, storyState, tellStory, viewFolder, viewShown, type FrameView,
          type HeaderQuestion, type PackageInfo, type PageVote, type StoryCue } from "./packages";
 import { useUiTarget } from "./uiRegistry";
@@ -613,8 +613,9 @@ type Questions = ReturnType<typeof usePackageQuestions>;
 
 /** The questions a package's story declares, and his answers: one record
  *  for every card. Each answer goes through the inbox's one answer route
- *  (answerInbox), as his voice records it too; the server is asked again
- *  after each, since a follow-up may apply once its parent is answered. */
+ *  (answerInbox), as his voice records it too; the route answers with the
+ *  package's questions as they stand, since a follow-up may apply once its
+ *  parent is answered. */
 function usePackageQuestions(id: string, asks: HeaderQuestion[], onSaid: (s: Said | null) => void) {
   const [shown, setShown] = useState(asks);
   const [words, setWords] = useState<Record<string, string>>({});
@@ -623,13 +624,12 @@ function usePackageQuestions(id: string, asks: HeaderQuestion[], onSaid: (s: Sai
   const record = async (question: HeaderQuestion, option: string): Promise<boolean> => {
     setBusy(true);
     const note = (words[question.id] ?? "").trim();
-    const problem = await answerInbox(id, question.id, option, note);
+    const { problem, vote: now } = await answerWithVote(id, question.id, option, note);
     if (problem) {
       setBusy(false);
       onSaid({ original: problem });
       return false;
     }
-    const now = await packageVote(id).catch(() => null);
     setShown((was) => now?.asks ?? was.map((q) => q.id === question.id ? { ...q, answer: option, note } : q));
     setBusy(false);
     onSaid(null);

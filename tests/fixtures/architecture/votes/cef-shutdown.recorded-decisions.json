@@ -1,0 +1,22 @@
+{
+  "approve-architecture": {
+    "answer": "approve",
+    "at": "2026-11-27T10:10:49-0600",
+    "choice": "Approve",
+    "note": "",
+    "recommended": false,
+    "subject": {
+      "document_id": "document-2053ad5fc5674935b513802a660da16f",
+      "kit_digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c",
+      "revision": "9248c6e9e8e5b6c8555b93f3608794efc35367cb579bf7ffa6d25faba865bf36",
+      "source_revision": "a31620b4a5885a5348b087b91bab7fb214f94346306dfc2ed99edf5b98a04f25"
+    }
+  },
+  "listening-check": {
+    "answer": "run",
+    "at": "2026-11-27T10:10:40-0600",
+    "choice": "I will run it",
+    "note": "",
+    "recommended": true
+  }
+}

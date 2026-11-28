@@ -2478,7 +2478,9 @@ inbox's answer route, which takes only his click
 rule on questions left unanswered (`data-slot="unanswered"`); Escape or
 the check mark again closes it and focus goes back to the check mark. A
 package with no vote is signed off at once. `_answer_inbox_decision`
-refreshes the package shown so a reload shows his answer. A deck asks its
+refreshes the package shown so a reload shows his answer, and the answer route
+returns that package's own `vote` (`page_vote`), which the view's card shows at
+once (`packageInbox.ts` `answerWithVote`), never by describing every package. A deck asks its
 own questions on its own slides. The vote is read through
 `package_inbox.questions` and written by `record_vote` (from
 `_answer_inbox_decision`, and `record_story_answer` for a page), so the

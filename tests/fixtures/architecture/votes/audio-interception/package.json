@@ -1,0 +1,29 @@
+{
+  "name": "proposed-isolated-macos-browser-audio-in-bdb47c67",
+  "runs": "page",
+  "entry": "index.html",
+  "purpose": "Approve one diagnostic multi-process run solely to obtain a device ID for testing a page that selects a particular speaker or headset? The page's device listing exits the single-process host during camera enumeration, so the ID must come from a run where it does not, and it is then reused in the single-process experiment.",
+  "returns": [
+    "results/**"
+  ],
+  "communication": {
+    "kind": "architecture",
+    "title": "Proposed isolated macOS browser-audio interception proof",
+    "readable": true,
+    "document_id": "document-0b78de3410fd424d849566aebdb47c67",
+    "revision": "77fe8a2bdfcc6dbe4f8937d249b42f6fe7e3bf30e717c9dddd6b086a6785a987",
+    "source_revision": "479044710dacf18ab7f70fc4d2a01fe13611b4607058dbb50ce69b059bd5e437",
+    "kit_digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c"
+  },
+  "brief": "UNDERSTANDING.md",
+  "understanding": {
+    "source.yaml": "UNDERSTANDING.md",
+    "check.json": "UNDERSTANDING.md",
+    "canonical.json": "UNDERSTANDING.md",
+    "index.html": "UNDERSTANDING.md",
+    "story.json": "UNDERSTANDING.md",
+    "authored-story.json": "UNDERSTANDING.md"
+  },
+  "story": "story.json",
+  "version": "1.0.0"
+}

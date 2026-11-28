@@ -1,0 +1,28 @@
+scope: [denice, audio, shutdownfix]
+language: arch
+import: [[metalang]]
+title: Proposed CEF shutdown fix for pages that select an audio output device
+description: >
+  One added Chromium command-line switch in DENICE's existing CEF command-line hook, in the normal macOS build.
+  DENICE runs CEF single-process, so Chromium runs its audio service in process, but one Chromium check keys
+  device monitoring on the AudioServiceOutOfProcess feature alone; after a page selects an output device, CEF
+  shutdown then dereferences a missing SystemMonitor and the process exits with a crash. Disabling that feature
+  aligns the check with single-process mode. Single-process mode, in-process GPU and every other switch stay as they are.
+declare:
+- constant:
+    id: Application
+    is: element
+    value:
+      form: class
+      does: Existing. The CefApp of CefPlatformBrowser (a private nested class) that sets Chromium's command line before CefRuntime.Initialize processes it. Proposed change to one member only.
+      reach: private
+      exactness: loose
+      groups: {concept: browser, job: service}
+      members:
+      - name: OnBeforeCommandLineProcessing
+        kind: method
+        reach: private
+        type: none
+        does: Existing - appends single-process, in-process-gpu, disable-gpu-sandbox and use-mock-keychain. Proposed - also appends disable-features=AudioServiceOutOfProcess in every build, so Chromium's media device monitoring stays on the browser SystemMonitor and never binds the in-process audio service's DeviceNotifier, whose destructor runs after that SystemMonitor is gone.
+      sits: {package: none, assembly: Denice.CrossPlatform.MacOS, namespace: Denice.CrossPlatform.MacOS.Browser}
+      relates: {implements: none, answers: none, holds: []}

@@ -1,0 +1,212 @@
+scope: [denice, audio, interceptionproof]
+language: arch
+import: [[metalang]]
+title: Proposed isolated macOS browser-audio interception proof
+description: >
+  A compile-selected diagnostic in the existing Denice.CrossPlatform.MacOS project, behind the
+  DeniceAudioInterceptionProof property, run from a separate bundle. Nothing here is implemented or
+  demonstrated. It redirects only the Chromium Embedded Framework image's AudioToolbox output calls
+  and Chromium's AVSpeechSynthesizer speech into one proof mixer, which plays the mixed output
+  through DENICE's own AudioToolbox calls and gives the same mixed samples to the existing
+  recorder. Normal builds contain none of it, and no public interface changes.
+declare:
+- constant:
+    id: AudioUnitRedirectionProof
+    is: element
+    value:
+      form: class
+      does: Proposed. Replaces the CEF framework image's GOT entries for its AudioToolbox output calls before CefRuntime.Initialize, so Chromium's HAL output units are configured but never started and their render callbacks go to the proof mixer, for default-device and explicitly selected devices alike.
+      reach: internal
+      exactness: loose
+      groups: {concept: audio, job: service}
+      members:
+      - name: Install
+        kind: method
+        reach: internal
+        type: none
+        does: Locates the loaded Chromium Embedded Framework image, maps its __DATA_CONST __got slots to symbol names, saves the originals and writes the replacements, once, while no CEF audio unit exists.
+      - name: ReplaceAudioComponentInstanceNew
+        kind: method
+        reach: private
+        type: none
+        does: Calls the original and records the new instance as a CEF output unit when the component is a HAL output unit.
+      - name: ReplaceAudioUnitSetProperty
+        kind: method
+        reach: private
+        type: none
+        does: For CEF output units keeps the render callback and stream format instead of installing them on the real unit, and forwards every other property, including the selected device, to the original.
+      - name: ReplaceAudioOutputUnitStart
+        kind: method
+        reach: private
+        type: none
+        does: Registers the stream with the proof mixer and never starts the hardware unit, so Chromium's own output never reaches a device.
+      - name: ReplaceAudioOutputUnitStop
+        kind: method
+        reach: private
+        type: none
+        does: Returns only after the stream has left the mixer and any render cycle that might be inside its callback has finished, matching Core Audio's promise that no callback runs after a stop returns.
+      - name: ReplaceAudioComponentInstanceDispose
+        kind: method
+        reach: private
+        type: none
+        does: Unregisters the stream the same way, then disposes the never-started real unit through the original.
+      sits: {package: none, assembly: Denice.CrossPlatform.MacOS, namespace: Denice.CrossPlatform.MacOS.Browser}
+      relates: {implements: none, answers: none, holds: [RedirectedStream, ProofMixer]}
+- constant:
+    id: RedirectedStream
+    is: element
+    value:
+      form: record
+      does: Proposed. One Chromium output stream the redirection has taken over, with what the mixer needs to pull its samples.
+      reach: internal
+      exactness: loose
+      groups: {concept: audio, job: none}
+      members:
+      - name: Unit
+        kind: property
+        reach: internal
+        type: none
+        does: The real, never-started HAL output unit Chromium created.
+      - name: RenderCallback
+        kind: property
+        reach: internal
+        type: none
+        does: The render callback and its context that Chromium passed with kAudioUnitProperty_SetRenderCallback.
+      - name: Format
+        kind: property
+        reach: internal
+        type: none
+        does: The stream format Chromium set; anything other than 48 kHz float stereo fails the proof rather than being resampled.
+      - name: Device
+        kind: property
+        reach: internal
+        type: none
+        does: The output device Chromium selected, default or explicit, recorded so explicit-device streams can be told apart.
+      - name: State
+        kind: property
+        reach: internal
+        type: none
+        does: Where the stream is in its lifetime.
+      sits: {package: none, assembly: Denice.CrossPlatform.MacOS, namespace: Denice.CrossPlatform.MacOS.Browser}
+      relates: {implements: none, answers: none, holds: [StreamState]}
+- constant:
+    id: StreamState
+    is: element
+    value:
+      form: enum
+      does: Proposed. The lifetime of one redirected stream; calls for units the proof did not create pass straight through.
+      reach: internal
+      exactness: loose
+      groups: {concept: audio, job: none}
+      members:
+      - name: Created
+        kind: value
+        reach: internal
+        type: none
+        does: The HAL output unit exists and is tracked.
+      - name: Configured
+        kind: value
+        reach: internal
+        type: none
+        does: Its render callback and format have been kept.
+      - name: Registered
+        kind: value
+        reach: internal
+        type: none
+        does: The mixer pulls it on every render cycle.
+      - name: Unregistered
+        kind: value
+        reach: internal
+        type: none
+        does: The mixer no longer calls it and no render cycle is inside it.
+      - name: Disposed
+        kind: value
+        reach: internal
+        type: none
+        does: The real unit has been disposed through the original.
+      sits: {package: none, assembly: Denice.CrossPlatform.MacOS, namespace: Denice.CrossPlatform.MacOS.Browser}
+      relates: {implements: none, answers: none, holds: none}
+- constant:
+    id: ProofMixer
+    is: element
+    value:
+      form: class
+      does: Proposed. Opens its own HAL output unit through DENICE's own AudioToolbox calls, which bypass the CEF image's redirected entries, pulls every registered stream and queued speech on its own clock, sums them at unity gain, plays the sum and gives the same sum to the diagnostic dump and the existing recorder.
+      reach: internal
+      exactness: loose
+      groups: {concept: audio, job: owner}
+      members:
+      - name: Start
+        kind: method
+        reach: internal
+        type: none
+        does: Starts the mixer's own output and returns only after its first render callback, before the browser is created.
+      - name: Register
+        kind: method
+        reach: internal
+        type: none
+        does: Adds a redirected stream to the snapshot the render callback reads.
+      - name: Unregister
+        kind: method
+        reach: internal
+        type: none
+        does: Swaps the stream out of the snapshot and waits a bounded number of render cycles until none can still be inside its callback, reporting an overrun as a proof failure.
+      - name: QueueSpeech
+        kind: method
+        reach: internal
+        type: none
+        does: Queues speech buffers converted once to the mixer format, with their word-range markers.
+      - name: Render
+        kind: method
+        reach: private
+        type: none
+        does: The mixer's own render callback. Calls each registered stream's callback with the mixer's timestamp and frame count, adds the speech queue, writes the sum to the device and copies it to the dump and recorder.
+      - name: Stop
+        kind: method
+        reach: internal
+        type: none
+        does: Stops the mixer's own output, only after CefRuntime.Shutdown has returned with no tracked stream left.
+      sits: {package: none, assembly: Denice.CrossPlatform.MacOS, namespace: Denice.CrossPlatform.MacOS.Browser}
+      relates: {implements: none, answers: none, holds: [RedirectedStream]}
+- constant:
+    id: SpeechRedirectionProof
+    is: element
+    value:
+      form: class
+      does: 'Proposed. Replaces AVSpeechSynthesizer''s speaking methods in DENICE''s process so Chromium''s page speech, a page reading text aloud, is rendered with writeUtterance:toBufferCallback:toMarkerCallback: into the proof mixer instead of the speaker, while Chromium''s delegate still receives start, word-range and finish events.'
+      reach: internal
+      exactness: loose
+      groups: {concept: audio, job: service}
+      members:
+      - name: Install
+        kind: method
+        reach: internal
+        type: none
+        does: Replaces the implementations of speakUtterance, stopSpeakingAtBoundary, pauseSpeakingAtBoundary, continueSpeaking and speaking, before CefRuntime.Initialize.
+      - name: SpeakUtterance
+        kind: method
+        reach: private
+        type: none
+        does: Renders the utterance through writeUtterance into the mixer's speech queue, calls the delegate's start event when the first buffer is queued, word-range events from markers, and finish after the last buffer is mixed.
+      - name: StopSpeaking
+        kind: method
+        reach: private
+        type: none
+        does: Cancels the utterance's remaining buffers in the mixer and reports the cancellation to the delegate.
+      - name: PauseSpeaking
+        kind: method
+        reach: private
+        type: none
+        does: Holds the mixer's speech queue at the next buffer boundary.
+      - name: ContinueSpeaking
+        kind: method
+        reach: private
+        type: none
+        does: Resumes the held speech queue.
+      - name: Speaking
+        kind: property
+        reach: private
+        type: none
+        does: Answers whether an utterance is still queued or playing in the mixer.
+      sits: {package: none, assembly: Denice.CrossPlatform.MacOS, namespace: Denice.CrossPlatform.MacOS.Browser}
+      relates: {implements: none, answers: none, holds: [ProofMixer]}

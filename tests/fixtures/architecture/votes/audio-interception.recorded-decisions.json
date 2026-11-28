@@ -1,0 +1,22 @@
+{
+  "approve-architecture": {
+    "answer": "approve",
+    "at": "2026-11-27T00:14:56-0600",
+    "choice": "Approve",
+    "note": "",
+    "recommended": false,
+    "subject": {
+      "document_id": "document-0b78de3410fd424d849566aebdb47c67",
+      "kit_digest": "e0022da70300c875936a7b56a86ce03086015e3ec33bd49f259ada73185bf81c",
+      "revision": "77fe8a2bdfcc6dbe4f8937d249b42f6fe7e3bf30e717c9dddd6b086a6785a987",
+      "source_revision": "479044710dacf18ab7f70fc4d2a01fe13611b4607058dbb50ce69b059bd5e437"
+    }
+  },
+  "explicit-device-prerequisite": {
+    "answer": "approve",
+    "at": "2026-11-27T00:14:07-0600",
+    "choice": "Approve the ID run",
+    "note": "",
+    "recommended": true
+  }
+}
