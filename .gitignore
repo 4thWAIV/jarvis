@@ -81,3 +81,5 @@ mcp-list-out.txt
 
 # The author's own private notes; never committed.
 .private/
+
+install.log

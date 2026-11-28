@@ -32,6 +32,24 @@ block the `npm.ps1` script plain `npm` runs.
 
 ## Set up once
 
+The one-step way is `install.ps1`. It checks everything under [What you
+need](#what-you-need), installs what is missing through winget after one
+question, then does the setup below and runs JARVIS's preflight. Run it from
+a checkout, or let it clone one:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+# on a PC with nothing yet (clones to %USERPROFILE%\jarvis):
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/4thWAIV/jarvis/main/install.ps1)))"
+```
+
+Flags: `-Check` (only report), `-Yes`, `-NoModels`, `-Start`, `-NoOpen`,
+`-Dir <path>`; exit codes and what it leaves for you (Claude sign-in, the
+Fish key in Settings, Chrome's microphone permission) are in the
+[README](../README.md#install). It writes `install.log` in the checkout.
+
+The manual steps, if you prefer them:
+
 ```powershell
 git clone https://github.com/4thWAIV/jarvis.git
 Set-Location jarvis

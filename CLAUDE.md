@@ -24,7 +24,13 @@ facts (Chrome for the voice page, the per-port permission trap, subscription vs.
 key, what an expired login sounds like, Accessibility) that were only learned
 by hitting them live, and this walkthrough assumes them.
 
-When a user clones this repo and starts Claude Code, help them (every setting is chosen in Settings; there is no `.env` to edit):
+When a user clones this repo and starts Claude Code, help them (every setting is chosen in Settings; there is no `.env` to edit).
+**Step 0: run the installer** — `./install.sh` on macOS, `powershell -ExecutionPolicy Bypass -File .\install.ps1`
+on Windows (README "Install"; `--check` / `-Check` only reports). It does steps 1 (the
+Claude Code install, not the login) and 3 to 6 and 11 below, with `jarvis.install_check` (the
+stamps, what is already done, preflight) as its one shared Python half, and leaves
+the person-only steps (Claude login, Fish key, Accessibility, Chrome's microphone)
+to the person. The numbered list is the manual way and the explanation:
 1. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
@@ -4653,6 +4659,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   side
 - `work_folders.py` — Every Work item moved into its own folder,
   `/work/<id>/<id>.work`, with its whole history (`records.move`), at start
+- `install.sh` / `install.ps1` / `install_check.py` — The installers for a fresh Mac and a fresh Windows PC
+  and their shared Python half (stamps, what is done, preflight lines); proved by `.github/workflows/install.yml`
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
